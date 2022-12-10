@@ -16,8 +16,8 @@ all_substeps_done <- function(config, steps, exp) {
 
 pipeline_flags <- function(project_dir) {
   flag_dir <- file.path(project_dir, "flags")
-  flag_sub <- c("fetch", "trim", "collapsed", "aligned", "cleanbam","exp","ofst", 
-                "pshifted", "valid_pshift", 
+  flag_sub <- c("fetch", "trim", "collapsed", "aligned", "cleanbam","exp","ofst",
+                "pshifted", "valid_pshift",
                 "merged_lib")
   flags <- file.path(flag_dir, flag_sub)
   names(flags) <- flag_sub
@@ -48,9 +48,13 @@ set_flag <- function(config, step, experiment, value = TRUE) {
 }
 
 #' Set flags for all pipelines given
-#' 
+#'
 #' Set all flags as done for all experiments in pipeline up to and included
 #' the last step in steps
+#' @inheritParams run_pipeline
+#' @param steps, which flags to set to TRUE for given pipeline objects
+#' @return invisible(NULL)
+#' @export
 set_flag_all <- function(config, steps = names(config$flag), pipelines) {
   if (length(steps) == 1) {
     if (steps == "all") {
@@ -63,6 +67,9 @@ set_flag_all <- function(config, steps = names(config$flag), pipelines) {
   for (e in exp) {
     for (step in steps) set_flag(config, step, e, value = TRUE)
   }
+  message("Updated flags for pipeline subset:")
+  progress_report(pipelines, config, show_stats = FALSE)
+  message("Flag set: Done")
   return(invisible(NULL))
 }
 

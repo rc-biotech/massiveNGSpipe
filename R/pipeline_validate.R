@@ -18,16 +18,24 @@ pipeline_validate_shifts <- function(df_list, config) {
       warning("Some libraries contain shift that is < 25% of CDS coverage")
       saveRDS(FALSE, file.path(QCFolder, "warning.rds"))
     } else saveRDS(TRUE, file.path(QCFolder, "good.rds"))
-    set_flag(config, "valid_pshift", name(df)) 
+    set_flag(config, "valid_pshift", name(df))
   }
 }
 
-progress_report <- function(pipelines, config) {
+#' Report summary of current progress
+#'
+#' How many studies have finished etc
+#' @inheritParams run_pipeline
+#' @param show_stats logical, default TRUE, output trim/alignment stats
+#' + plots, set to FALSE if you only want progress report.
+#' @return invisible(NULL)
+#' @export
+progress_report <- function(pipelines, config, show_stats = TRUE) {
   n_bioprojects <- sum(unlist(lapply(pipelines, function(p) length(p$organisms))))
   steps <- names(config[["flag"]])
   negative_message <- steps; names(negative_message) <- steps
   negative_message[c("fetch","trim")] <- c("started", "trimmed")
-  negative_message <- paste(" - Not", negative_message); 
+  negative_message <- paste(" - Not", negative_message);
   names(negative_message) <- steps
   index <- 1; done <- 0
   dt <- dt.trim <- data.table()
@@ -47,20 +55,25 @@ progress_report <- function(pipelines, config) {
     }
     if (go_to_next) next
     message(bio.index, project, " - Done")
-    out.aligned <- conf["bam"] #TODO, fix when it works to subset by name!
-    trimmed.out <- file.path(out.aligned, "trim")
-    alignment.stats <- file.path(out.aligned, "full_process_SINGLE.csv")
-    dt <- rbindlist(list(dt, fread(alignment.stats, header = TRUE)))
-    dt.trim <- rbindlist(list(dt.trim, ORFik:::trimming.table(trimmed.out)))
+    if (show_stats) {
+      out.aligned <- conf["bam"] #TODO, fix when it works to subset by name!
+      trimmed.out <- file.path(out.aligned, "trim")
+      alignment.stats <- file.path(out.aligned, "full_process_SINGLE.csv")
+      dt <- rbindlist(list(dt, fread(alignment.stats, header = TRUE)))
+      dt.trim <- rbindlist(list(dt.trim, ORFik:::trimming.table(trimmed.out)))
+    }
+
     done <- done + 1
     }
   }
-  save_report(dt, dt.trim, done, total = n_bioprojects, config$project)
+  cat("Number of studies completed\n")
+  cat(done, " / ", n_bioprojects, "\n")
+  if (show_stats) {
+    save_report(dt, dt.trim, done, total = n_bioprojects, config$project)
+  } else return(invisible(NULL))
 }
 
 save_report <- function(dt, dt.trim, done, total, report_dir) {
-  cat("Number of studies completed initial: download, alignment, pshifting and merge!\n")
-  cat(done, " / ", total, "\n")
   if (done == 0) {
     cat("Nothing done, Returning without creating summary")
     return(invisible(NULL))
@@ -80,7 +93,7 @@ save_report <- function(dt, dt.trim, done, total, report_dir) {
   cat("-- Total read length usage (in percentages (bottom))", "\n")
   suppressWarnings(print(round((read.dist / sum(read.dist)) * 100, 1)))
   #print(dt)
-  # Save 
+  # Save
   fwrite(dt.trim, file.path(report_dir, "raw_trimmed_reads_stats.csv"))
   library(ggplot2); library(scales)
   plot <- ggplot(dt, aes(x = dt$`total mapped reads %-genome`)) +
@@ -94,7 +107,7 @@ save_report <- function(dt, dt.trim, done, total, report_dir) {
             "With flipped box-plot for quantiles") +
     coord_cartesian(ylim = c(0, 0.5)) + theme_classic()
   plot(plot)
-  ggsave(filename = file.path(report_dir, "genome_alignment_rate.png"), 
+  ggsave(filename = file.path(report_dir, "genome_alignment_rate.png"),
          plot, width = 5, height = 5)
   return(invisible(NULL))
 }

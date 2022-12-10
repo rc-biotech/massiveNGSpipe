@@ -5,7 +5,8 @@
 #' @param study_accession any accession accepted by
 #' \code{ORFik::download.SRA.metadata}.
 #' @param config Configured directories for pipeline as a list
-#' @return a pipeline object
+#' @return a list of pipeline objects, one for each study,
+#' subsetted by organism per study.
 pipeline_init <- function(study, study_accession, config) {
     # For each organism in the study, create an ORFik experiment config,
     # fetch reference genome and contaminants, and create an index.
@@ -22,7 +23,7 @@ pipeline_init <- function(study, study_accession, config) {
         conf <- gsub("//", "/", conf); conf <- gsub("_$", "", conf)
         names(conf) <- gsub(" $", "", names(conf))
         sapply(conf[1:3], fs::dir_create)
-        
+
         # Will now swap to toplevel if needed by itself
         # Will swap to refseq if ensembl fails
         ensembl_db <- try(
@@ -45,11 +46,11 @@ pipeline_init <- function(study, study_accession, config) {
             output.dir = conf["ref"],
             assembly_type = "primary_assembly", optimize = TRUE,
             pseudo_5UTRS_if_needed = 100, db = "refseq"
-          )  
+          )
         }
         index <- ORFik::STAR.index(annotation)
         organisms[[organism]] <- list(
-            conf = conf, annotation = annotation, index = index, 
+            conf = conf, annotation = annotation, index = index,
             experiment = experiment
         )
     }
@@ -58,16 +59,17 @@ pipeline_init <- function(study, study_accession, config) {
     ))
 }
 
-#' Download all SRA files linked to the pipeline's study, and extract them
-#' into <accession>.fastq.gz or <accession>_{1,2}.fastq.gz for SE/PE reads
-#' respectively.
+#' Download all SRA files for all studies
+#'
+#' Extract them into '<'accession'>'.fastq.gz or '<'accession'>'_{1,2}.fastq.gz
+#' for SE/PE reads respectively.
 #' @param pipeline a pipeline object
 pipeline_download <- function(pipeline, config) {
     study <- pipeline$study
     for (organism in names(pipeline$organisms)) {
         conf <- pipeline$organisms[[organism]]$conf
         if (step_is_done(config, "fetch", conf["exp"])) next
-        
+
         download_sra(
             study[ScientificName == organism],
             conf["fastq"],
@@ -111,7 +113,7 @@ pipeline_trim <- function(pipeline, config) {
                 fs::file_delete(file)
             }
         }
-        set_flag(config, "trim", conf["exp"])  
+        set_flag(config, "trim", conf["exp"])
     }
 }
 
@@ -138,7 +140,7 @@ pipeline_collapse <- function(pipeline, config) {
                 fs::file_move(fs::path(trimmed_dir, filename), outdir)
             }
         }
-        
+
         for (i in seq_len(nrow(runs_paired))) {
           outdir <- fs::path(trimmed_dir, runs_paired[i]$LibraryLayout)
           fs::dir_create(outdir)
@@ -159,7 +161,7 @@ pipeline_collapse <- function(pipeline, config) {
           )
           fs::file_delete(fs::path(trimmed_dir, filename))
         }, BPPARAM = BiocParallel::MulticoreParam(16))
-        set_flag(config, "collapsed", conf["exp"])  
+        set_flag(config, "collapsed", conf["exp"])
     }
 }
 
@@ -222,7 +224,7 @@ pipeline_align <- function(pipeline, config) {
             }
             fs::dir_delete(fs::path(trimmed_dir, "PAIRED"))
         }
-        set_flag(config, "aligned", conf["exp"])  
+        set_flag(config, "aligned", conf["exp"])
     }
 }
 
@@ -249,7 +251,7 @@ pipeline_cleanup <- function(pipeline, config) {
                 fs::path(conf["bam"], "aligned", run, ext = "bam")
             )
         }
-        set_flag(config, "cleanbam", conf["exp"])  
+        set_flag(config, "cleanbam", conf["exp"])
     }
 }
 
@@ -273,11 +275,11 @@ pipeline_create_experiment <- function(pipeline, config) {
         stage <- paste0(study$CELL_LINE, "_",study$TISSUE)
         stage <- gsub(paste0(remove, "|NONE_|_NONE"), "", stage)
         stage <- gsub(paste0(remove, "|NONE_|_NONE"), "", stage) # Twice
-        
+
         condition <- paste0(study$BATCH, "_",study$CONDITION)
         condition <- gsub(remove, "", condition)
         condition <- gsub(remove, "", condition)
-        
+
         fraction <- paste(study$FRACTION,study$TIMEPOINT, sep = "_")
         if (!is.null(study$GENE)) fraction <- paste(fraction, study$GENE, sep = "_")
         fraction <- gsub(remove, "", fraction)
@@ -289,7 +291,7 @@ pipeline_create_experiment <- function(pipeline, config) {
         bam_dir <- fs::path(conf["bam"], "aligned")
         if (any(paired_end)) stop("TODO: Fix for paired end, will not work for now")
         #bam_files <- ORFik:::findLibrariesInFolder(dir = bam_dir, pairedEndBam = paired_end)
-        bam_files <- ORFik:::findLibrariesInFolder(dir = bam_dir, 
+        bam_files <- ORFik:::findLibrariesInFolder(dir = bam_dir,
                                       types = c("bam", "bed", "wig", "ofst"),
                                       pairedEndBam = paired_end)
         bam_files_base <- ORFik:::remove.file_ext(bam_files, basename = T)
@@ -300,8 +302,8 @@ pipeline_create_experiment <- function(pipeline, config) {
             exper = experiment, txdb = paste0(annotation["gtf"], ".db"),
             libtype = "RFP",  fa = annotation["genome"], organism = organism,
             stage = stage, rep = study$REPLICATE,
-            condition = condition, fraction = fraction, 
-            author = unique(study$AUTHOR), 
+            condition = condition, fraction = fraction,
+            author = unique(study$AUTHOR),
             files = bam_files
         )
         df <- ORFik::read.experiment(experiment)
@@ -309,7 +311,7 @@ pipeline_create_experiment <- function(pipeline, config) {
         #    stringr::str_split(fs::path_file(df[-(1:4),6]), "_"),
         #    function(x) x[3]
         # )
-        set_flag(config, "exp", conf["exp"])  
+        set_flag(config, "exp", conf["exp"])
         df_list <- c(df_list, df)
     }
   return(df_list)
@@ -320,7 +322,7 @@ pipeline_create_ofst <- function(df_list, config) {
     if (!step_is_next_not_done(config, "ofst", name(df))) next
     convertLibs(df)
     remove.experiments(df)
-    set_flag(config, "ofst", name(df))  
+    set_flag(config, "ofst", name(df))
   }
 }
 
@@ -336,7 +338,7 @@ pipeline_pshift <- function(df_list, config) {
                     })
     if(!inherits(res, "error")) {
       dir.create(QCfolder(df))
-      set_flag(config, "pshifted", name(df)) 
+      set_flag(config, "pshifted", name(df))
     }
   }
 }

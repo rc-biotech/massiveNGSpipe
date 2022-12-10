@@ -1,20 +1,23 @@
 Package: massiveNGSpipe
-Title: Massive pipeline for NGS data download and analysis
+Title: Pipeline for automatic NGS data download and analysis over a massive set of studies
 Version: 0.0.0.9000
-Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"),
-           comment = c(ORCID = "YOUR-ORCID-ID"))
-Description: What the package does (one paragraph).
+Authors@R: c(
+  person(given = "Haakon", family = "Tjeldnes", email = "hauken_heyken@hotmail.com", role = c("aut", "cre", "dtc")),
+  person(given = "Michal", family = "Swirski", email = "michal.swirski@uw.edu.pl", role = c("aut", "ctb")),
+  person(given = "Krztsztof", family = "Starecki", email = "something@gmail.com", role = c("aut", "cph")))
+Description: R package for automatic NGS data download and analysis over a massive set of studies
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.1.2
+RoxygenNote: 7.2.1
 Depends:
     data.table,
     BiocParallel
 Imports:
     fs,
     ORFik,
-    stringr
+    stringr,
+    jsonlite,
+    googlesheets4
 Remotes:
     Roleren/ORFik
