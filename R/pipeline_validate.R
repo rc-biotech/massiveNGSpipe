@@ -28,33 +28,42 @@ pipeline_validate_shifts <- function(df_list, config) {
 #' @inheritParams run_pipeline
 #' @param show_stats logical, default TRUE, output trim/alignment stats
 #' + plots, set to FALSE if you only want progress report.
+#' @param show_done logical, default TRUE. If FALSE, display only status
+#' of projects that are not done. Stats will still show for all.
 #' @return invisible(NULL)
+#' @importFrom plotly plot_ly layout
 #' @export
-progress_report <- function(pipelines, config, show_stats = TRUE) {
+progress_report <- function(pipelines, config, show_stats = TRUE,
+                            show_done = TRUE, status_plot = FALSE) {
   n_bioprojects <- sum(unlist(lapply(pipelines, function(p) length(p$organisms))))
   steps <- names(config[["flag"]])
   negative_message <- steps; names(negative_message) <- steps
-  negative_message[c("fetch","trim")] <- c("started", "trimmed")
+  negative_message[c("start","fetch","trim")] <- c("started","downloaded", "trimmed")
   negative_message <- paste(" - Not", negative_message);
   names(negative_message) <- steps
   index <- 1; done <- 0
+  progress_index <- projects <- c()
   dt <- dt.trim <- data.table()
   for (pipeline in pipelines) {
     for (organism in names(pipeline$organisms)) {
     conf <- pipeline$organisms[[organism]]$conf
     project <- conf["exp"]
+    projects <- c(projects, project)
     bio.index <- paste0("(", index, "/",n_bioprojects,") ")
     index <- index + 1
     go_to_next <- FALSE
+    progress_index_this <- 0
     for (step in steps) {
       if (!step_is_done(config, step, project)) {
         message(bio.index, project, negative_message[step])
         go_to_next <- TRUE
         break
       }
+      progress_index_this <- progress_index_this + 1
     }
+    progress_index <- c(progress_index, progress_index_this)
     if (go_to_next) next
-    message(bio.index, project, " - Done")
+    if (show_done) message(bio.index, project, " - Done")
     if (show_stats) {
       out.aligned <- conf["bam"] #TODO, fix when it works to subset by name!
       trimmed.out <- file.path(out.aligned, "trim")
@@ -68,9 +77,13 @@ progress_report <- function(pipelines, config, show_stats = TRUE) {
   }
   cat("Number of studies completed\n")
   cat(done, " / ", n_bioprojects, "\n")
+  ret <- invisible(NULL)
+  if (status_plot) {
+    ret <- status_plot(steps, progress_index, projects, n_bioprojects, done)
+  }
   if (show_stats) {
     save_report(dt, dt.trim, done, total = n_bioprojects, config$project)
-  } else return(invisible(NULL))
+  } else return(ret)
 }
 
 save_report <- function(dt, dt.trim, done, total, report_dir) {
@@ -111,3 +124,17 @@ save_report <- function(dt, dt.trim, done, total, report_dir) {
          plot, width = 5, height = 5)
   return(invisible(NULL))
 }
+
+status_plot <- function(steps, progress_index, projects, n_bioprojects, done) {
+  status_matrix <- lapply(seq(length(steps)) - 1, function(x) as.data.table(matrix(as.integer(x <= progress_index), nrow = 1, byrow = TRUE)))
+  status_matrix <- as.matrix(rbindlist(status_matrix))
+  fig1 <- plot_ly(z = status_matrix, x = projects, y = steps, type = "heatmap", colors = c("red", "green"), showscale=FALSE) %>%
+    layout(title = list(text = paste0('NGS Processing Status',
+                                      '<br>',
+                                      '<sup>',
+                                      paste0("Completed: ", done, " / ", n_bioprojects),
+                                      '</sup>')), margin=list(t = 75))
+  return(fig1)
+}
+
+

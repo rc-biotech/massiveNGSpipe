@@ -2,8 +2,11 @@
 
 
 #' Create a pipeline for the specified study.
+#'
+#' @param study a data.table of output from ORFik::download.SRA.metadata
 #' @param study_accession any accession accepted by
-#' \code{ORFik::download.SRA.metadata}.
+#' \code{ORFik::download.SRA.metadata}. It is needed to know
+#' if you used GEO, PRJ, SRP etc as the search query.
 #' @param config Configured directories for pipeline as a list
 #' @return a list of pipeline objects, one for each study,
 #' subsetted by organism per study.
@@ -33,7 +36,7 @@ pipeline_init <- function(study, study_accession, config) {
             phix = TRUE, ncRNA = TRUE, tRNA = TRUE, rRNA = TRUE,
             output.dir = conf["ref"],
             assembly_type = "primary_assembly", optimize = TRUE,
-            pseudo_5UTRS_if_needed = 100
+            pseudo_5UTRS_if_needed = 100, notify_load_existing = FALSE
           )
         )
         if (is(ensembl_db, "try-error")) {
@@ -45,7 +48,8 @@ pipeline_init <- function(study, study_accession, config) {
             phix = TRUE, ncRNA = TRUE, tRNA = TRUE, rRNA = TRUE,
             output.dir = conf["ref"],
             assembly_type = "primary_assembly", optimize = TRUE,
-            pseudo_5UTRS_if_needed = 100, db = "refseq"
+            pseudo_5UTRS_if_needed = 100, db = "refseq",
+            notify_load_existing = FALSE
           )
         }
         index <- ORFik::STAR.index(annotation)
@@ -69,14 +73,11 @@ pipeline_download <- function(pipeline, config) {
     for (organism in names(pipeline$organisms)) {
         conf <- pipeline$organisms[[organism]]$conf
         if (step_is_done(config, "fetch", conf["exp"])) next
-
+        set_flag(config, "start", conf["exp"])
         download_sra(
             study[ScientificName == organism],
             conf["fastq"],
             compress = FALSE
-        )
-        fs::file_delete(
-            fs::path(conf["fastq"], study[ScientificName == organism]$Run)
         )
         set_flag(config, "fetch", conf["exp"])
     }
@@ -262,7 +263,8 @@ pipeline_create_experiment <- function(pipeline, config) {
         conf <- pipeline$organisms[[organism]]$conf
         if (!step_is_next_not_done(config, "exp", conf["exp"])) {
           if (!step_is_done(config, "exp", conf["exp"])) return(NULL)
-          df_list <- c(df_list, read.experiment(conf["exp"]))
+          df_list <- c(df_list, read.experiment(conf["exp"],
+                                                output.env = new.env()))
           next
         }
         annotation <- pipeline$organisms[[organism]]$annotation
@@ -294,8 +296,24 @@ pipeline_create_experiment <- function(pipeline, config) {
         bam_files <- ORFik:::findLibrariesInFolder(dir = bam_dir,
                                       types = c("bam", "bed", "wig", "ofst"),
                                       pairedEndBam = paired_end)
+
         bam_files_base <- ORFik:::remove.file_ext(bam_files, basename = T)
+        bam_files_base <- gsub("_Aligned.*", "", bam_files_base)
+        bam_files_base <- sub(".*_", "", bam_files_base)
+        stopifnot(all(bam_files_base != ""))
         bam_files <- bam_files[match(study$Run, bam_files_base)]
+        stopifnot(length(bam_files) == length(bam_files_base))
+        if (nrow(study) != length(bam_files)) {
+          if (anyNA(bam_files)) {
+            message("Error: you are missing some bam files compared to study metadata")
+            print(bam_files)
+            stop("Missing bam files!")
+          } else if (nrow(study) < length(bam_files)) {
+            message("Error: you are more bam files in folder compared to study metadata")
+            print(bam_files)
+            stop("Too many bam files!")
+          } else stop("Not correct number of bam files in folder compared to study metadata")
+        }
         if (length(bam_files) == 0) stop("Could not find SRR runs in aligned folder for: ", )
         ORFik::create.experiment(
             dir = bam_dir,
@@ -306,7 +324,9 @@ pipeline_create_experiment <- function(pipeline, config) {
             author = unique(study$AUTHOR),
             files = bam_files
         )
-        df <- ORFik::read.experiment(experiment)
+        df <- ORFik::read.experiment(experiment,
+                                     output.env = new.env())
+        # TODO: Copy experiment over
         # df[-(1:4),3] <- sapply(
         #    stringr::str_split(fs::path_file(df[-(1:4),6]), "_"),
         #    function(x) x[3]
@@ -340,5 +360,29 @@ pipeline_pshift <- function(df_list, config) {
       dir.create(QCfolder(df))
       set_flag(config, "pshifted", name(df))
     }
+  }
+}
+
+pipeline_convert_covRLE <- function(df_list, config) {
+  for (df in df_list) {
+    if (!step_is_next_not_done(config, "covrle", name(df))) next
+    convert_to_covRleList(df)
+    set_flag(config, "covrle", name(df))
+  }
+}
+
+pipeline_convert_bigwig <- function(df_list, config) {
+  for (df in df_list) {
+    if (!step_is_next_not_done(config, "bigwig", name(df))) next
+    convert_to_bigWig(df)
+    set_flag(config, "bigwig", name(df))
+  }
+}
+
+pipeline_count_table_psites <- function(df_list, config) {
+  for (df in df_list) {
+    if (!step_is_next_not_done(config, "pcounts", name(df))) next
+    ORFik::countTable_regions(df, lib.type = "pshifted", forceRemake = TRUE)
+    set_flag(config, "pcounts", name(df))
   }
 }

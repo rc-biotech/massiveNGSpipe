@@ -11,10 +11,12 @@
 #' - SRA study (SRA)\cr
 #' - ENA study (ERA)\cr
 #' - GEO study (GSE)\cr
+#' - NULL (not "NULL", but NULL), don't add new accession, only look if you
+#' current google sheet or local csv is ready.
 #' @inheritParams run_pipeline
 #' @param organisms character vector, default "all" (Use all organisms found).
 #' Else binomial latin name with capital letter for genus: "Homo sapiens" etc.
-#' @param google_url character, default our google doc sheet. If not NULL,
+#' @param google_url character, default config$google_url. If not NULL,
 #' will use the google sheet to check for updated metadata.
 #' @param complete_metadata path, default file.path(project_dir, "RFP_FINAL_LIST.csv").
 #' The list of final candidates that are checked and have unique rows per bioproject
@@ -23,78 +25,66 @@
 #' @param Platforms character vector, default: "ILLUMINA". The sequencer technologies allowed.
 #' @param step_mode logical, default FALSE. If TRUE, actives browser() and lets you go through
 #' each step in debug mode for full control.
+#' @param fix_loop logical, default TRUE. If TRUE, will create a loop in
+#' the end that runs until your metadata is valid. If you
+#' only want to updata csv / google docs with new data and not try to complete
+#' now, set this to FALSE.
 #' @return logical, TRUE if you had unique rows per accession per organism
 #' @import googlesheets4 data.table ORFik BiocParallel fs stringr
 #' @export
 curate_metadata <- function(accessions, config, organisms = "all",
-                            google_url = "https://docs.google.com/spreadsheets/d/18Y-WDvV_w0kTT3Xap4M5GZWpg39ZK-gUzzV7fuKbMvo/edit#gid=769582544",
-                            complete_metadata = file.path(project_dir, "RFP_FINAL_LIST.csv"),
+                            google_url = config$google_url,
+                            complete_metadata = config$complete_metadata,
                             LibraryLayouts = c("SINGLE", "PAIRED"), Platforms = "ILLUMINA",
-                            step_mode = FALSE) {
-  #metadata_done <- file.exists(complete_metadata)
+                            step_mode = FALSE, open_google_sheet = interactive(),
+                            fix_loop = TRUE) {
+  if (!interactive() & step_mode)
+    stop("In non interactive mode you can not run step_mode = TRUE!")
+  stopifnot(length(fix_loop) == 1); stopifnot(is(fix_loop, "logical"))
   if (step_mode) browser()
-  if (!interactive()) stop("In non interactive mode you can not continue without RFP_FINAL_LIST.csv!")
-  # Step1: Get all metadata
-  all_SRA_metadata <- pipeline_metadata(accessions, config)
-  # Step2: Try to auto annotate
-  all_SRA_metadata_RFP <- pipeline_metadata_annotate(all_SRA_metadata, organisms,
-                                                     LibraryLayouts, Platforms)
-  complete_metadata_dt <- data.table()
-  if (!is.null(google_url)) {
-    complete_metadata_dt <- read_sheet_safe(google_url)
-  } else if (file.exists(complete_metadata)) complete_metadata_dt <- fread(complete_metadata)
-  if (nrow(complete_metadata_dt) > 0) { # IF you have started before
-    new_studies <- !(all_SRA_metadata_RFP$study_accession %in%
-                       complete_metadata_dt$study_accession)
-    message("New samples to annotate: ", sum(new_studies))
-    suppressWarnings(all_SRA_metadata_RFP[, STAGE := NULL])
-    suppressWarnings(all_SRA_metadata_RFP[, Sex := NULL])
-    all_SRA_metadata_RFP <- suppressWarnings(rbind(complete_metadata_dt,
-                                                   all_SRA_metadata_RFP[new_studies,]))
+  add_new_accessions <- !is.null(accessions)
+  if (add_new_accessions) {
+    add_new_data(accessions, config, organisms,
+                 google_url, complete_metadata,
+                 LibraryLayouts, Platforms,
+                 open_google_sheet)
   }
-  fwrite(all_SRA_metadata_RFP, file.path(config$project, "RFP_pre_manual_annotation.csv"))
-  # Step3: Store as csv and open in google sheet and fix
-  # Create a new sheet or use existing one
-  #google_url <- gs4_create(name = "RFP_next_round_manual2.csv")
-  if (!is.null(google_url)) {
-    write_sheet(read.csv((file.path(config$project, "RFP_pre_manual_annotation.csv"))),
-                ss = google_url,
-                sheet = 1); browseURL(google_url)
-  }
-  # Step4: Now, Check if it is valid (if not repeat step with new csv)
-  while(TRUE) {
+
+  # Step6: Now, Check if it is valid (if not repeat step with new csv)
+  while(fix_loop) {
     readline(prompt = "You think metadata is ready?\n Press enter when ready: ")
     if (!is.null(google_url)) {
       message("- Reading google sheet")
       sheet <- read_sheet_safe(google_url)
-    } else sheet <- fread(file.path(config$project, "RFP_next_round_manual.csv"))
+    } else sheet <- fread(config$temp_metadata)
     finished <- pipeline_validate_metadata(sheet, config)
-    # TODO: Add upload of finished also to google sheet
-    if (!finished) {
-      if (!is.null(google_url)) {
-        message("Uploading updated version to google sheet:")
-        write_sheet(read.csv(file.path(config$project, "RFP_next_round_manual.csv")),
-                    ss = google_url,
-                    sheet = 1)
-      } else message("Fix your local csv metadata file")
-    }
+    if (!is.null(google_url)) {
+      message("Uploading updated version to google sheet:")
+      write_sheet(read.csv(config$temp_metadata),
+                  ss = google_url,
+                  sheet = 1)
+    } else message("Updated your local csv metadata file")
+    if (finished) break
   }
   #}
-  return(TRUE)
+  return(fix_loop)
 }
 
 #' Download all metadata for all accessions
 #' @inheritParams curate_metadata
 #' @param force logical, default FALSE. Force redownload of all, if something failed
+#' @param max_attempts numeric, default 7. How many attempts to download beforing
+#' failing? This call flood SRA with calls, so set it higher if you use a lot
+#' of samples.
 #' @return a data.table of all metadata for all accessions
-pipeline_metadata <- function(accessions, config, force = FALSE) {
+pipeline_metadata <- function(accessions, config, force = FALSE, max_attempts = 7) {
   accessions <- gsub(" $|^ ", "", accessions)
   all_SRA_metadata <- bplapply(accessions, function(study_accession, config, force) {
     # Avoid requirest overflow and still keep it fast
     overflooding_error <- "Error in open.connection(x, \"rb\") : HTTP error 429.\n"
     attempts <- 0
     save_file <- file.path(config[["metadata"]], paste0("SraRunInfo_", study_accession, ".csv"))
-    while(attempts < 5) {
+    while(attempts < max_attempts) {
       if ((attempts > 0 | force) & file.exists(save_file)) file.remove(save_file)
       res <- try(
         cbind(study_accession = study_accession,
@@ -131,15 +121,14 @@ pipeline_metadata <- function(accessions, config, force = FALSE) {
   return(rbindlist(all_SRA_metadata))
 }
 
-
-
-pipeline_metadata_annotate <- function(all_SRA_metadata, organisms = "all",
-                                       LibraryLayouts = "SINGLE",
-                                       Platforms = "ILLUMINA") {
+pipeline_metadata_filter <- function(all_SRA_metadata, organisms = "all",
+                                     LibraryLayouts = "SINGLE",
+                                     Platforms = "ILLUMINA",
+                                     removeAllNACols = TRUE) {
   stopifnot(all(LibraryLayouts %in% c("SINGLE", "PAIRED")))
   all_metadata_RFP <- all_SRA_metadata
   unique_organisms <- unique(all_SRA_metadata$ScientificName)
-  if (organisms == "all") {
+  if (any(organisms == "all")) {
     organisms <- unique_organisms
   } else if (!all(organisms %in% unique_organisms)) stop("You subseted to an organism not in existing in any study!")
   # Some experiments have mixed organisms:
@@ -148,21 +137,30 @@ pipeline_metadata_annotate <- function(all_SRA_metadata, organisms = "all",
   cat("-- All organisms to begin with", "\n")
   print(table(all_metadata_RFP$ScientificName))
   # Row filters:
+  cat("-- Filtering unwanted sample classifications", "\n")
   filtered_RFP <- all_metadata_RFP[ScientificName %in% organisms &
-                                   LibraryLayout %in% LibraryLayouts &
-                                   Platform %in% Platforms,]
-  nrow(filtered_RFP)
+                                     LibraryLayout %in% LibraryLayouts &
+                                     Platform %in% Platforms,]
+
   if (length(grep("is currently private", filtered_RFP$sample_title)) > 0)
     filtered_RFP <- filtered_RFP[-grep("is currently private", sample_title),]
-  nrow(filtered_RFP)
   if (length(grep("miRNA-Seq", filtered_RFP$LibraryStrategy)) > 0)
     filtered_RFP <- filtered_RFP[-grep("miRNA-Seq", LibraryStrategy),]
-  nrow(filtered_RFP)
-  # Remove all NA columns:
-  filtered_RFP <- filtered_RFP[,which(unlist(lapply(filtered_RFP, function(x)!all(is.na(x))))),with=F]
-  # Remove unwanted columns
-  filtered_RFP[, Tumor := NULL]; filtered_RFP[, spots_with_mates := NULL]
+  cat("-- Numer of samples filtered out", "\n")
+  print(nrow(all_metadata_RFP) - nrow(filtered_RFP))
+  # Now remove columns not wanted
+  if (removeAllNACols) {
+    # Remove all NA columns:
+    filtered_RFP <- filtered_RFP[,which(unlist(lapply(filtered_RFP, function(x)!all(is.na(x))))),with=F]
+    # Remove unwanted columns
+    filtered_RFP[, Tumor := NULL]; filtered_RFP[, spots_with_mates := NULL]
+  }
   suppressWarnings(filtered_RFP[, Subject_ID := NULL])
+
+  return(filtered_RFP)
+}
+
+pipeline_metadata_annotate <- function(filtered_RFP) {
   # Use ORFik auto detection of library type:
   # First check from sample
   filtered_RFP$LIBRARYTYPE <- ORFik:::findFromPath(filtered_RFP$sample_title,
@@ -193,6 +191,13 @@ pipeline_metadata_annotate <- function(all_SRA_metadata, organisms = "all",
                                                                    ORFik:::cellLineNames(), "auto")
   filtered_RFP[(TISSUE == "") & CELL_LINE != "",]$TISSUE <- ORFik:::findFromPath(filtered_RFP[(TISSUE == "") & CELL_LINE != "",]$CELL_LINE,
                                                                                  ORFik:::cellLineNames(TRUE), "auto")
+  # Correct replicate names
+  duplicated_samples <- any(duplicated(filtered_RFP$sample_title) & !is.na(filtered_RFP$sample_title))
+  if (duplicated_samples) {
+    filtered_RFP[, has_dups := any(duplicated(sample_title) | all(REPLICATE == "")), by= .(study_accession)]
+    filtered_RFP[has_dups == TRUE, REPLICATE := seq(.N), by= .(study_accession, sample_title)]
+    filtered_RFP$has_dups <- NULL
+  }
   # Knock outs
   filtered_RFP$GENE <- ""
   combs <- expand.grid(c("Δ", "KO"), c(" .*", "_.*", "$"))
@@ -222,11 +227,20 @@ pipeline_metadata_annotate <- function(all_SRA_metadata, organisms = "all",
 #'
 #' @param dt a data.table of all metadata for all studies
 #' @inheritParams curate_metadata
-#' @param output_file a path to store final Ribo csv
-#' @param backup_file a path to store backup csv, store all runs, even non Ribo-seq, such that it can be used if wanted.
+#' @param output_file a path to store final Ribo csv, default config$complete_metadata
+#' @param backup_file a path to store backup csv, default: config$backup_metadata,
+#' store all runs, even non Ribo-seq, such that it can be used if wanted.
 pipeline_validate_metadata <- function(dt, config,
-                                       output_file = file.path(config$project, "RFP_FINAL_LIST.csv"),
-                                       backup_file = file.path(config$project, "ALL_BACKUP_LIST.csv")) {
+                                       output_file = config$complete_metadata,
+                                       backup_file = config$backup_metadata,
+                                       next_round_file = config$temp_metadata,
+                                       libtypes = "RFP") {
+  message("-- Validating metadata")
+  message("- Total input samples: ", nrow(dt))
+  if (nrow(dt) == 0) {
+    message("Table is empty returning")
+    return(FALSE)
+  }
   project_dir <- config$project
   if (file.exists(backup_file)) {
     message("Appending new studies from current input to the backup file")
@@ -238,29 +252,26 @@ pipeline_validate_metadata <- function(dt, config,
   #stopifnot(all(files$CHECKED %in% c(TRUE, FALSE)));stopifnot(all(files$DISCARD %in% c(TRUE, FALSE)));stopifnot(all(files$ASSIGNED_TO %in% c("PREETI", "KORNEL", "TESHOME", "HÅKON")))
   #files <- files[DISCARD == FALSE & CHECKED == TRUE,];
   files <- dt
-  files <- files[KEEP %in% c(TRUE, NA),]; nrow(files); table(files$LIBRARYTYPE)
   files[LIBRARYTYPE == "RPF", LIBRARYTYPE := "RFP"] # Force RFP naming for safety!
-  files <- files[LIBRARYTYPE %in% c("RFP"),]; nrow(files) # unique(files[LIBRARYTYPE == "",]$BioProject)
-  stopifnot(length(unique(files$Run)) == length(files$Run)) #files[duplicated(files$Run),]$Run
-
-  if ("GENE" %in% colnames(files)) {
-    files[, name := paste(LIBRARYTYPE, BATCH, REPLICATE, TIMEPOINT, TISSUE, CELL_LINE,
-                          CONDITION, GENE, FRACTION, INHIBITOR, sep = "_")]
-  } else {
-    files[, name := paste(LIBRARYTYPE, BATCH, REPLICATE, TIMEPOINT, TISSUE, CELL_LINE,
-                          CONDITION, FRACTION, INHIBITOR, sep = "_")]
+  # files <- files[KEEP %in% c(TRUE, NA),]; nrow(files)
+  # files <- files[LIBRARYTYPE %in% c(libtypes),]
+  if (length(unique(files$Run)) != length(files$Run)) {
+    message("You have duplicated runs in you metadata!")
+    print(files[duplicated(files$Run),]$Run)
+    fwrite(files, next_round_file)
+    return(FALSE)
   }
-
-  files[, not_unique := duplicated(name), by = BioProject]
+  files <- metadata_is_valid(files)
   #
-  if (sum(files$not_unique) != 0) {
+  if (sum(files[KEEP == TRUE,]$not_unique) != 0) {
     warning("Sorry, still not unique, try again, may the force be with you!")
   } else {
     message("Congratulations!")
     message("Data is unique!")
     message("Saving to: ", output_file)
     message("- Done")
-    fwrite(files, output_file)
+    fwrite(files, next_round_file)
+    fwrite(files[KEEP == TRUE & (LIBRARYTYPE %in% c(libtypes)),], output_file)
     return(TRUE)
   }
 
@@ -288,6 +299,60 @@ pipeline_validate_metadata <- function(dt, config,
   table(files$TISSUE)#unique(files[TISSUE == "",]$BioProject)
   table(files$CELL_LINE)#unique(files[CELL_LINE == "Huh",]$BioProject)
   table(files$BATCH)
-  fwrite(files, file.path(project_dir, "RFP_next_round_manual.csv"))
+  fwrite(files, next_round_file)
   return(FALSE)
+}
+
+metadata_is_valid <- function(files) {
+  if ("GENE" %in% colnames(files)) {
+    files[, name := paste(LIBRARYTYPE, BATCH, REPLICATE, TIMEPOINT, TISSUE, CELL_LINE,
+                          CONDITION, GENE, FRACTION, INHIBITOR, sep = "_")]
+  } else {
+    files[, name := paste(LIBRARYTYPE, BATCH, REPLICATE, TIMEPOINT, TISSUE, CELL_LINE,
+                          CONDITION, FRACTION, INHIBITOR, sep = "_")]
+  }
+
+  files[, not_unique := duplicated(name), by = BioProject]
+  return(files)
+}
+
+add_new_data <- function(accessions, config, organisms = "all",
+                         google_url = config$google_url,
+                         complete_metadata = config$complete_metadata,
+                         LibraryLayouts = c("SINGLE", "PAIRED"), Platforms = "ILLUMINA",
+                         open_google_sheet = interactive()) {
+  # Step1: Get all metadata
+  all_SRA_metadata <- pipeline_metadata(accessions, config)
+  # Step2: Filter out what you do not want
+  filetered_SRA_metadata <- pipeline_metadata_filter(all_SRA_metadata, organisms,
+                                                     LibraryLayouts, Platforms)
+  # Step3: Try to auto annotate
+  all_SRA_metadata_RFP <- pipeline_metadata_annotate(filetered_SRA_metadata)
+  # Step4: Merge with existing finished metadata
+  complete_metadata_dt <- data.table()
+  new_studies_count <- nrow(all_SRA_metadata_RFP)
+  if (!is.null(google_url)) {
+    complete_metadata_dt <- read_sheet_safe(google_url)
+  } else if (file.exists(complete_metadata)) complete_metadata_dt <- fread(complete_metadata)
+  if (nrow(complete_metadata_dt) > 0) { # IF you have started before
+    new_studies <- !(all_SRA_metadata_RFP$study_accession %in%
+                       complete_metadata_dt$study_accession)
+    new_studies_count <- sum(new_studies)
+    suppressWarnings(all_SRA_metadata_RFP[, STAGE := NULL])
+    suppressWarnings(all_SRA_metadata_RFP[, Sex := NULL])
+    all_SRA_metadata_RFP <- suppressWarnings(rbind(complete_metadata_dt,
+                                                   all_SRA_metadata_RFP[new_studies,]))
+  }
+  message("New samples to annotate: ", new_studies_count)
+  fwrite(all_SRA_metadata_RFP, file.path(config$project, "RFP_pre_manual_annotation.csv"))
+  # Step5: Store as csv and open in google sheet and fix
+  # Create a new sheet or use existing one
+  #google_url <- gs4_create(name = "RFP_next_round_manual2.csv")
+  if (!is.null(google_url)) {
+    write_sheet(read.csv((file.path(config$project, "RFP_pre_manual_annotation.csv"))),
+                ss = google_url,
+                sheet = 1)
+    if (interactive() & open_google_sheet) browseURL(google_url)
+  }
+  return(invisible(NULL))
 }

@@ -22,7 +22,8 @@ accessions_to_use <- function(user_specified = character(), organisms = "Homo sa
 
   rpfdb_accessions <- search_accessions <- character()
   if (rpfdb) {
-    rpfdb_studies <- as.data.table(jsonlite::fromJSON("~/rpfdb-studies.json"))
+    rpfdb_studies <- as.data.table(jsonlite::fromJSON(
+      system.file("extdata", "rpfdb-studies.json", package = "massiveNGSpipe")))
     organisms_rpfdb <- rpfdb_org_name(organisms)
     rpfdb_accessions <- trimws(rpfdb_studies[Species %in% organisms_rpfdb, ]$Study) # SacCer
   }
@@ -39,11 +40,11 @@ accessions_to_use <- function(user_specified = character(), organisms = "Homo sa
     }
   }
 
-  accessions <- c(user_specified, unique(search_accessions, rpfdb_accessions))
+  accessions <- c(user_specified, unique(c(search_accessions, rpfdb_accessions)))
   if (any(duplicated(accessions)))
     warning("Duplicated accessions found, you added user_specified accessions
             already found by either massive_search or rpfdb!")
-  return(unique(accessions))
+  return(unique(c(accessions)))
 }
 
 rpfdb_org_name <- function(organisms) {

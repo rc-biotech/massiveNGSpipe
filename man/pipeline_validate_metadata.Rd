@@ -7,8 +7,10 @@
 pipeline_validate_metadata(
   dt,
   config,
-  output_file = file.path(config$project, "RFP_FINAL_LIST.csv"),
-  backup_file = file.path(config$project, "ALL_BACKUP_LIST.csv")
+  output_file = config$complete_metadata,
+  backup_file = config$backup_metadata,
+  next_round_file = config$temp_metadata,
+  libtypes = "RFP"
 )
 }
 \arguments{
@@ -17,9 +19,10 @@ pipeline_validate_metadata(
 \item{config}{list, output from pipeline_config(), the global config for your
 NGS pipeline}
 
-\item{output_file}{a path to store final Ribo csv}
+\item{output_file}{a path to store final Ribo csv, default config$complete_metadata}
 
-\item{backup_file}{a path to store backup csv, store all runs, even non Ribo-seq, such that it can be used if wanted.}
+\item{backup_file}{a path to store backup csv, default: config$backup_metadata,
+store all runs, even non Ribo-seq, such that it can be used if wanted.}
 }
 \description{
 Validate that metadata is ready to run

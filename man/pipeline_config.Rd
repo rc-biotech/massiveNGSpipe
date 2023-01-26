@@ -6,7 +6,19 @@
 \usage{
 pipeline_config(
   project_dir = file.path(dirname(config)[1], "NGS_pipeline"),
-  config = ORFik::config()
+  config = ORFik::config(),
+  complete_metadata = file.path(project_dir, "RFP_FINAL_LIST.csv"),
+  backup_metadata = file.path(project_dir, "ALL_BACKUP_LIST.csv"),
+  temp_metadata = file.path(project_dir, "RFP_next_round_manual.csv"),
+  google_url = default_sheets(),
+  flags = pipeline_flags(project_dir),
+  flag_steps = config_substeps(names(flags)),
+  pipeline_steps = list(pipeline_fetch, pipeline_trim_collapse, pipeline_align_clean,
+    pipeline_exp_ofst, pipeline_pshift_and_validate, pipeline_merge_per_study,
+    pipeline_convert_psite_reads, pipeline_counts_psites),
+  parallel_conf = bpoptions(log = TRUE, stop.on.error = TRUE),
+  logdir = file.path(project_dir, "log_pipeline"),
+  BPPARAM = bpparam()
 )
 }
 \arguments{
@@ -14,6 +26,31 @@ pipeline_config(
 
 \item{config}{path, default \code{ORFik::config()}, where will
 fastq, bam, references and ORFik experiments go}
+
+\item{complete_metadata}{path, default: file.path(project_dir, "RFP_FINAL_LIST.csv")
+Where should completed valid metadata be stored as csv?}
+
+\item{google_url}{url or sheet object for google sheet to use. Set to NULL to
+not use google sheet.}
+
+\item{flags}{named character vector, with cut points, where can
+the pipeline continue if it breaks? Is defined in combination with
+'steps' argument that defines that actuall function called for each break point.
+Increasing break points makes the pipeline run faster at the cost of more
+resource usage.}
+
+\item{flag_steps}{a list of subsets of flags that maps which flags are set in
+each function in 'step'.}
+
+\item{parallel_conf}{a bpoptions object, default:
+\code{bpoptions(log =TRUE, stop.on.error = TRUE)}
+Specific pipeline config for parallel settings and log directory}
+
+\item{logdir}{= file.path(project_dir, "log_pipeline"),}
+
+\item{BPPARAM}{= bpparam()}
+
+\item{steps}{a list of functions, the functions called during 'run_pipeline'}
 }
 \value{
 a list with a defined config

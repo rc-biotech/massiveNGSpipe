@@ -7,8 +7,11 @@
 pipeline_init(study, study_accession, config)
 }
 \arguments{
+\item{study}{a data.table of output from ORFik::download.SRA.metadata}
+
 \item{study_accession}{any accession accepted by
-\code{ORFik::download.SRA.metadata}.}
+\code{ORFik::download.SRA.metadata}. It is needed to know
+if you used GEO, PRJ, SRP etc as the search query.}
 
 \item{config}{Configured directories for pipeline as a list}
 }

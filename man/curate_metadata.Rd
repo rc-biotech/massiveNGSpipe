@@ -8,12 +8,13 @@ curate_metadata(
   accessions,
   config,
   organisms = "all",
-  google_url =
-    "https://docs.google.com/spreadsheets/d/18Y-WDvV_w0kTT3Xap4M5GZWpg39ZK-gUzzV7fuKbMvo/edit#gid=769582544",
-  complete_metadata = file.path(project_dir, "RFP_FINAL_LIST.csv"),
+  google_url = config$google_url,
+  complete_metadata = config$complete_metadata,
   LibraryLayouts = c("SINGLE", "PAIRED"),
   Platforms = "ILLUMINA",
-  step_mode = FALSE
+  step_mode = FALSE,
+  open_google_sheet = interactive(),
+  fix_loop = TRUE
 )
 }
 \arguments{
@@ -24,6 +25,8 @@ curate_metadata(
 \item SRA study (SRA)\cr
 \item ENA study (ERA)\cr
 \item GEO study (GSE)\cr
+\item NULL (not "NULL", but NULL), don't add new accession, only look if you
+current google sheet or local csv is ready.
 }}
 
 \item{config}{list, output from pipeline_config(), the global config for your
@@ -32,7 +35,7 @@ NGS pipeline}
 \item{organisms}{character vector, default "all" (Use all organisms found).
 Else binomial latin name with capital letter for genus: "Homo sapiens" etc.}
 
-\item{google_url}{character, default our google doc sheet. If not NULL,
+\item{google_url}{character, default config$google_url. If not NULL,
 will use the google sheet to check for updated metadata.}
 
 \item{complete_metadata}{path, default file.path(project_dir, "RFP_FINAL_LIST.csv").
@@ -45,6 +48,11 @@ either or both of: c("SINGLE", "PAIRED")}
 
 \item{step_mode}{logical, default FALSE. If TRUE, actives browser() and lets you go through
 each step in debug mode for full control.}
+
+\item{fix_loop}{logical, default TRUE. If TRUE, will create a loop in
+the end that runs until your metadata is valid. If you
+only want to updata csv / google docs with new data and not try to complete
+now, set this to FALSE.}
 }
 \value{
 logical, TRUE if you had unique rows per accession per organism

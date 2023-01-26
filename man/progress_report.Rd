@@ -4,7 +4,13 @@
 \alias{progress_report}
 \title{Report summary of current progress}
 \usage{
-progress_report(pipelines, config, show_stats = TRUE)
+progress_report(
+  pipelines,
+  config,
+  show_stats = TRUE,
+  show_done = TRUE,
+  status_plot = FALSE
+)
 }
 \arguments{
 \item{pipelines}{list, output of pipeline_init_all}
@@ -16,6 +22,9 @@ NGS pipeline}
 \itemize{
 \item plots, set to FALSE if you only want progress report.
 }}
+
+\item{show_done}{logical, default TRUE. If FALSE, display only status
+of projects that are not done. Stats will still show for all.}
 }
 \value{
 invisible(NULL)

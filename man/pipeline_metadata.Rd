@@ -4,7 +4,7 @@
 \alias{pipeline_metadata}
 \title{Download all metadata for all accessions}
 \usage{
-pipeline_metadata(accessions, config, force = FALSE)
+pipeline_metadata(accessions, config, force = FALSE, max_attempts = 7)
 }
 \arguments{
 \item{accessions}{character vector, all candidate accession numbers, allowed types:\cr
@@ -14,12 +14,18 @@ pipeline_metadata(accessions, config, force = FALSE)
 \item SRA study (SRA)\cr
 \item ENA study (ERA)\cr
 \item GEO study (GSE)\cr
+\item NULL (not "NULL", but NULL), don't add new accession, only look if you
+current google sheet or local csv is ready.
 }}
 
 \item{config}{list, output from pipeline_config(), the global config for your
 NGS pipeline}
 
 \item{force}{logical, default FALSE. Force redownload of all, if something failed}
+
+\item{max_attempts}{numeric, default 7. How many attempts to download beforing
+failing? This call flood SRA with calls, so set it higher if you use a lot
+of samples.}
 }
 \value{
 a data.table of all metadata for all accessions

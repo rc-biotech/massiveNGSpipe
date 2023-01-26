@@ -6,7 +6,8 @@
 \usage{
 pipeline_init_all(
   config,
-  complete_metadata = file.path(config$project, "RFP_FINAL_LIST.csv")
+  complete_metadata = config$complete_metadata,
+  simple_progress_report = TRUE
 )
 }
 \arguments{
@@ -15,6 +16,8 @@ NGS pipeline}
 
 \item{complete_metadata}{path, default file.path(project_dir, "RFP_FINAL_LIST.csv").
 The list of final candidates that are checked and have unique rows per bioproject}
+
+\item{simple_progress_report}{logical, default TRUE. Display current progress.}
 }
 \value{
 a list of pipelines

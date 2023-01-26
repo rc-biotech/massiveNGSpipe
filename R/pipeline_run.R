@@ -11,45 +11,39 @@
 #' \code{MulticoreParam(3)}, which gives 3 threads.
 #' @return invisible(NULL)
 #' @export
-run_pipeline <- function(pipelines, config, wait = 100, BPPARAM = bpparam()) {
+run_pipeline <- function(pipelines, config, wait = 100, BPPARAM = config$BPPARAM) {
   message("---- Starting pipline:")
   message("Number of workers: ", BPPARAM$workers)
-  # Prepare sub steps of pipeline with flags
-  pipeline_steps <- list(pipeline_fetch, pipeline_trim_align,
-                         pipeline_ofst_pshift, pipeline_merge)
-  flags <- names(config$flag)
-  substeps <- list(pipe_fetch = flags[1],
-                   pipe_align = flags[2:5],
-                   pipe_pshift = flags[6:9],
-                   pipe_merge = flags[10])
+  substeps <- config$flag_steps
+  pipeline_steps <- config$pipeline_steps
   # Run pipeline
   BiocParallel::bplapply(seq_along(pipeline_steps),
-                         function(i, substeps, pipelines, pipeline_steps)
-    parallel_wrap(pipeline_steps[[i]], pipelines, config, substeps[[i]], wait = 100),
-    BPPARAM = BPPARAM, substeps = substeps, pipelines = pipelines,
-    pipeline_steps = pipeline_steps)
+                         function(i, substeps, pipelines, pipeline_steps, wait)
+    parallel_wrap(pipeline_steps[[i]], pipelines, config, substeps[[i]], wait),
+    substeps = substeps, pipelines = pipelines, wait = wait,
+    pipeline_steps = pipeline_steps, BPOPTIONS = config$parallel_conf, BPPARAM = BPPARAM)
   # Done
   message("Pipeline is done, creating report")
   progress_report(pipelines, config)
 }
 
 parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100) {
-  steps_not_done <- TRUE
-  exp <-
+  message("Start step pipeline:\n", paste(steps, collapse = " ,", sep = " ,"))
+  exps <- pipelines_names(pipelines)
   idle_round <- 0
-  while(any(steps_not_done)) {
+  steps_done <- all_substeps_done_all(config, steps, exps)
+  while(!all(steps_done)) {
     function_call(pipelines, config)
-    steps_not_done <- all_substeps_done(config, steps, exp)
+    steps_done <- all_substeps_done_all(config, steps, exps)
 
-    if (any(steps_not_done)) {
+    if (!all(steps_done)) {
       message("Sleep")
       Sys.sleep(wait)
       message("Stopped sleeping")
       idle_round <- idle_round + 1; message("- ", idle_round)
     }
   }
-  message("Done for step pipeline:")
-  cat(steps, sep = ","); cat("\n")
+  message("Done for step pipeline:\n", paste(steps, collapse = " ,", sep = " ,"))
 }
 
 pipelines_names <- function(pipelines, recursive = TRUE) {
