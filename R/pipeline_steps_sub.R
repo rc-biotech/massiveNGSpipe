@@ -36,7 +36,8 @@ pipeline_init <- function(study, study_accession, config) {
             phix = TRUE, ncRNA = TRUE, tRNA = TRUE, rRNA = TRUE,
             output.dir = conf["ref"],
             assembly_type = "primary_assembly", optimize = TRUE,
-            pseudo_5UTRS_if_needed = 100, notify_load_existing = FALSE
+            pseudo_5UTRS_if_needed = 100, notify_load_existing = FALSE,
+            gene_symbols = TRUE
           )
         )
         if (is(ensembl_db, "try-error")) {
@@ -49,7 +50,7 @@ pipeline_init <- function(study, study_accession, config) {
             output.dir = conf["ref"],
             assembly_type = "primary_assembly", optimize = TRUE,
             pseudo_5UTRS_if_needed = 100, db = "refseq",
-            notify_load_existing = FALSE
+            notify_load_existing = FALSE, gene_symbols = TRUE
           )
         }
         index <- ORFik::STAR.index(annotation)
@@ -271,6 +272,10 @@ pipeline_create_experiment <- function(pipeline, config) {
         assembly_name <- gsub(" ", "_", trimws(tolower(organism)))
         accession <- pipeline$accession
         study <- pipeline$study
+        stopifnot(nrow(study) > 0)
+        study <- study[ScientificName == organism,]
+        if (nrow(study) == 0)
+          stop("No samples for organism wanted in study!")
         experiment <- paste(accession, assembly_name, sep = "-")
         # Do some small correction to info and merge
         remove <- "^_|_$|^NA_|_NA$|^NA$|^_$|^__$|^___$"
@@ -278,43 +283,23 @@ pipeline_create_experiment <- function(pipeline, config) {
         stage <- gsub(paste0(remove, "|NONE_|_NONE"), "", stage)
         stage <- gsub(paste0(remove, "|NONE_|_NONE"), "", stage) # Twice
 
-        condition <- paste0(study$BATCH, "_",study$CONDITION)
+        condition <- paste0(study$CONDITION)
         condition <- gsub(remove, "", condition)
         condition <- gsub(remove, "", condition)
 
-        fraction <- paste(study$FRACTION,study$TIMEPOINT, sep = "_")
+        fraction <- paste(study$FRACTION,study$TIMEPOINT, study$BATCH, sep = "_")
         if (!is.null(study$GENE)) fraction <- paste(fraction, study$GENE, sep = "_")
         fraction <- gsub(remove, "", fraction)
         if (!all(study$INHIBITOR == "chx")) {
           fraction <- paste0(fraction, "_",study$INHIBITOR)
         }
         fraction <- gsub(remove, "", fraction); fraction <- gsub(remove, "", fraction)
+        fraction <- gsub(remove, "", fraction)
         paired_end <- study$LibraryLayout == "PAIRED"
-        bam_dir <- fs::path(conf["bam"], "aligned")
         if (any(paired_end)) stop("TODO: Fix for paired end, will not work for now")
-        #bam_files <- ORFik:::findLibrariesInFolder(dir = bam_dir, pairedEndBam = paired_end)
-        bam_files <- ORFik:::findLibrariesInFolder(dir = bam_dir,
-                                      types = c("bam", "bed", "wig", "ofst"),
-                                      pairedEndBam = paired_end)
 
-        bam_files_base <- ORFik:::remove.file_ext(bam_files, basename = T)
-        bam_files_base <- gsub("_Aligned.*", "", bam_files_base)
-        bam_files_base <- sub(".*_", "", bam_files_base)
-        stopifnot(all(bam_files_base != ""))
-        bam_files <- bam_files[match(study$Run, bam_files_base)]
-        stopifnot(length(bam_files) == length(bam_files_base))
-        if (nrow(study) != length(bam_files)) {
-          if (anyNA(bam_files)) {
-            message("Error: you are missing some bam files compared to study metadata")
-            print(bam_files)
-            stop("Missing bam files!")
-          } else if (nrow(study) < length(bam_files)) {
-            message("Error: you are more bam files in folder compared to study metadata")
-            print(bam_files)
-            stop("Too many bam files!")
-          } else stop("Not correct number of bam files in folder compared to study metadata")
-        }
-        if (length(bam_files) == 0) stop("Could not find SRR runs in aligned folder for: ", )
+        bam_dir <- fs::path(conf["bam"], "aligned")
+        bam_files <- match_bam_to_metadata(bam_dir, study, paired_end)
         ORFik::create.experiment(
             dir = bam_dir,
             exper = experiment, txdb = paste0(annotation["gtf"], ".db"),

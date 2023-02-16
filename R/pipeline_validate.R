@@ -30,11 +30,15 @@ pipeline_validate_shifts <- function(df_list, config) {
 #' + plots, set to FALSE if you only want progress report.
 #' @param show_done logical, default TRUE. If FALSE, display only status
 #' of projects that are not done. Stats will still show for all.
-#' @return invisible(NULL)
+#' @param status_plot plot an  interactive plot of total status
+#' @param return_progress_vector logical, default FALSE. If true,
+#' return progress vector.
+#' @return invisible(NULL) / or progress vector
 #' @importFrom plotly plot_ly layout
 #' @export
-progress_report <- function(pipelines, config, show_stats = TRUE,
-                            show_done = TRUE, status_plot = FALSE) {
+progress_report <- function(pipelines, config, show_stats = FALSE,
+                            show_done = TRUE, status_plot = FALSE,
+                            return_progress_vector = FALSE) {
   n_bioprojects <- sum(unlist(lapply(pipelines, function(p) length(p$organisms))))
   steps <- names(config[["flag"]])
   negative_message <- steps; names(negative_message) <- steps
@@ -78,6 +82,7 @@ progress_report <- function(pipelines, config, show_stats = TRUE,
   cat("Number of studies completed\n")
   cat(done, " / ", n_bioprojects, "\n")
   ret <- invisible(NULL)
+  if (return_progress_vector) ret <- progress_index
   if (status_plot) {
     ret <- status_plot(steps, progress_index, projects, n_bioprojects, done)
   }

@@ -152,10 +152,10 @@ pipeline_metadata_filter <- function(all_SRA_metadata, organisms = "all",
   if (removeAllNACols) {
     # Remove all NA columns:
     filtered_RFP <- filtered_RFP[,which(unlist(lapply(filtered_RFP, function(x)!all(is.na(x))))),with=F]
-    # Remove unwanted columns
-    filtered_RFP[, Tumor := NULL]; filtered_RFP[, spots_with_mates := NULL]
+    # Keep sample_title and sample_source
+    if (is.null(filtered_RFP$sample_source)) filtered_RFP$sample_source <- ""
+    if (is.null(filtered_RFP$sample_title)) filtered_RFP$sample_title <- ""
   }
-  suppressWarnings(filtered_RFP[, Subject_ID := NULL])
 
   return(filtered_RFP)
 }
@@ -169,8 +169,12 @@ pipeline_metadata_annotate <- function(filtered_RFP) {
   filtered_RFP[LIBRARYTYPE == "",]$LIBRARYTYPE <- ORFik:::findFromPath(filtered_RFP[LIBRARYTYPE == "",]$sample_source,
                                                                        ORFik:::libNames(), "auto")
   # Then check from type
-  filtered_RFP[LIBRARYTYPE == "",]$LIBRARYTYPE <- ORFik:::findFromPath(filtered_RFP[LIBRARYTYPE == "",]$LibraryName,
-                                                                       ORFik:::libNames(), "auto")
+  if (!is.null(filtered_RFP$LibraryName)) {
+    filtered_RFP[LIBRARYTYPE == "",]$LIBRARYTYPE <-
+      ORFik:::findFromPath(filtered_RFP[LIBRARYTYPE == "",]$LibraryName,
+                           ORFik:::libNames(), "auto")
+  }
+
   # Then check strategy
   filtered_RFP[LIBRARYTYPE == "" & !(LibraryStrategy %in%  c("RNA-Seq", "OTHER")),]$LIBRARYTYPE <-
     ORFik:::findFromPath(filtered_RFP[LIBRARYTYPE == "" & !(LibraryStrategy %in%  c("RNA-Seq", "OTHER")),]$LibraryStrategy,
@@ -263,8 +267,9 @@ pipeline_validate_metadata <- function(dt, config,
   }
   files <- metadata_is_valid(files)
   #
-  if (sum(files[KEEP == TRUE,]$not_unique) != 0) {
-    warning("Sorry, still not unique, try again, may the force be with you!")
+  any_not_unique <- sum(files[KEEP == TRUE,]$not_unique) != 0
+  if (any_not_unique) {
+    message("Sorry, still not unique, try again, may the force be with you!")
   } else {
     message("Congratulations!")
     message("Data is unique!")
@@ -340,8 +345,8 @@ add_new_data <- function(accessions, config, organisms = "all",
     new_studies_count <- sum(new_studies)
     suppressWarnings(all_SRA_metadata_RFP[, STAGE := NULL])
     suppressWarnings(all_SRA_metadata_RFP[, Sex := NULL])
-    all_SRA_metadata_RFP <- suppressWarnings(rbind(complete_metadata_dt,
-                                                   all_SRA_metadata_RFP[new_studies,]))
+    all_SRA_metadata_RFP <- suppressWarnings(rbindlist(list(complete_metadata_dt,
+                              all_SRA_metadata_RFP[new_studies,]), fill = TRUE))
   }
   message("New samples to annotate: ", new_studies_count)
   fwrite(all_SRA_metadata_RFP, file.path(config$project, "RFP_pre_manual_annotation.csv"))
@@ -349,10 +354,39 @@ add_new_data <- function(accessions, config, organisms = "all",
   # Create a new sheet or use existing one
   #google_url <- gs4_create(name = "RFP_next_round_manual2.csv")
   if (!is.null(google_url)) {
-    write_sheet(read.csv((file.path(config$project, "RFP_pre_manual_annotation.csv"))),
-                ss = google_url,
-                sheet = 1)
+    if (sum(new_studies) > 0) {
+      write_sheet(read.csv((file.path(config$project, "RFP_pre_manual_annotation.csv"))),
+                  ss = google_url,
+                  sheet = 1)
+    }
+
     if (interactive() & open_google_sheet) browseURL(google_url)
   }
   return(invisible(NULL))
+}
+
+match_bam_to_metadata <- function(bam_dir, study, paired_end) {
+  bam_files <- ORFik:::findLibrariesInFolder(dir = bam_dir,
+                                             types = c("bam", "bed", "wig", "ofst"),
+                                             pairedEndBam = paired_end)
+
+  bam_files_base <- ORFik:::remove.file_ext(bam_files, basename = T)
+  bam_files_base <- gsub("_Aligned.*", "", bam_files_base)
+  bam_files_base <- sub(".*trimmed_", "", bam_files_base)
+  bam_files_base <- gsub(".*_", "", bam_files_base)
+  stopifnot(all(bam_files_base != ""))
+  bam_files <- bam_files[match(study$Run, bam_files_base)]
+
+  if (nrow(study) != length(bam_files)  | anyNA(bam_files)) {
+    if ((nrow(study) > length(bam_files)) | anyNA(bam_files)) {
+      message("Error: you are missing some bam files compared to study metadata")
+      print(bam_files)
+      stop("Missing bam files!")
+    }  else stop("Not correct number of bam files in folder compared to study metadata")
+  } else if (length(bam_files) != length(bam_files_base)) {
+    warning("you have more bam files in folder compared to study metadata")
+    print(bam_files)
+  }
+  if (length(bam_files) == 0) stop("Could not find SRR runs in aligned folder for: ")
+  return(bam_files)
 }

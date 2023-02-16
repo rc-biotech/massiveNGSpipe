@@ -10,7 +10,8 @@ remove_flag_all(config, steps = names(config$flag), pipelines)
 \item{config}{list, output from pipeline_config(), the global config for your
 NGS pipeline}
 
-\item{steps, }{which flags to set to TRUE for given pipeline objects}
+\item{steps, }{which flags to set to FALSE (not done)
+for given pipeline objects}
 
 \item{pipelines}{list, output of pipeline_init_all}
 }

@@ -9,7 +9,8 @@ progress_report(
   config,
   show_stats = TRUE,
   show_done = TRUE,
-  status_plot = FALSE
+  status_plot = FALSE,
+  return_progress_vector = FALSE
 )
 }
 \arguments{
@@ -25,9 +26,14 @@ NGS pipeline}
 
 \item{show_done}{logical, default TRUE. If FALSE, display only status
 of projects that are not done. Stats will still show for all.}
+
+\item{status_plot}{plot an  interactive plot of total status}
+
+\item{return_progress_vector}{logical, default FALSE. If true,
+return progress vector.}
 }
 \value{
-invisible(NULL)
+invisible(NULL) / or progress vector
 }
 \description{
 How many studies have finished etc

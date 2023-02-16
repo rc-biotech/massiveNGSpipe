@@ -24,7 +24,7 @@ run_pipeline <- function(pipelines, config, wait = 100, BPPARAM = config$BPPARAM
     pipeline_steps = pipeline_steps, BPOPTIONS = config$parallel_conf, BPPARAM = BPPARAM)
   # Done
   message("Pipeline is done, creating report")
-  progress_report(pipelines, config)
+  progress_report(pipelines, config, show_stats = TRUE)
 }
 
 parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100) {

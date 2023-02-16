@@ -7,7 +7,8 @@ fastqc_adapters_info <- function(file) {
     list(name = "Illumina Small RNA 5' Adapter", value = "GATCGTCGGACT"),
     list(name = "Nextera Transposase Sequence", value = "CTGTCTCTTATA"),
     list(name = "SOLID Small RNA Adapter", value = "CGCCTTGGCCGT"),
-    list(name = "Hakon 1", value = "CTGTAGGCACCATCAAT"),
+    list(name = "Ingolia 2012 adapter", value = "CTGTAGGCACCATCAAT"),
+    list(name = "Illumina Uni. Adapter var2", value = "ATCGTAGATCGGAAG"),
     list(name = "Hakon 2", value = "CACTCGGGCACCAAGGA"),
     list(name = "Hakon 3", value = "GTGTCAGTCACTTCCAGCGG"),
     list(name = "Hakon 4", value = "TGTAGGCACCATC"),
@@ -19,7 +20,7 @@ fastqc_adapters_info <- function(file) {
     candidates,
     file = candidates_file, sep = "\t", col.names = FALSE
   )
-  
+
   # Run FastQC on first 1.5mil reads using the above table for adapter
   # detection.
   system(paste0(
@@ -29,7 +30,7 @@ fastqc_adapters_info <- function(file) {
     " --adapters ", candidates_file,
     " -o ", tempdir()
   ))
-  
+
   # Parse the report and return the adapter sequence with most hits
   # (or "disable" if none found).
   report <- readLines(fs::path(tempdir(), "stdin_fastqc", "fastqc_data.txt"))
