@@ -4,7 +4,7 @@ Version: 0.0.1.9000
 Authors@R: c(
   person(given = "Haakon", family = "Tjeldnes", email = "hauken_heyken@hotmail.com", role = c("aut", "cre", "dtc")),
   person(given = "Michal", family = "Swirski", email = "michal.swirski@uw.edu.pl", role = c("aut", "ctb")),
-  person(given = "Krztsztof", family = "Starecki", email = "krzysztof.starecki@gmail.com", role = c("ctb")))
+  person(given = "Krzysztof", family = "Starecki", email = "krzysztof.starecki@gmail.com", role = c("ctb")))
 Description: R package for automatic NGS data download and analysis over a massive set of studies
 License: MIT + file LICENSE
 Encoding: UTF-8
