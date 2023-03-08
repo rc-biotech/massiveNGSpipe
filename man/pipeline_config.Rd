@@ -10,7 +10,7 @@ pipeline_config(
   complete_metadata = file.path(project_dir, "RFP_FINAL_LIST.csv"),
   backup_metadata = file.path(project_dir, "ALL_BACKUP_LIST.csv"),
   temp_metadata = file.path(project_dir, "RFP_next_round_manual.csv"),
-  google_url = default_sheets(),
+  google_url = default_sheets(project_dir),
   preset = "Ribo-seq",
   flags = pipeline_flags(project_dir, mode),
   flag_steps = config_substeps(names(flags), mode, preset),

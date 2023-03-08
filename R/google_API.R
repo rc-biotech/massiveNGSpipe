@@ -9,10 +9,19 @@ read_sheet_safe <- function(google_url) {
   return(sheet)
 }
 
-default_sheets <- function(id = "ribocrypt") {
-  if (id == "ribocrypt") {
-    "https://docs.google.com/spreadsheets/d/18Y-WDvV_w0kTT3Xap4M5GZWpg39ZK-gUzzV7fuKbMvo/edit#gid=769582544"
-  } else {
-    NULL
-  }
+#' Get pre-existing or create a new google sheet for metadata
+#' @inheritParams pipeline_config
+#' @param id numeric, the row index of id. Default is 1.
+#' @param sheet_name character, default basename(project_dir)
+#' @return a string of full url.
+default_sheets <- function(project_dir, id = 1,
+                           sheet_name = basename(project_dir)) {
+  if (is.null(id)) return(NULL)
+  url_table <- file.path(project_dir, "google_api_url_table.csv")
+  if (!file.exists(url_table)) {
+    message("Creating new Google sheet:")
+    new_sheet <- googlesheets4::gs4_create(sheet_name)
+    new_sheet <- paste0("https://docs.google.com/spreadsheets/d/",
+                        as.character(new_sheet))
+  } else fread()[id,]$id
 }
