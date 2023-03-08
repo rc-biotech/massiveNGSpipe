@@ -7,7 +7,7 @@
 progress_report(
   pipelines,
   config,
-  show_stats = TRUE,
+  show_stats = FALSE,
   show_done = TRUE,
   status_plot = FALSE,
   return_progress_vector = FALSE

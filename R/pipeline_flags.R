@@ -28,18 +28,25 @@ all_substeps_done_all <- function(config, steps, exps) {
 #' Get all pipeline flags and set dirs
 #'
 #' @param project_dir pipeline directory
+#' @inheritParams pipeline_config
 #' @param flag_sub character vector of names of flag steps to include
+#' @param flags_to_use numeric, vector of indices of 'flag_sub' to use.
+#' c(1,2), would mean only download.
 #' @return a named character vector of directories in 'project_dir'
 #'  named as 'flag_sub' with names 'flag_sub'
-pipeline_flags <- function(project_dir,
+pipeline_flags <- function(project_dir, mode = c("online", "local")[1],
                            flag_sub = c("start","fetch", "trim", "collapsed",
                                         "aligned", "cleanbam","exp","ofst",
                                         "pshifted", "valid_pshift",
                                         "merged_lib",
                                         "covrle", "bigwig",
-                                        "pcounts")) {
+                                        "pcounts"),
+                           flags_to_use = if(mode == "online")
+                             {seq(length(flag_sub))} else seq(length(flag_sub))[-c(1,2)]) {
   flag_dir <- file.path(project_dir, "flags")
+  flag_sub <- flag_sub[flags_to_use]
   flags <- file.path(flag_dir, flag_sub)
+  stopifnot(length(flags) > 0)
   names(flags) <- flag_sub
   lapply(flags, function(f) dir.create(f, showWarnings = FALSE, recursive = TRUE))
   return(flags)
@@ -57,7 +64,11 @@ step_is_next_not_done <- function(config, step, experiment
   all_steps <- names(config[["flag"]])
   all_flags <- file.exists(file.path(config[["flag"]], paste0(experiment, ".rds")))
   index <- which(all_steps %in% step)
-  return(all(all_flags[seq(index-1)]) & !all_flags[index])
+  all_previous_done <- if (index == 1) {
+    TRUE
+  } else all(all_flags[seq(index-1)])
+  this_one_not_done <- !all_flags[index]
+  return(all_previous_done & this_one_not_done)
 }
 
 set_flag <- function(config, step, experiment, value = TRUE) {

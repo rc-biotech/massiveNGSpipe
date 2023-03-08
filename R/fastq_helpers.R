@@ -23,8 +23,10 @@ fastqc_adapters_info <- function(file) {
 
   # Run FastQC on first 1.5mil reads using the above table for adapter
   # detection.
+  file_extension <- tools::file_ext(file)
+  cat <- ifelse(file_extension == "gz", "zcat ", "cat ")
   system(paste0(
-    "cat ", file,
+    cat, file,
     " | head -n 6000000",
     " | fastqc stdin --extract",
     " --adapters ", candidates_file,

@@ -9,6 +9,10 @@ read_sheet_safe <- function(google_url) {
   return(sheet)
 }
 
-default_sheets <- function() {
-  "https://docs.google.com/spreadsheets/d/18Y-WDvV_w0kTT3Xap4M5GZWpg39ZK-gUzzV7fuKbMvo/edit#gid=769582544"
+default_sheets <- function(id = "ribocrypt") {
+  if (id == "ribocrypt") {
+    "https://docs.google.com/spreadsheets/d/18Y-WDvV_w0kTT3Xap4M5GZWpg39ZK-gUzzV7fuKbMvo/edit#gid=769582544"
+  } else {
+    NULL
+  }
 }

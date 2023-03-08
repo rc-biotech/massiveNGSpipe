@@ -187,6 +187,7 @@ pipeline_metadata_annotate <- function(filtered_RFP) {
                                                  ORFik:::stageNames(), "auto")
   filtered_RFP$TISSUE <- ORFik:::findFromPath(filtered_RFP$sample_title,
                                               ORFik:::tissueNames(), "auto")
+  # browser()
   filtered_RFP[TISSUE == "",]$TISSUE <- ORFik:::findFromPath(filtered_RFP[TISSUE == "",]$sample_source,
                                                              ORFik:::tissueNames(), "auto")
   filtered_RFP$CELL_LINE <- ORFik:::findFromPath(filtered_RFP$sample_title,
@@ -271,12 +272,15 @@ pipeline_validate_metadata <- function(dt, config,
   if (any_not_unique) {
     message("Sorry, still not unique, try again, may the force be with you!")
   } else {
+    file_to_keep <- files[KEEP == TRUE & (LIBRARYTYPE %in% c(libtypes)),]
     message("Congratulations!")
     message("Data is unique!")
+    message("Number of samples marked as KEEP: (",
+            nrow(file_to_keep), "/", nrow(files), ")")
     message("Saving to: ", output_file)
     message("- Done")
     fwrite(files, next_round_file)
-    fwrite(files[KEEP == TRUE & (LIBRARYTYPE %in% c(libtypes)),], output_file)
+    fwrite(file_to_keep, output_file)
     return(TRUE)
   }
 
@@ -349,13 +353,15 @@ add_new_data <- function(accessions, config, organisms = "all",
                               all_SRA_metadata_RFP[new_studies,]), fill = TRUE))
   }
   message("New samples to annotate: ", new_studies_count)
-  fwrite(all_SRA_metadata_RFP, file.path(config$project, "RFP_pre_manual_annotation.csv"))
+  fwrite(all_SRA_metadata_RFP, config$temp_metadata)
   # Step5: Store as csv and open in google sheet and fix
   # Create a new sheet or use existing one
   #google_url <- gs4_create(name = "RFP_next_round_manual2.csv")
   if (!is.null(google_url)) {
     if (sum(new_studies) > 0) {
-      write_sheet(read.csv((file.path(config$project, "RFP_pre_manual_annotation.csv"))),
+      local_google_copy <- file.path(config$project, "temp_google_local.csv")
+      fwrite(all_SRA_metadata_RFP, local_google_copy)
+      write_sheet(read.csv(local_google_copy),
                   ss = google_url,
                   sheet = 1)
     }
@@ -390,3 +396,65 @@ match_bam_to_metadata <- function(bam_dir, study, paired_end) {
   if (length(bam_files) == 0) stop("Could not find SRR runs in aligned folder for: ")
   return(bam_files)
 }
+
+
+#' Create template study csv info
+#' @param dir a directory with fast files
+#'  (fasta or fastq, uncompressed/compressed)
+#' @param name a basis for directory name. The relative path without
+#' the -organism part.
+#' @param file_basenames character vector, file_basenames
+#' @param organism Scientific latin name of organism, give single if all
+#' are equal, or specify for each file if multiple. Example: "Homo sapiens"
+#' @param sample_title Define a valid sample name per sample, like,
+#'  'WT_ribo_cyclohexamide_rep1'
+#' @param paired character, either "SINGLE" or "PAIRED"
+#' @param Model Sequencing machine name, default: "Illumina Genome Analyzer",
+#' give single if all are equal, or specify for each file if multiple.
+#' @param Platform Sequencing machine platform, default: "ILLUMINA",
+#' give single if all are equal, or specify for each file if multiple.
+#' @return a data.table with required columns:\cr
+#' study_accession: the basename of folder for experiment\cr
+#' RUN: The sample name (For paired end, still 1 row, with basename of sample)\cr
+#' ...
+#' @export
+local_study_csv <- function(dir, name, files = list.files(dir, pattern = "\\.fast.*", full.names = TRUE),
+                            organism, sample_title, paired = FALSE,
+                            Model = "Illumina Genome Analyzer",
+                            Platform = "ILLUMINA",
+                            LibraryName = "",
+                            LibraryStrategy = "RNA-Seq",
+                            LibrarySource = "TRANSCRIPTOMIC",
+                            SampleName = c(""), sample_source = c(""),
+                            MONTH = substr(Sys.time(), 6,7),
+                            YEAR = substr(Sys.time(), 1,4),
+                            AUTHOR = Sys.info()["user"]) {
+  if (any(paired %in% "PAIRED")) stop("Only single end supported for now!")
+  message("Using files:")
+  print(basename(files))
+  message("total files: ", length(files))
+  stopifnot(length(files) > 0)
+  stopifnot(all(paired %in% c("SINGLE", "PAIRED")))
+
+  file_basenames <- gsub("\\.fast.*", "", basename(files))
+  file_basenames_split <- file_basenames
+  file_basenames_unique <- unique(gsub("_\\.[1-9]\\.fast", "", file_basenames))
+  size_MB <- floor(file.size(files)/1024^2)
+  dt_temp <- data.table(Run = file_basenames_unique,
+                        spots = NA, bases = NA, avgLength = NA,
+                        size_MB, LibraryName, LibraryStrategy,
+                        LibrarySource, LibraryLayout = paired,
+                        Submission = name,
+                        Platform, Model, ScientificName = organism,
+                        SampleName, MONTH, YEAR, AUTHOR, sample_source,
+                        sample_title)
+  dt_temp[, BioProject := as.integer(as.factor(Submission))]
+
+  auto_detect <- TRUE # Always TRUE for now
+  if (auto_detect) {
+    dt_temp <- ORFik:::metadata.autnaming(dt_temp)
+  }
+
+  return(dt_temp)
+}
+

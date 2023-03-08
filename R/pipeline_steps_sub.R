@@ -53,7 +53,7 @@ pipeline_init <- function(study, study_accession, config) {
             notify_load_existing = FALSE, gene_symbols = TRUE
           )
         }
-        index <- ORFik::STAR.index(annotation)
+        index <- ORFik::STAR.index(annotation, notify_load_existing = FALSE)
         organisms[[organism]] <- list(
             conf = conf, annotation = annotation, index = index,
             experiment = experiment
@@ -101,19 +101,27 @@ pipeline_trim <- function(pipeline, config) {
             message(runs[i]$Run)
             filenames <-
                 if (runs[i]$LibraryLayout == "PAIRED") {
-                    paste0(runs[i]$Run, c("_1", "_2"), ".fastq")
+                  paste0(runs[i]$Run, c("_1", "_2"), ".fastq")
                 } else {
-                    paste0(runs[i]$Run, ".fastq")
+                  paste0(runs[i]$Run, ".fastq")
                 }
-            for (file in fs::path(source_dir, filenames)) {
-                ORFik::STAR.align.single(
-                    file,
-                    output.dir = target_dir,
-                    adapter.sequence = fastqc_adapters_info(file),
-                    index.dir = index, steps = "tr"
-                )
-                fs::file_delete(file)
+            filenames <- fs::path(source_dir, filenames)
+            if (!all(file.exists(filenames))) {
+              filenames <- paste0(filenames, ".gz")
+              if (!all(file.exists(filenames))) {
+                stop("File does not exist: ", filenames[1])
+              }
             }
+            file <- filenames[1]
+            file2 <- if(is.na(filenames[2])) {NULL} else filenames[2]
+
+            ORFik::STAR.align.single(
+              file, file2,
+              output.dir = target_dir,
+              adapter.sequence = fastqc_adapters_info(file),
+              index.dir = index, steps = "tr"
+            )
+            if (config$delete_raw_files) fs::file_delete(file)
         }
         set_flag(config, "trim", conf["exp"])
     }

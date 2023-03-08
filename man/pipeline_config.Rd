@@ -11,11 +11,12 @@ pipeline_config(
   backup_metadata = file.path(project_dir, "ALL_BACKUP_LIST.csv"),
   temp_metadata = file.path(project_dir, "RFP_next_round_manual.csv"),
   google_url = default_sheets(),
-  flags = pipeline_flags(project_dir),
-  flag_steps = config_substeps(names(flags)),
-  pipeline_steps = list(pipeline_fetch, pipeline_trim_collapse, pipeline_align_clean,
-    pipeline_exp_ofst, pipeline_pshift_and_validate, pipeline_merge_per_study,
-    pipeline_convert_psite_reads, pipeline_counts_psites),
+  preset = "Ribo-seq",
+  flags = pipeline_flags(project_dir, mode),
+  flag_steps = config_substeps(names(flags), mode, preset),
+  pipeline_steps = preset_pipelines(preset, mode),
+  mode = c("online", "local")[1],
+  delete_raw_files = mode == "online",
   parallel_conf = bpoptions(log = TRUE, stop.on.error = TRUE),
   logdir = file.path(project_dir, "log_pipeline"),
   BPPARAM = bpparam()
@@ -41,6 +42,13 @@ resource usage.}
 
 \item{flag_steps}{a list of subsets of flags that maps which flags are set in
 each function in 'step'.}
+
+\item{mode}{= c("online", "local")\link{1}. "online" will assume project IDs for
+online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.}
+
+\item{delete_raw_files}{logical, default: mode == "online". If online do delete
+raw fastq files after trim step is done, for local samples do not delete.
+Set only to TRUE for mode local, if you have backups!}
 
 \item{parallel_conf}{a bpoptions object, default:
 \code{bpoptions(log =TRUE, stop.on.error = TRUE)}

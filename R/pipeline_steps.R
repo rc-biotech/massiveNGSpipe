@@ -7,6 +7,9 @@ pipeline_init_all <- function(config, complete_metadata = config$complete_metada
                               simple_progress_report = TRUE) {
   if (!file.exists(complete_metadata)) stop("You have not create a successful metadata table yet!")
   final_list <- fread(complete_metadata)[KEEP == TRUE,]
+  if (nrow(final_list) == 0) stop("complete metadata table has 0 rows, ",
+                         "did you forget to set the 'KEEP' column to TRUE in",
+                         " 'config$temp_metadata'?")
   accessions <- unique(final_list$study_accession)
   pipelines <- lapply(accessions, function(accession)
     pipeline_init(final_list[final_list$study_accession == accession,], accession,  config))

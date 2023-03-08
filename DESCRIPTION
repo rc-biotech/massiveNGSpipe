@@ -1,6 +1,6 @@
 Package: massiveNGSpipe
 Title: Pipeline for automatic NGS data download and analysis over a massive set of studies
-Version: 0.0.1.9000
+Version: 0.0.2.9000
 Authors@R: c(
   person(given = "Haakon", family = "Tjeldnes", email = "hauken_heyken@hotmail.com", role = c("aut", "cre", "dtc")),
   person(given = "Michal", family = "Swirski", email = "michal.swirski@uw.edu.pl", role = c("aut", "ctb")),
