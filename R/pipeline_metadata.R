@@ -344,8 +344,10 @@ add_new_data <- function(accessions, config, organisms = "all",
     complete_metadata_dt <- read_sheet_safe(google_url)
   } else if (file.exists(complete_metadata)) complete_metadata_dt <- fread(complete_metadata)
   if (nrow(complete_metadata_dt) > 0) { # IF you have started before
-    new_studies <- !(all_SRA_metadata_RFP$study_accession %in%
-                       complete_metadata_dt$study_accession)
+    new_studies <- !(paste0(all_SRA_metadata_RFP$study_accession, "___",
+                          all_SRA_metadata_RFP$ScientificName) %in%
+                   paste0(complete_metadata_dt$study_accession, "___",
+                          complete_metadata_dt$ScientificName))
     new_studies_count <- sum(new_studies)
     suppressWarnings(all_SRA_metadata_RFP[, STAGE := NULL])
     suppressWarnings(all_SRA_metadata_RFP[, Sex := NULL])

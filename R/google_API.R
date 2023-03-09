@@ -23,5 +23,5 @@ default_sheets <- function(project_dir, id = 1,
     new_sheet <- googlesheets4::gs4_create(sheet_name)
     new_sheet <- paste0("https://docs.google.com/spreadsheets/d/",
                         as.character(new_sheet))
-  } else fread()[id,]$id
+  } else fread(url_table)[id,]$id
 }
