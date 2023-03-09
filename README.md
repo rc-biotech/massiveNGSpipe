@@ -1,6 +1,10 @@
-# massive_NGS_pipe
 
-#### About
+![](inst/images/massiveNGSpipe_overview.png)
+
+This package is under heavy development to include more features, API is not
+stable!
+
+### About
 
 massive_NGS_pipe is a R package for full process integration of
 NGS studies, it can handle thousands of samples from multiple organisms
@@ -36,7 +40,7 @@ RiboCrypt visuzliation tool which supports among others:
 - Codon usage
 - And much more
 
-#### Primary pipeline (Data from online repository)
+### Primary pipeline (Data from online repository)
 
 Package is also available here on github
 ```r
@@ -53,7 +57,7 @@ progress_report(pipelines, config)
 run_pipeline(pipelines, config, wait = 100, BPPARAM = bpparam())
 ```  
 
-#### Installation
+### Installation
 
 Package is currently only available here on github
 ```r
@@ -62,7 +66,7 @@ if (!requireNamespace("devtools", quietly=TRUE))
 devtools::install_github("rc-biotech/massive_NGS_pipe")
 ```  
 
-#### Local pipeline (Data from personal hard drive / local server)
+### Local pipeline (Data from personal hard drive / local server)
 
 To run your local data, you run the pipeline, but skips the steps of 
 downloading. You also need to annotate the basic sample metadata yourself,
@@ -118,4 +122,66 @@ curate_metadata(all_names, config)
 pipelines <- pipeline_init_all(config)
 
 run_pipeline(pipelines, config, wait = 20, BPPARAM = SerialParam())
-```  
+```
+
+### The flow of data through the pipeline (theory)
+
+The pipeline consists of several steps where the user can add their custom
+steps. Here we will walk through the 4 main steps:
+
+
+
+#### pipeline_config (Where should the pipeline save stuff, what functions to run, how to get data)
+
+pipeline_config is the first function you will call to init a new pipeline.
+
+It sets up 3 main steps:
+
+- Directories (for data and metadata (with google sheet integration))
+- Steps of action (function to be done, and how they are grouped), we call these
+'flags' and each flag has a function to implements the logic.
+- Setup for Parallel processing and how to log errors.
+
+Important to remember is that the pipeline has 2 main modes:
+- 'online': for online repository data
+- 'local': for local machine / server data
+
+Since the input steps are just a set of input function, you as a user can fully
+custimize the pipeline. 
+
+#### curate_metadata (Which samples to run and what are they)
+
+curate_metadata is the function to set up and validate metadata.
+There are 3 main steps:
+
+For each study you have, per organism, we define a data structure:
+
+- Which samples to use: For online mode, samples are identified by Run ids (SRR, ERR, DRR,...) and study id will be the bioproject id, SRP, etc.,
+for local mode, samples are identified by relative file names, and studies are 
+folders (one folder per organism, if local study is multi-species).
+- Metadata extraction: When primary metadata is set up (where are the samples, which organism), we need to make sure we have a unique experimental identifier per sample. Like Ribo-seq Wild type cyclohexamide rep1. 
+- Automatic validation: We then run through a automatic validation
+of the metadata and the user will be informed if the information is not sufficient. 
+
+#### pipeline_init_all (Create pipeline objects (per study per organism), download genomes)
+
+When the curate_metadata step is complete and you have got a valid set of input data, you are good to go. This steps sets up the pipeline object: the object you actually feed into the main run. 
+
+It takes the config and the completed metadata table, it then sets up 3 important things:
+- Where should raw files, processed files and experiments be stored for this specific study?
+- Which genome and index does it use?
+- What is the metadata for this specific study?
+
+#### run_pipeline (Start processing)
+
+We advice you to always run this in a background job in RStudio, 
+to 
+run_pipeline uses the results from the parts:
+- pipeline_init_all object (all data needed per study/organism to run )
+- pipeline_config (the pipeline config, what to do etc.)
+
+It then runs each function in a safe wrapper that if it fails it stores
+error to a log and let's you know. It then continues to the next pipeline object.
+When all objects are done it will retry the ones that failed.
+
+You can also get a progress report of how long you have come. 
