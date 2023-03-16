@@ -66,6 +66,22 @@ if (!requireNamespace("devtools", quietly=TRUE))
 devtools::install_github("rc-biotech/massive_NGS_pipe")
 ```  
 
+### Requirements
+
+Software
+
+- R programming language
+- Unix OS (Linux or macOS), (or Windows Subsystem for Linux (WSL2))
+
+Hardware
+
+- Large genomes (like human, mouse, ...): (minimum 32GB memory)
+- For small genomes (Yeast, E.coli, ...): (minimum 16GB memory)
+
+Running with many cores will use more memory, we have seen
+cases of a 800 sample study using up to 120GB memory on a large server when using > 50 cores.
+
+
 ### Local pipeline (Data from personal hard drive / local server)
 
 To run your local data, you run the pipeline, but skips the steps of 
@@ -185,3 +201,89 @@ error to a log and let's you know. It then continues to the next pipeline object
 When all objects are done it will retry the ones that failed.
 
 You can also get a progress report of how long you have come. 
+
+# Overview of making metadata for massiveNGSpipe:
+
+
+## Metadata introduction
+Samples need to be structured be able to run through a pipeline.
+
+More specifically, we require a minimum set of datapoints, and 
+for each library (Run), the set of datapoints must be unique.
+
+### ENTREZ run summary
+
+The way we do this in is to use a csv file (a google sheet):
+
+It is structured in this way:
+
+For each study we get the run summary, a csv file from the ENTREZ database:
+
+Each row in the run summary represents a run (a fastq file, pair of fastq file (paired end))
+
+These are the important columns:
+
+- Run number: SRR, ERR, DRR (Run)
+- Study accession (BioProject)
+- Single end or paired end (LibraryLayout)
+- Organism it came from (ScientificName)
+
+To gather what the sample is:
+
+- library type is it Ribo-seq
+- condition (is it wild type or knock out, over expression)
+- timepoint (2 days post fertilization, 2 hours of drug treatment)
+- replicate (replicate 1, replicate 2, ..),
+
+We need to know where to find these datapoints.
+
+Here we order columns to look at in probability of finding useful information:
+
+- sample_title (Sample title given by author)
+- sample_source (Source of sample given by author)
+- LibraryName (Name of specific library, this is usually empty)
+
+If not existing there, then we sadly have not enough data, and need to do a manual check in the web-page for now:
+
+We advice using geo like this:
+
+https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM2664262
+
+Where GSM... in ?acc=GSM is the GSM id found in the SampleName column.
+
+## Automatic metadata detection with massiveNGSpipe
+
+When you start curating data, massiveNGSpipe will try to auto-guess some columns with 
+look up rules using regex and uniqueness of runs.
+
+These columns will be added:
+- LIBRARYTYPE	(RNA-seq, Ribo-seq, ..)
+- REPLICATE	(Minimum index seperator, rep1, rep2, rep3,..)
+- CONDITION	(WT (wild type), KO (knock out), mut (mutant),...)
+- INHIBITOR	(chx (cyclohexamide), harr (harringtonin), ...)
+- BATCH	(maximum index seperator, 1, 2, 3, ..) 
+- TIMEPOINT	(2h (2 hours), 1d (1 day), ...)
+- TISSUE	(kidney, liver, heart, ...)
+- CELL_LINE	(HEK293, HeLa, ...)
+- GENE		(RPL11, TOR, ATF4, ...)
+- FRACTION	(Remaining uniqueness seperator: cytosolic, nuclear, dmso, silvesterol, ...)
+
+The following goal is:
+Per study, per organism: Get a unique set of the above columns.
+If 2 rows (Runs) are identical, the validation test should fail.
+
+
+Some additional rules:
+
+BATCH vs replicate:
+If there are technical replicates of biological replicates which are themselves grouped in batches, 
+then replicate should be what seperates them most down the line. 
+The is replicate is technical replicate etc.
+
+How to use fraction column:
+When additional data-points are required to split data data, this should be put in the fraction column, seperated by underscores "_".
+
+
+
+
+

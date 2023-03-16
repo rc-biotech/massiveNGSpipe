@@ -20,6 +20,11 @@
 #' will use the google sheet to check for updated metadata.
 #' @param complete_metadata path, default file.path(project_dir, "RFP_FINAL_LIST.csv").
 #' The list of final candidates that are checked and have unique rows per bioproject
+#' @param LibraryStrategy character vector, default:
+#' c("RNA-Seq", "miRNA-Seq", "OTHER"). Which library Strategies to keep.
+#' Default is the total set of normal RNA sequencing. (RNA-seq, miRNA-seq,
+#' Ribo-seq, CHIP-seq, CAGE etc.) Change if you only want a subset, or some
+#' rare type.
 #' @param LibraryLayouts character vector, default c("SINGLE", "PAIRED"),
 #' either or both of: c("SINGLE", "PAIRED")
 #' @param Platforms character vector, default: "ILLUMINA". The sequencer technologies allowed.
@@ -35,7 +40,9 @@
 curate_metadata <- function(accessions, config, organisms = "all",
                             google_url = config$google_url,
                             complete_metadata = config$complete_metadata,
-                            LibraryLayouts = c("SINGLE", "PAIRED"), Platforms = "ILLUMINA",
+                            LibraryLayouts = c("SINGLE", "PAIRED"),
+                            LibraryStrategy = c("RNA-Seq", "miRNA-Seq", "OTHER"),
+                            Platforms = "ILLUMINA",
                             step_mode = FALSE, open_google_sheet = interactive(),
                             fix_loop = TRUE) {
   if (!interactive() & step_mode)
@@ -46,6 +53,7 @@ curate_metadata <- function(accessions, config, organisms = "all",
   if (add_new_accessions) {
     add_new_data(accessions, config, organisms,
                  google_url, complete_metadata,
+                 LibraryStrategy,
                  LibraryLayouts, Platforms,
                  open_google_sheet)
   }
@@ -123,6 +131,7 @@ pipeline_metadata <- function(accessions, config, force = FALSE, max_attempts = 
 
 pipeline_metadata_filter <- function(all_SRA_metadata, organisms = "all",
                                      LibraryLayouts = "SINGLE",
+                                     LibraryStrategy = c("RNA-Seq", "miRNA-Seq", "OTHER"),
                                      Platforms = "ILLUMINA",
                                      removeAllNACols = TRUE) {
   stopifnot(all(LibraryLayouts %in% c("SINGLE", "PAIRED")))
@@ -142,10 +151,14 @@ pipeline_metadata_filter <- function(all_SRA_metadata, organisms = "all",
                                      LibraryLayout %in% LibraryLayouts &
                                      Platform %in% Platforms,]
 
-  if (length(grep("is currently private", filtered_RFP$sample_title)) > 0)
+  if (length(grep("is currently private", filtered_RFP$sample_title)) > 0) {
+    message("Private (not open for public) samples detected, they were removed!")
     filtered_RFP <- filtered_RFP[-grep("is currently private", sample_title),]
-  if (length(grep("miRNA-Seq", filtered_RFP$LibraryStrategy)) > 0)
-    filtered_RFP <- filtered_RFP[-grep("miRNA-Seq", LibraryStrategy),]
+  }
+
+  invalid_library_strategy <- !(filtered_RFP$LibraryStrategy %in% LibraryStrategy)
+  if (any(invalid_library_strategy))
+    filtered_RFP <- filtered_RFP[!invalid_library_strategy,]
   cat("-- Numer of samples filtered out", "\n")
   print(nrow(all_metadata_RFP) - nrow(filtered_RFP))
   # Now remove columns not wanted
@@ -328,13 +341,15 @@ metadata_is_valid <- function(files) {
 add_new_data <- function(accessions, config, organisms = "all",
                          google_url = config$google_url,
                          complete_metadata = config$complete_metadata,
+                         LibraryStrategy = c("RNA-Seq", "miRNA-Seq", "OTHER"),
                          LibraryLayouts = c("SINGLE", "PAIRED"), Platforms = "ILLUMINA",
                          open_google_sheet = interactive()) {
   # Step1: Get all metadata
   all_SRA_metadata <- pipeline_metadata(accessions, config)
   # Step2: Filter out what you do not want
   filetered_SRA_metadata <- pipeline_metadata_filter(all_SRA_metadata, organisms,
-                                                     LibraryLayouts, Platforms)
+                                                     LibraryLayouts, LibraryStrategy,
+                                                     Platforms)
   # Step3: Try to auto annotate
   all_SRA_metadata_RFP <- pipeline_metadata_annotate(filetered_SRA_metadata)
   # Step4: Merge with existing finished metadata
