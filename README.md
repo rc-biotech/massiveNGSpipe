@@ -6,7 +6,7 @@ stable!
 
 ### About
 
-massive_NGS_pipe is a R package for full process integration of
+massiveNGSpipe is a R package for full process integration of
 NGS studies, it can handle thousands of samples from multiple organisms
 in a single run.
 
@@ -18,7 +18,7 @@ either google sheet integration or local csv files.
 - Automatic download of genome and gff for each organism (supports
 fixing malformed gffs, adding pseudo 5' UTRs etc)
 - Automatic download of samples with fallback options:
- 1. AWS (amazone, fastest), 2. ENA (fast), 3. fastq-dump (slowest)
+ 1. AWS (amazon, fastest), 2. ENA (fast), 3. fastq-dump (slowest)
 - Automatic detection of 3' adapters and trimming (fastp)
 - Collapsing of duplicated reads for faster processing
 - barcode / UMI detection / removal (To be implemented)
@@ -215,11 +215,11 @@ for each library (Run), the set of datapoints must be unique.
 
 The way we do this in is to use a csv file (a google sheet):
 
-It is structured in this way:
+It is structured in a following way:
 
 For each study we get the run summary, a csv file from the ENTREZ database:
 
-Each row in the run summary represents a run (a fastq file, pair of fastq file (paired end))
+Each row in the run summary represents a run (a fastq file or a pair of fastq files in case of paired-end)
 
 These are the important columns:
 
@@ -230,10 +230,10 @@ These are the important columns:
 
 To gather what the sample is:
 
-- library type is it Ribo-seq
-- condition (is it wild type or knock out, over expression)
-- timepoint (2 days post fertilization, 2 hours of drug treatment)
-- replicate (replicate 1, replicate 2, ..),
+- library type (e.g. Ribo-seq, RNA-seq)
+- condition (e.g. wild type, knock out or overexpression)
+- timepoint (e.g. 2 days post fertilization, 2 hours of drug treatment)
+- replicate (e.g. replicate 1, replicate 2, ...),
 
 We need to know where to find these datapoints.
 
@@ -268,7 +268,7 @@ These columns will be added:
 - GENE		(RPL11, TOR, ATF4, ...)
 - FRACTION	(Remaining uniqueness seperator: cytosolic, nuclear, dmso, silvesterol, ...)
 
-The following goal is:
+The following is the goal of manual annotation:
 Per study, per organism: Get a unique set of the above columns.
 If 2 rows (Runs) are identical, the validation test should fail.
 
@@ -278,7 +278,7 @@ Some additional rules:
 BATCH vs replicate:
 If there are technical replicates of biological replicates which are themselves grouped in batches, 
 then replicate should be what seperates them most down the line. 
-The is replicate is technical replicate etc.
+The replicate is technical replicate etc.
 
 How to use fraction column:
 When additional data-points are required to split data data, this should be put in the fraction column, seperated by underscores "_".
