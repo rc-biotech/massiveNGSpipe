@@ -2,10 +2,12 @@
 
 export(accessions_to_use)
 export(curate_metadata)
+export(is_progressing)
 export(local_study_csv)
 export(pipeline_config)
 export(pipeline_init_all)
 export(pipeline_merge_org)
+export(progress_log)
 export(progress_report)
 export(remove_flag_all)
 export(run_pipeline)

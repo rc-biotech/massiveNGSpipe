@@ -25,5 +25,7 @@ NGS pipeline}
 store all runs, even non Ribo-seq, such that it can be used if wanted.}
 }
 \description{
-Validate that metadata is ready to run
+Only checks validity of columns that are set to KEEP = TRUE.
+Validity is check by seeing that for each study, per organism,
+That there is a unique set of sample columns that identify that sample
 }

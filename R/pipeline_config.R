@@ -1,6 +1,7 @@
-#' Initial path config
+#' Initial config setup
 #'
-#' Set up all paths and flag directories
+#' Set up all paths, functions to be run and flag directories.
+#' Also adds parallel processing settings and google integration.
 #' @param project_dir where will specific pipeline outputs be put
 #' @param config path, default \code{ORFik::config()}, where will
 #' fastq, bam, references and ORFik experiments go
@@ -44,7 +45,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                                                       stop.on.error = TRUE),
                             logdir = file.path(project_dir, "log_pipeline"),
                             BPPARAM = bpparam()) {
-  metadata <- paste0(project_dir, "/metadata")
+
   stopifnot(mode %in% c("online", "local"))
   stopifnot(is.logical(delete_raw_files))
   stopifnot(is(pipeline_steps, "list"))
@@ -64,8 +65,10 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
 
   return(list(project = project_dir, config = config, flag = flags,
               flag_steps = flag_steps,
-              pipeline_steps = pipeline_steps, metadata = metadata,
-              complete_metadata = complete_metadata, backup_metadata = backup_metadata,
+              pipeline_steps = pipeline_steps,
+              metadata = paste0(project_dir, "/metadata"),
+              complete_metadata = complete_metadata,
+              backup_metadata = backup_metadata,
               temp_metadata = temp_metadata,
               google_url = google_url, mode = mode,
               delete_raw_files = delete_raw_files,

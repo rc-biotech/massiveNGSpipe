@@ -38,7 +38,7 @@ download_sra <- function(info, outdir, compress = TRUE,
 download_sra_aws <- function(run_accession, outdir) {
   ret <- system2("aws", c(
     "--no-sign-request", "s3", "ls",
-    paste("s3://sra-pub-run-odp/sra", run_accession, sep = "/")
+    paste0("s3://sra-pub-run-odp/sra/", run_accession, "/")
   ), stdout = FALSE)
 
   if (ret == 0) {
@@ -48,6 +48,7 @@ download_sra_aws <- function(run_accession, outdir) {
       outdir
     ))
     stopifnot("Run found on aws, but awscli exited with non-zero exit code" = ret == 0)
+    # TODO: Add file is downloaded check too (this is not enough)
   }
   return(ret == 0)
 }

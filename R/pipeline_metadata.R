@@ -161,6 +161,8 @@ pipeline_metadata_filter <- function(all_SRA_metadata, organisms = "all",
     filtered_RFP <- filtered_RFP[!invalid_library_strategy,]
   cat("-- Numer of samples filtered out", "\n")
   print(nrow(all_metadata_RFP) - nrow(filtered_RFP))
+  if (nrow(filtered_RFP) == 0) stop("all metadata got filtered out! Check filtering conditions and try again.")
+
   # Now remove columns not wanted
   if (removeAllNACols) {
     # Remove all NA columns:
@@ -237,12 +239,14 @@ pipeline_metadata_annotate <- function(filtered_RFP) {
   cat(length(unique(filtered_RFP$Submission)), "\n")
   cat("Library types detected", "\n")
   print(table(filtered_RFP$LIBRARYTYPE)) # It can't find all (bad info)
-  #filtered_RFP <- filtered_RFP[,-c(2:5, 10:15, 22:23, 26, 27, 28)]
   filtered_RFP[]
   return(filtered_RFP)
 }
 #' Validate that metadata is ready to run
 #'
+#' Only checks validity of columns that are set to KEEP = TRUE.
+#' Validity is check by seeing that for each study, per organism,
+#' That there is a unique set of sample columns that identify that sample
 #' @param dt a data.table of all metadata for all studies
 #' @inheritParams curate_metadata
 #' @param output_file a path to store final Ribo csv, default config$complete_metadata
@@ -259,13 +263,7 @@ pipeline_validate_metadata <- function(dt, config,
     message("Table is empty returning")
     return(FALSE)
   }
-  project_dir <- config$project
-  if (file.exists(backup_file)) {
-    message("Appending new studies from current input to the backup file")
-    backup <- fread(backup_file)
-    new_backup <- rbind(backup, dt[!(study_accession %in% backup$study_accession),])
-    fwrite(new_backup, backup_file)
-  } else fwrite(dt, backup_file)
+  add_backup(dt, backup_file)
   # Step1 Upload your csv to project folder
   #stopifnot(all(files$CHECKED %in% c(TRUE, FALSE)));stopifnot(all(files$DISCARD %in% c(TRUE, FALSE)));stopifnot(all(files$ASSIGNED_TO %in% c("PREETI", "KORNEL", "TESHOME", "HÅKON")))
   #files <- files[DISCARD == FALSE & CHECKED == TRUE,];
@@ -279,8 +277,9 @@ pipeline_validate_metadata <- function(dt, config,
     fwrite(files, next_round_file)
     return(FALSE)
   }
+  # Check if metadata is now valid
   files <- metadata_is_valid(files)
-  #
+
   any_not_unique <- sum(files[KEEP == TRUE,]$not_unique) != 0
   if (any_not_unique) {
     message("Sorry, still not unique, try again, may the force be with you!")
@@ -296,31 +295,8 @@ pipeline_validate_metadata <- function(dt, config,
     fwrite(file_to_keep, output_file)
     return(TRUE)
   }
-
   # If failed, check why, and save in bottom and do a new round of manual
-  # Check authors
-  a <- unlist(files[, table(AUTHOR)])
-  stopifnot(length(a[names(a) == ""]) == 0)
-  # Check INHIBITOR
-  files[INHIBITOR == "CHX", INHIBITOR := "chx"]
-  files[INHIBITOR == "LTM", INHIBITOR := "ltm"]
-  files[INHIBITOR == "Harringtonine", INHIBITOR := "harr"]
-  a <- unlist(files[, table(INHIBITOR)])
-  stopifnot(length(a[names(a) == ""]) == 0)
-  files[INHIBITOR == "", INHIBITOR := "chx"]
-  # Check batch
-  #files[BATCH == "1", BATCH := "b1"]; files[BATCH == "2", BATCH := "b2"]; files[BATCH == "3", BATCH := "b3"];files[BATCH == "4", BATCH := "b4"]
-  #stopifnot(!any(files$batch %in% c(as.character(seq(5)))))
-  cat("# of Samples by Authors:\n")
-  sort(table(files$AUTHOR), decreasing = TRUE) #unique(files[AUTHOR == "",]$BioProject)
-  cat("# of Samples by Inhibitor:\n")
-  table(files$INHIBITOR)
-  cat("# of Samples by Condition:\n")
-  table(files$CONDITION)
-  table(files$FRACTION)
-  table(files$TISSUE)#unique(files[TISSUE == "",]$BioProject)
-  table(files$CELL_LINE)#unique(files[CELL_LINE == "Huh",]$BioProject)
-  table(files$BATCH)
+  files <- metadata_columns_cleanup(files)
   fwrite(files, next_round_file)
   return(FALSE)
 }
@@ -347,11 +323,11 @@ add_new_data <- function(accessions, config, organisms = "all",
   # Step1: Get all metadata
   all_SRA_metadata <- pipeline_metadata(accessions, config)
   # Step2: Filter out what you do not want
-  filetered_SRA_metadata <- pipeline_metadata_filter(all_SRA_metadata, organisms,
+  filtered_SRA_metadata <- pipeline_metadata_filter(all_SRA_metadata, organisms,
                                                      LibraryLayouts, LibraryStrategy,
                                                      Platforms)
   # Step3: Try to auto annotate
-  all_SRA_metadata_RFP <- pipeline_metadata_annotate(filetered_SRA_metadata)
+  all_SRA_metadata_RFP <- pipeline_metadata_annotate(filtered_SRA_metadata)
   # Step4: Merge with existing finished metadata
   complete_metadata_dt <- data.table()
   new_studies_count <- nrow(all_SRA_metadata_RFP)
@@ -412,6 +388,43 @@ match_bam_to_metadata <- function(bam_dir, study, paired_end) {
   }
   if (length(bam_files) == 0) stop("Could not find SRR runs in aligned folder for: ")
   return(bam_files)
+}
+
+add_backup <- function(dt, backup_file) {
+  # Create a backup file for complete metadata
+  # Only append new if already exists
+  if (file.exists(backup_file)) {
+    message("Appending new studies from current input to the backup file")
+    backup <- fread(backup_file)
+    new_backup <- rbind(backup, dt[!(study_accession %in% backup$study_accession),])
+    fwrite(new_backup, backup_file)
+  } else fwrite(dt, backup_file)
+  return(invisible(NULL))
+}
+
+metadata_columns_cleanup <- function(files) {
+  # TODO: Split into cleanup and info
+  # Check authors
+  a <- unlist(files[, table(AUTHOR)])
+  stopifnot(length(a[names(a) == ""]) == 0)
+  # Check INHIBITOR
+  files[INHIBITOR == "CHX", INHIBITOR := "chx"]
+  files[INHIBITOR == "LTM", INHIBITOR := "ltm"]
+  files[INHIBITOR == "Harringtonine", INHIBITOR := "harr"]
+  a <- unlist(files[, table(INHIBITOR)])
+  stopifnot(length(a[names(a) == ""]) == 0)
+  files[INHIBITOR == "", INHIBITOR := "chx"]
+  cat("# of Samples by Authors:\n")
+  sort(table(files$AUTHOR), decreasing = TRUE) #unique(files[AUTHOR == "",]$BioProject)
+  cat("# of Samples by Inhibitor:\n")
+  table(files$INHIBITOR)
+  cat("# of Samples by Condition:\n")
+  table(files$CONDITION)
+  table(files$FRACTION)
+  table(files$TISSUE)#unique(files[TISSUE == "",]$BioProject)
+  table(files$CELL_LINE)#unique(files[CELL_LINE == "Huh",]$BioProject)
+  table(files$BATCH)
+  return(files)
 }
 
 

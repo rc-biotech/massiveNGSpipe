@@ -12,7 +12,17 @@ pipeline_init_all <- function(config, complete_metadata = config$complete_metada
                          " 'config$temp_metadata'?")
   accessions <- unique(final_list$study_accession)
   pipelines <- lapply(accessions, function(accession)
-    pipeline_init(final_list[final_list$study_accession == accession,], accession,  config))
+    tryCatch(
+      pipeline_init(final_list[final_list$study_accession == accession,], accession,  config),
+            error=function(e) {warning(e); return(NULL)}))
+  names(pipelines) <- accessions
+
+  crashed_studies <- pipelines %in% list(NULL)
+  if (any(crashed_studies)) {
+    pipelines <- pipelines[!crashed_studies]
+  }
+
+
   if (simple_progress_report) progress_report(pipelines, config, FALSE)
   return(pipelines)
 }

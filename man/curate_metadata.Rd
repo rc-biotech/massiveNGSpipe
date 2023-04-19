@@ -11,6 +11,7 @@ curate_metadata(
   google_url = config$google_url,
   complete_metadata = config$complete_metadata,
   LibraryLayouts = c("SINGLE", "PAIRED"),
+  LibraryStrategy = c("RNA-Seq", "miRNA-Seq", "OTHER"),
   Platforms = "ILLUMINA",
   step_mode = FALSE,
   open_google_sheet = interactive(),
@@ -43,6 +44,12 @@ The list of final candidates that are checked and have unique rows per bioprojec
 
 \item{LibraryLayouts}{character vector, default c("SINGLE", "PAIRED"),
 either or both of: c("SINGLE", "PAIRED")}
+
+\item{LibraryStrategy}{character vector, default:
+c("RNA-Seq", "miRNA-Seq", "OTHER"). Which library Strategies to keep.
+Default is the total set of normal RNA sequencing. (RNA-seq, miRNA-seq,
+Ribo-seq, CHIP-seq, CAGE etc.) Change if you only want a subset, or some
+rare type.}
 
 \item{Platforms}{character vector, default: "ILLUMINA". The sequencer technologies allowed.}
 

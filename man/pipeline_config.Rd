@@ -2,7 +2,7 @@
 % Please edit documentation in R/pipeline_config.R
 \name{pipeline_config}
 \alias{pipeline_config}
-\title{Initial path config}
+\title{Initial config setup}
 \usage{
 pipeline_config(
   project_dir = file.path(dirname(config)[1], "NGS_pipeline"),
@@ -64,5 +64,6 @@ Specific pipeline config for parallel settings and log directory}
 a list with a defined config
 }
 \description{
-Set up all paths and flag directories
+Set up all paths, functions to be run and flag directories.
+Also adds parallel processing settings and google integration.
 }
