@@ -370,11 +370,17 @@ match_bam_to_metadata <- function(bam_dir, study, paired_end) {
                                              pairedEndBam = paired_end)
 
   bam_files_base <- ORFik:::remove.file_ext(bam_files, basename = T)
-  bam_files_base <- gsub("_Aligned.*", "", bam_files_base)
-  bam_files_base <- sub(".*trimmed_", "", bam_files_base)
-  bam_files_base <- gsub(".*_", "", bam_files_base)
-  stopifnot(all(bam_files_base != ""))
-  bam_files <- bam_files[match(study$Run, bam_files_base)]
+  matches <- match(study$Run, bam_files_base)
+  names_have_info_extensions <- anyNA(matches)
+  if (names_have_info_extensions) {
+    # TODO: Make this all more clear and failproof
+    bam_files_base <- gsub("_Aligned.*", "", bam_files_base)
+    bam_files_base <- sub(".*trimmed_", "", bam_files_base)
+    bam_files_base <- gsub(".*_", "", bam_files_base)
+    stopifnot(all(bam_files_base != ""))
+    matches <- match(study$Run, bam_files_base)
+  }
+  bam_files <- bam_files[matches]
 
   if (nrow(study) != length(bam_files)  | anyNA(bam_files)) {
     if ((nrow(study) > length(bam_files)) | anyNA(bam_files)) {

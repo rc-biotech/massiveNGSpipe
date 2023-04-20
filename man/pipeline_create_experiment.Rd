@@ -2,10 +2,10 @@
 % Please edit documentation in R/pipeline_steps_sub.R
 \name{pipeline_create_experiment}
 \alias{pipeline_create_experiment}
-\title{WIP}
+\title{Create ORFik experiment from config study and bam files}
 \usage{
 pipeline_create_experiment(pipeline, config)
 }
 \description{
-WIP
+Create ORFik experiment from config study and bam files
 }
