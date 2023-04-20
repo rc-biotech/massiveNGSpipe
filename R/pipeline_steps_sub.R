@@ -265,7 +265,7 @@ pipeline_cleanup <- function(pipeline, config) {
     }
 }
 
-#' WIP
+#' Create ORFik experiment from config study and bam files
 pipeline_create_experiment <- function(pipeline, config) {
     df_list <- list()
     for (organism in names(pipeline$organisms)) {
@@ -287,22 +287,27 @@ pipeline_create_experiment <- function(pipeline, config) {
         experiment <- paste(accession, assembly_name, sep = "-")
         # Do some small correction to info and merge
         remove <- "^_|_$|^NA_|_NA$|^NA$|^_$|^__$|^___$"
+        # Stage
         stage <- paste0(study$CELL_LINE, "_",study$TISSUE)
         stage <- gsub(paste0(remove, "|NONE_|_NONE"), "", stage)
         stage <- gsub(paste0(remove, "|NONE_|_NONE"), "", stage) # Twice
-
+        # Condition
         condition <- paste0(study$CONDITION)
         condition <- gsub(remove, "", condition)
         condition <- gsub(remove, "", condition)
-
+        # Fraction
         fraction <- paste(study$FRACTION,study$TIMEPOINT, study$BATCH, sep = "_")
         if (!is.null(study$GENE)) fraction <- paste(fraction, study$GENE, sep = "_")
         fraction <- gsub(remove, "", fraction)
-        if (!all(study$INHIBITOR == "chx")) {
+        study$INHIBITOR[is.na(study$INHIBITOR)] <- ""
+        add_inhibitor_to_fraction <-
+          !all(study$INHIBITOR %in% c("chx", "CHX"))
+        if (add_inhibitor_to_fraction) {
           fraction <- paste0(fraction, "_",study$INHIBITOR)
         }
         fraction <- gsub(remove, "", fraction); fraction <- gsub(remove, "", fraction)
-        fraction <- gsub(remove, "", fraction)
+        fraction <- gsub(remove, "", fraction); fraction <- gsub(remove, "", fraction)
+        # PAIRED END
         paired_end <- study$LibraryLayout == "PAIRED"
         if (any(paired_end)) stop("TODO: Fix for paired end, will not work for now")
 

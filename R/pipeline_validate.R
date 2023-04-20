@@ -1,3 +1,13 @@
+#' Validate pshifting
+#'
+#' It will do these two things: Plot all TIS regions and
+#' make a frame distribution table for all libs.
+#' It then save a rds file called either 'warning.rds' or 'good.rds'.
+#' Depending on the results was accepted or not:
+#' \code{any(zero_frame$percent_length < 25)}
+#' @param df_list a list of ORFik experiments
+#' @param config a pipeline config
+#' @return invisible(NULL)
 pipeline_validate_shifts <- function(df_list, config) {
   #
   # TODO: This function can be improved, especially how we detect bad shifts!
@@ -130,6 +140,10 @@ save_report <- function(dt, dt.trim, done, total, report_dir) {
   return(invisible(NULL))
 }
 
+#' Status plot of pipeline
+#'
+#' Given all studies, report how far they have come as a heatmap (y-axis
+#' is steps, x-axis is studies)
 status_plot <- function(steps, progress_index, projects, n_bioprojects, done) {
   status_matrix <- lapply(seq(length(steps)) - 1, function(x) as.data.table(matrix(as.integer(x <= progress_index), nrow = 1, byrow = TRUE)))
   status_matrix <- as.matrix(rbindlist(status_matrix))

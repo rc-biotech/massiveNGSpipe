@@ -30,16 +30,26 @@ last_update <- function(config, flagdir = dirname(config$flag[1])) {
   return(max(mod_time))
 }
 
+#' Get last pipeline update, in days relative to now
+#'
+#' @param a config object
+#' @param flagdir character, default: dirname(config$flag[1]),
+#' path to flag directory
+#' @param units character, default "days"
+#' @return character, a date string
+last_update_diff <- function(config, units = "days") {
+  last_update <- last_update(config)
+  now <- Sys.time()
+  return(difftime(now, last_update, units = units))
+}
+
 #' Check if anything happened since given time
 #'
 #' @param a config object
 #' @param max_time_since_update numeric, in days, default 1.
+#' 1 Hour is 0.041
 #' @return logical, FALSE if nothing happend since max time
 #' @export
 is_progressing <- function(config, max_time_since_update = 1) {
-  last_update <- last_update(config)
-  now <- Sys.time()
-  diff <- difftime(now, last_update, units = "days")
-  ifelse(diff > max_time_since_update,
-         FALSE, TRUE)
+  last_update_diff(config) < max_time_since_update
 }
