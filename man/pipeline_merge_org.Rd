@@ -4,13 +4,13 @@
 \alias{pipeline_merge_org}
 \title{Merge all studies per organism}
 \usage{
-pipeline_merge_org(pipelines, config)
+pipeline_merge_org(config, pipelines = pipeline_init_all(config))
 }
 \arguments{
-\item{pipelines}{list, output of pipeline_init_all}
-
 \item{config}{list, output from pipeline_config(), the global config for your
 NGS pipeline}
+
+\item{pipelines}{list, output of pipeline_init_all}
 }
 \value{
 invisible(NULL)

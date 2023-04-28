@@ -139,7 +139,8 @@ pipeline_convert_psite_reads <- function(pipelines, config) {
 #' @inheritParams run_pipeline
 #' @return invisible(NULL)
 #' @export
-pipeline_merge_org <- function(pipelines, config) {
+pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config)) {
+  names(pipelines) <- NULL
   exp <- lapply(pipelines, function(x) lapply(x$organisms, function(o) o$conf["exp"]))
   exp <- unlist(exp, recursive = FALSE)
   done_exp <- unlist(lapply(exp, function(e) step_is_done(config, "merged_lib", e)))
@@ -155,7 +156,7 @@ pipeline_merge_org <- function(pipelines, config) {
     # Overwrite default paths to merged
     df@listData$filepath <- file.path(dirname(filepath(df, "default")), "pshifted_merged", "RFP.ofst")
     df@listData$rep <- seq(nrow(df))
-    exp_name <- paste0("all_merged-", gsub(" ", "_", org))
+    exp_name <- organism_merged_exp_name(org)
     out_dir <- file.path(config$config["bam"], exp_name)
     ORFik::mergeLibs(df, out_dir, "all", "default", FALSE)
     create.experiment(out_dir, exper = exp_name,
@@ -187,4 +188,7 @@ pipeline_counts_psites <- function(pipelines, config) {
   return(invisible(NULL))
 }
 
+organism_merged_exp_name <- function(organisms) {
+  paste0("all_merged-", gsub(" ", "_", organisms))
+}
 

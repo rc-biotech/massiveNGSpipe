@@ -35,7 +35,7 @@
 #' only want to updata csv / google docs with new data and not try to complete
 #' now, set this to FALSE.
 #' @return logical, TRUE if you had unique rows per accession per organism
-#' @import googlesheets4 data.table ORFik BiocParallel fs stringr
+#' @import googlesheets4 data.table ORFik BiocParallel fs stringr DataEditR
 #' @export
 curate_metadata <- function(accessions, config, organisms = "all",
                             google_url = config$google_url,
@@ -284,15 +284,8 @@ pipeline_validate_metadata <- function(dt, config,
   if (any_not_unique) {
     message("Sorry, still not unique, try again, may the force be with you!")
   } else {
-    file_to_keep <- files[KEEP == TRUE & (LIBRARYTYPE %in% c(libtypes)),]
-    message("Congratulations!")
-    message("Data is unique!")
-    message("Number of samples marked as KEEP: (",
-            nrow(file_to_keep), "/", nrow(files), ")")
-    message("Saving to: ", output_file)
-    message("- Done")
-    fwrite(files, next_round_file)
-    fwrite(file_to_keep, output_file)
+    export_sucessful_metadata(files, libtypes, output_file,
+                              next_round_file)
     return(TRUE)
   }
   # If failed, check why, and save in bottom and do a new round of manual
@@ -359,7 +352,16 @@ add_new_data <- function(accessions, config, organisms = "all",
                   sheet = 1)
     }
 
-    if (interactive() & open_google_sheet) browseURL(google_url)
+    if (interactive()) {
+      if (open_google_sheet) {
+        browseURL(google_url)
+      } else if (config$mode == "local") {
+        message("Update data for unique rows and press syncronize,",
+                " then press 'done'!")
+        DataEditR::data_edit(config$temp_metadata, read_fun = "fread") %>%
+          fwrite(config$temp_metadata)
+      }
+    }
   }
   return(invisible(NULL))
 }
@@ -431,6 +433,26 @@ metadata_columns_cleanup <- function(files) {
   table(files$CELL_LINE)#unique(files[CELL_LINE == "Huh",]$BioProject)
   table(files$BATCH)
   return(files)
+}
+
+export_sucessful_metadata <- function(files, libtypes, output_file,
+                                      next_round_file) {
+  file_to_keep <- files[KEEP == TRUE & (LIBRARYTYPE %in% c(libtypes)),]
+  message("Congratulations!")
+  message("Data is unique!")
+  message("Number of samples marked as KEEP: (",
+          nrow(file_to_keep), "/", nrow(files), ")")
+  message("Saving to: ", output_file)
+  message("- Done")
+  invalid_libtypes <- files[KEEP == TRUE & !(LIBRARYTYPE %in% c(libtypes)),]
+  if (nrow(invalid_libtypes) > 0) {
+    warning("Some samples were marked as keep with empty LIBRARYTYPE!",
+            " Number of samples ignored this way: ", nrow(invalid_libtypes))
+
+  }
+  fwrite(files, next_round_file)
+  fwrite(file_to_keep, output_file)
+  return(invisible(NULL))
 }
 
 

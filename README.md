@@ -46,7 +46,7 @@ Package is also available here on github
 ```r
 library(massiveNGSpipe)
 ## Setup
-config <- pipeline_config() # <- set up paths
+config <- pipeline_config(preset = "Ribo-seq") # <- set up paths
 ## Curate metadata
 accessions <- accessions_to_use("GSE152850", "Saccharomyces cerevisiae", FALSE)
 curate_metadata(accessions, config, "Saccharomyces cerevisiae")
@@ -122,13 +122,14 @@ dir.create(dirname(save_file), FALSE, TRUE)
 fwrite(dt, save_file)
 
 # Now for all experimental directories, validate metadata
+# massiveNGSpipe requires a unique set of rows for metadata to be valid
 all_names <- c(name) # Add all here (here we did only 1)
 # Now run this, when you get to validation either open your csv and set
 # the KEEP column to TRUE, for sample you want to run.
 # Or do as bellow to run and update KEEP column in R
 curate_metadata(all_names, config)
 
-# R way of setting samples to run.
+# data.table way of setting samples to run.
 temp <- fread(config$temp_metadata)
 temp$KEEP <- TRUE
 fwrite(temp, config$complete_metadata)
@@ -282,6 +283,49 @@ The replicate is technical replicate etc.
 
 How to use fraction column:
 When additional data-points are required to split data data, this should be put in the fraction column, seperated by underscores "_".
+
+## FAQ
+
+### What software does the preset pipelines use:
+These are the current presets
+
+#### Ribo-seq preset
+Config Call: preset = "Ribo-seq"
+
+- Fastq files are download with ORFik download.sra using a fallback system: Amazone
+- Adapter is detected with either fastqc (sequence detection) and falls back to fastp auto detection.
+- Reads are then trimmed with fastp
+- Read are collapsed (get the set of unique reads and put duplication count in read header)
+- Reads are aligned with the STAR aligner (using the wrapper in ORFik), that supports contamination removal. Settings:
+- genomic coordinates (to allow both genomic and transcriptomic coordinates) local alignment (to remove unknown flank effects)
+    minimum read size (20nt)
+- When all samples of study are aligned, an ORFik experiment is created that connects each sample to metadata (condition, inhibitor, fraction, replicate etc)
+- Bam files are then converted to ORFik ofst format
+- These ofst files are then pshifted
+- Faster formats are then created (bigwig and covRLE) for faster visualization
+- Count tables are made with ORFik as Summarized experiments objects, for fast count loading later.
+
+
+### The genome download failed
+
+If this happens, it means genome could not be automatically fetched 
+from ensembl.
+
+Luckily there is a way to either manually fix this problem.
+
+To fix, run get_annotation("Homo sapiens") <- replace with your organism, and see what the problem is.
+
+If the problem is deeper try, some info is needed:
+When init_pipelines_all is run, it checks per organism for a file
+called ouputs.rds in the organism reference folder.
+If this file exists the step will pass.
+
+- Find your gtf and fasta genome file and put manually in folder.
+- Call:
+
+get_annotation(organism, GTF = path_to_gtf, genome = path_to_genome, gene_symbols = FALSE)
+
+This should now work. If it still fails, contact us on github.
 
 
 

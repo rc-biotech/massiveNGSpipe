@@ -18,41 +18,10 @@ pipeline_init <- function(study, study_accession, config) {
         message("---- ", organism)
         assembly_name <- gsub(" ", "_", trimws(tolower(organism)))
         experiment <- paste(study_accession, assembly_name, sep = "-")
+        conf <- path_config(experiment, assembly_name, config)
 
-        # Create ORFik experiment config manually, without separate folders
-        # for different library strategies.
-        conf <- config.exper(experiment, assembly_name, "", config[["config"]])
-        # Fix bad naming from config.exper
-        conf <- gsub("//", "/", conf); conf <- gsub("_$", "", conf)
-        names(conf) <- gsub(" $", "", names(conf))
-        sapply(conf[1:3], fs::dir_create)
+        annotation <- get_annotation(organism, conf["ref"])
 
-        # Will now swap to toplevel if needed by itself
-        # Will swap to refseq if ensembl fails
-        ensembl_db <- try(
-          annotation <- ORFik::getGenomeAndAnnotation(
-            organism = organism,
-            genome = TRUE, GTF = TRUE,
-            phix = TRUE, ncRNA = TRUE, tRNA = TRUE, rRNA = TRUE,
-            output.dir = conf["ref"],
-            assembly_type = "primary_assembly", optimize = TRUE,
-            pseudo_5UTRS_if_needed = 100, notify_load_existing = FALSE,
-            gene_symbols = TRUE
-          )
-        )
-        if (is(ensembl_db, "try-error")) {
-          message("-- Genome download failed for: ", organism, " on Ensembl")
-          message("Trying refseq")
-          annotation <- ORFik::getGenomeAndAnnotation(
-            organism = organism,
-            genome = TRUE, GTF = TRUE,
-            phix = TRUE, ncRNA = TRUE, tRNA = TRUE, rRNA = TRUE,
-            output.dir = conf["ref"],
-            assembly_type = "primary_assembly", optimize = TRUE,
-            pseudo_5UTRS_if_needed = 100, db = "refseq",
-            notify_load_existing = FALSE, gene_symbols = TRUE
-          )
-        }
         index <- ORFik::STAR.index(annotation, notify_load_existing = FALSE)
         organisms[[organism]] <- list(
             conf = conf, annotation = annotation, index = index,
@@ -164,12 +133,17 @@ pipeline_collapse <- function(pipeline, config) {
         outdir <- fs::path(trimmed_dir, "SINGLE")
         fs::dir_create(outdir)
         BiocParallel::bplapply(runs_single$Run, function(srr) {
-          filename <- paste0("trimmed_", srr, ".fastq")
+          filename <- list.files(trimmed_dir, paste0(srr, "\\."),
+                                 full.names = TRUE)
+          if (length(filename) != 1) {
+            filename <- file.path(trimmed_dir,
+                           paste0("trimmed_", srr, ".fastq"))
+          }
           ORFik::collapse.fastq(
-            fs::path(trimmed_dir, filename), outdir,
+            filename, outdir,
             compress = TRUE
           )
-          fs::file_delete(fs::path(trimmed_dir, filename))
+          fs::file_delete(filename)
         }, BPPARAM = BiocParallel::MulticoreParam(16))
         set_flag(config, "collapsed", conf["exp"])
     }
@@ -324,11 +298,6 @@ pipeline_create_experiment <- function(pipeline, config) {
         )
         df <- ORFik::read.experiment(experiment,
                                      output.env = new.env())
-        # TODO: Copy experiment over
-        # df[-(1:4),3] <- sapply(
-        #    stringr::str_split(fs::path_file(df[-(1:4),6]), "_"),
-        #    function(x) x[3]
-        # )
         set_flag(config, "exp", conf["exp"])
         df_list <- c(df_list, df)
     }

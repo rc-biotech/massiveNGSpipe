@@ -115,8 +115,8 @@ remove_flag <- function(config, step, experiment, warning = FALSE) {
 
 #' Remove flags for all pipelines specified
 #'
-#' Set all flags as not done for all experiments in pipeline up to
-#' and included the last step in steps
+#' Set all flags specified as not done for all experiments in
+#' for all pipeline objects specified.
 #' @inheritParams run_pipeline
 #' @param steps, which flags to set to FALSE (not done)
 #'  for given pipeline objects

@@ -118,11 +118,18 @@ preset_substeps <- function(type = "Ribo-seq", flags, mode = c("online", "local"
 
 
 preset_pipelines <- function(type = "Ribo-seq", mode = c("online", "local")[1]) {
-  valid_presets <- c("Ribo-seq")
+  valid_presets <- c("Ribo-seq", "RNA-seq")
   if (type == "Ribo-seq") {
     preset <- list(pipeline_fetch, pipeline_trim_collapse,
                    pipeline_align_clean, pipeline_exp_ofst,
                    pipeline_pshift_and_validate,
+                   pipeline_merge_per_study,
+                   pipeline_convert_psite_reads,
+                   pipeline_counts_psites)
+    if (mode == "local") preset <- preset[-1]
+  } else if (type == "RNA-seq") {
+    preset <- list(pipeline_fetch, pipeline_trim_collapse,
+                   pipeline_align_clean, pipeline_exp_ofst,
                    pipeline_merge_per_study,
                    pipeline_convert_psite_reads,
                    pipeline_counts_psites)

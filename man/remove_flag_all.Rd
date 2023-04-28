@@ -19,6 +19,6 @@ for given pipeline objects}
 invisible(NULL)
 }
 \description{
-Set all flags as not done for all experiments in pipeline up to
-and included the last step in steps
+Set all flags specified as not done for all experiments in
+for all pipeline objects specified.
 }
