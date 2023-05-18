@@ -28,7 +28,8 @@ run_pipeline <- function(pipelines, config, wait = 100, BPPARAM = config$BPPARAM
 }
 
 parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100) {
-  message("Start step pipeline:\n", paste(steps, collapse = " ,", sep = " ,"))
+  steps_merged <- paste(steps, collapse = " ,", sep = " ,")
+  message("Start step pipeline:\n", steps_merged)
   exps <- pipelines_names(pipelines)
   idle_round <- 0
   steps_done <- all_substeps_done_all(config, steps, exps)
@@ -37,13 +38,13 @@ parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100) {
     steps_done <- all_substeps_done_all(config, steps, exps)
 
     if (!all(steps_done)) {
-      message("Sleep")
+      message("Sleep (", steps_merged,")")
       Sys.sleep(wait)
-      message("Stopped sleeping")
+      message("Stopped sleeping (", steps_merged,")")
       idle_round <- idle_round + 1; message("- ", idle_round)
     }
   }
-  message("Done for step pipeline:\n", paste(steps, collapse = " ,", sep = " ,"))
+  message("Done for step pipeline:\n", steps_merged)
 }
 
 pipelines_names <- function(pipelines, recursive = TRUE) {

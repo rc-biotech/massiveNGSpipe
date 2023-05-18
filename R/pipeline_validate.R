@@ -48,7 +48,8 @@ pipeline_validate_shifts <- function(df_list, config) {
 #' @export
 progress_report <- function(pipelines, config, show_stats = FALSE,
                             show_done = TRUE, status_plot = FALSE,
-                            return_progress_vector = FALSE) {
+                            return_progress_vector = FALSE,
+                            check_merged_org = FALSE) {
   n_bioprojects <- sum(unlist(lapply(pipelines, function(p) length(p$organisms))))
   steps <- names(config[["flag"]])
   negative_message <- steps; names(negative_message) <- steps
@@ -56,10 +57,11 @@ progress_report <- function(pipelines, config, show_stats = FALSE,
   negative_message <- paste(" - Not", negative_message);
   names(negative_message) <- steps
   index <- 1; done <- 0
-  progress_index <- projects <- c()
+  progress_index <- projects <- all_organism <- c()
   dt <- dt.trim <- data.table()
   for (pipeline in pipelines) {
     for (organism in names(pipeline$organisms)) {
+      all_organism <- c(all_organism, organism)
     conf <- pipeline$organisms[[organism]]$conf
     project <- conf["exp"]
     projects <- c(projects, project)
@@ -89,8 +91,14 @@ progress_report <- function(pipelines, config, show_stats = FALSE,
     done <- done + 1
     }
   }
+  if (check_merged_org) {
+    organism_report(all_organism, config, progress_index)
+  }
   cat("Number of studies completed\n")
   cat(done, " / ", n_bioprojects, "\n")
+  cat("Last update:")
+  cat("(", round(last_update_diff(config, units = "hours"), 1), " hours ago): ",
+      format(last_update(config),usetz=TRUE), "\n", sep = "")
   ret <- invisible(NULL)
   if (return_progress_vector) ret <- progress_index
   if (status_plot) {
@@ -156,62 +164,23 @@ status_plot <- function(steps, progress_index, projects, n_bioprojects, done) {
   return(fig1)
 }
 
-#' For docker usage copy
-#'
-#' If you have download docker and release docker.
-#' This is useful to copy files from download to release
-#' @param config a config object
-#' @param pipelines pipeline objects, default pipeline_init_all(config)
-#' @param new_exp_dir character, default "~/livemount/Bio_data/ORFik_experiments/"
-#' @param docker_conversion the sed conversion string: 's/livemount\///g'
-#' @return logical, TRUE if sucessful for all.
-#' @export
-docker_copy_done_experiments <- function(config, pipelines = pipeline_init_all(config),
-                                         new_exp_dir = "~/livemount/Bio_data/ORFik_experiments/",
-                                         docker_conversion = "'s/livemount\\///g'",
-                                         merged_by_organism = TRUE) {
-  if (length(pipelines) == 0) stop("Empty pipelines object given!")
-  done_stats <- progress_report(pipelines, config, return_progress_vector = TRUE)
-  max_step <- length(unlist(config$flag_steps))
-  done_all_steps <- done_stats == max_step
-  csv_names <- paste0(pipelines_names(pipelines), ".csv")
-  csv_names <- csv_names[done_all_steps]
-
-  if (length(csv_names) == 0) {
-    warning("No experiments are done, returning directly!")
-    return(FALSE)
-  }
-
-  done_exp_old_path <- paste0(config$config["exp"], csv_names)
-  done_exp_new_path <- paste0(new_exp_dir, csv_names)
-  res <- c()
-  for (i in seq_along(done_exp_old_path)) {
-    file.copy(done_exp_old_path[i], done_exp_new_path[i], overwrite = TRUE)
-    cmd <- system(paste0("sed -i ", docker_conversion, " ",done_exp_new_path[i]))
-    res <- c(res, cmd)
-  }
-
-
-  if (merged_by_organism) {
-    names(pipelines) <- NULL
-    exp <- lapply(pipelines, function(x) lapply(x$organisms, function(o) o$conf["exp"]))
-    exp <- unlist(exp, recursive = FALSE)
-    # Merge all per organism
-    done_exp_list <- exp[done_all_steps]
-    done_organisms <- unique(names(done_exp_list))
-    csv_names <- paste0(organism_merged_exp_name(done_organisms), ".csv")
-
-    existing_exps <- list.files(config$config["exp"])
-    merged_is_made <- csv_names %in% existing_exps
-    csv_names <- csv_names[merged_is_made]
-
-    done_exp_old_path <- paste0(config$config["exp"], csv_names)
-    done_exp_new_path <- paste0(new_exp_dir, csv_names)
-    for (i in seq_along(csv_names)) {
-      file.copy(done_exp_old_path[i], done_exp_new_path[i], overwrite = TRUE)
-      cmd <- system(paste0("sed -i ", docker_conversion, " ",done_exp_new_path[i]))
-      res <- c(res, cmd)
-    }
-  }
-  return(all(res == 0))
+organism_report <- function(all_organism, config, progress_index) {
+  all_organism_unique <- sort(unique(all_organism))
+  cat("--------------------\n")
+  cat("Processed organisms (Number of studies done/total, merged files done or not)\n")
+  file_name <- sapply(all_organism_unique, organism_merged_exp_name)
+  progress_index_done <- progress_index == length(config$flag)
+  studies_per_org <- table(all_organism)
+  studies_per_org_done <- table(all_organism[progress_index_done])
+  studies_per_org_done <- studies_per_org_done[all_organism_unique]
+  studies_per_org_done[is.na(studies_per_org_done)] <- 0
+  names(studies_per_org_done) <- all_organism_unique
+  merged_org_exists <-
+    file.exists(file.path(config$config["exp"], paste0(file_name, ".csv")))
+  names(merged_org_exists) <- all_organism_unique
+  print(paste0(names(merged_org_exists), " (",studies_per_org_done,
+               "/", studies_per_org,
+               ",", merged_org_exists, ")"))
+  return(invisible(NULL))
 }
+

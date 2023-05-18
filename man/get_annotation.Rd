@@ -6,7 +6,7 @@
 \usage{
 get_annotation(
   organism,
-  output.dir = file.path(ORFik::config()["ref"], organism),
+  output.dir = reference_folder_name(organism, TRUE),
   genome = TRUE,
   GTF = TRUE,
   db = "ensembl",

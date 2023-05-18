@@ -74,7 +74,6 @@ curate_metadata <- function(accessions, config, organisms = "all",
     } else message("Updated your local csv metadata file")
     if (finished) break
   }
-  #}
   return(fix_loop)
 }
 
@@ -114,7 +113,8 @@ pipeline_metadata <- function(accessions, config, force = FALSE, max_attempts = 
       }
       return(data.table())
     }
-    safety_check <- c("LIBRARYTYPE", "REPLICATE", "STAGE", "CONDITION", "INHIBITOR")
+    safety_check <- c("LIBRARYTYPE", "REPLICATE", "STAGE", "CONDITION",
+                      "INHIBITOR")
     are_there <- safety_check %in% colnames(res)
     if (!all(are_there)) {
       check_add <- data.table(LIBRARYTYPE = "", REPLICATE = "", STAGE = "",
@@ -453,6 +453,29 @@ export_sucessful_metadata <- function(files, libtypes, output_file,
   fwrite(files, next_round_file)
   fwrite(file_to_keep, output_file)
   return(invisible(NULL))
+}
+
+fill_with_random <- function(table, libtypes_keep = "all", checked_by = "auto") {
+  if (libtypes_keep == "all") libtypes_keep <- unique(table$LIBRARYTYPE)
+  table
+  nrow(table[LIBRARYTYPE == "RFP" & is.na(KEEP),])
+  table[LIBRARYTYPE == "RFP" & is.na(KEEP), KEEP := TRUE]
+  table[LIBRARYTYPE == "RFP" & is.na(KEEP), CHECKED := "auto"]
+  table[LIBRARYTYPE == "RFP" & KEEP == TRUE & CHECKED == "auto",]
+  table <- massiveNGSpipe:::metadata_is_valid(table)
+  non_unique <- nrow(table[KEEP == TRUE & not_unique,]); non_unique
+
+  if (non_unique > 0)
+    table[LIBRARYTYPE == "RFP" & CHECKED == "auto" & not_unique & is.na(FRACTION), FRACTION := paste0("auto_", seq(.N) + 4010)]
+  table <- massiveNGSpipe:::metadata_is_valid(table)
+  non_unique <- nrow(table[KEEP == TRUE & not_unique,]); non_unique
+  if (non_unique > 0)
+    table[LIBRARYTYPE == "RFP" & CHECKED == "auto" & not_unique & is.na(TIMEPOINT), TIMEPOINT := paste0("auto_", seq(.N) + 100)]
+  # fwrite(table, config$temp_metadata)
+  googlesheets4::write_sheet(read.csv(config$temp_metadata),
+                             ss = config$google_url,
+                             sheet = 1)
+  return(table)
 }
 
 

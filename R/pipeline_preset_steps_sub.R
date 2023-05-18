@@ -1,38 +1,5 @@
 .datatable.aware <- TRUE # nolint
 
-
-#' Create a pipeline for the specified study.
-#'
-#' @param study a data.table of output from ORFik::download.SRA.metadata
-#' @param study_accession any accession accepted by
-#' \code{ORFik::download.SRA.metadata}. It is needed to know
-#' if you used GEO, PRJ, SRP etc as the search query.
-#' @param config Configured directories for pipeline as a list
-#' @return a list of pipeline objects, one for each study,
-#' subsetted by organism per study.
-pipeline_init <- function(study, study_accession, config) {
-    # For each organism in the study, create an ORFik experiment config,
-    # fetch reference genome and contaminants, and create an index.
-    organisms <- list()
-    for (organism in unique(study$ScientificName)) {
-        message("---- ", organism)
-        assembly_name <- gsub(" ", "_", trimws(tolower(organism)))
-        experiment <- paste(study_accession, assembly_name, sep = "-")
-        conf <- path_config(experiment, assembly_name, config)
-
-        annotation <- get_annotation(organism, conf["ref"])
-
-        index <- ORFik::STAR.index(annotation, notify_load_existing = FALSE)
-        organisms[[organism]] <- list(
-            conf = conf, annotation = annotation, index = index,
-            experiment = experiment
-        )
-    }
-    return(list(
-        accession = study_accession, study = study, organisms = organisms
-    ))
-}
-
 #' Download all SRA files for all studies
 #'
 #' Extract them into '<'accession'>'.fastq.gz or '<'accession'>'_{1,2}.fastq.gz
@@ -66,21 +33,32 @@ pipeline_trim <- function(pipeline, config) {
         source_dir <- conf["fastq"]
         target_dir <- conf["bam"]
         runs <- study[ScientificName == organism]
-        for (i in seq_len(nrow(runs))) {
-            message(runs[i]$Run)
-            filenames <-
-                if (runs[i]$LibraryLayout == "PAIRED") {
-                  paste0(runs[i]$Run, c("_1", "_2"), ".fastq")
-                } else {
-                  paste0(runs[i]$Run, ".fastq")
-                }
-            filenames <- fs::path(source_dir, filenames)
-            if (!all(file.exists(filenames))) {
-              filenames <- paste0(filenames, ".gz")
-              if (!all(file.exists(filenames))) {
-                stop("File does not exist: ", filenames[1])
-              }
+        # Files to run (Single end / Paired end)
+        all_files <-
+        lapply(seq_len(nrow(runs)), function(i) {
+          filenames <-
+            if (runs[i]$LibraryLayout == "PAIRED") {
+              paste0(runs[i]$Run, c("_1", "_2"), ".fastq")
+            } else {
+              paste0(runs[i]$Run, ".fastq")
             }
+          filenames <- fs::path(source_dir, filenames)
+          if (!all(file.exists(filenames))) {
+            filenames <- paste0(filenames, ".gz")
+            if (!all(file.exists(filenames))) {
+              stop("File does not exist to trim (both .gz and unzipped): ",
+                   filenames[1])
+            }
+          }
+          file <- filenames[1]
+          file2 <- if(is.na(filenames[2])) {NULL} else filenames[2]
+          return(c(file, file2))
+        })
+
+        # Trim
+        BiocParallel::bplapply(seq_len(nrow(runs)), function(i, all_files, runs) {
+            message(runs[i]$Run)
+            filenames <- all_files[[i]]
             file <- filenames[1]
             file2 <- if(is.na(filenames[2])) {NULL} else filenames[2]
 
@@ -90,9 +68,12 @@ pipeline_trim <- function(pipeline, config) {
               adapter.sequence = fastqc_adapters_info(file),
               index.dir = index, steps = "tr"
             )
-            if (config$delete_raw_files) fs::file_delete(file)
-        }
+
+        }, all_files = all_files, runs = runs,
+        BPPARAM = BiocParallel::MulticoreParam(8))
+
         set_flag(config, "trim", conf["exp"])
+        if (config$delete_raw_files) fs::file_delete(unlist(all_files))
     }
 }
 
@@ -326,6 +307,8 @@ pipeline_pshift <- function(df_list, config) {
     if(!inherits(res, "error")) {
       dir.create(QCfolder(df))
       set_flag(config, "pshifted", name(df))
+    } else {
+      bad_pshifting_report(df)
     }
   }
 }
