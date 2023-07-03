@@ -10,7 +10,8 @@ progress_report(
   show_stats = FALSE,
   show_done = TRUE,
   status_plot = FALSE,
-  return_progress_vector = FALSE
+  return_progress_vector = FALSE,
+  check_merged_org = FALSE
 )
 }
 \arguments{

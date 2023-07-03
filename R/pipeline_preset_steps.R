@@ -56,7 +56,7 @@ pipeline_pshift_and_validate <- function(pipelines, config) {
     try <- try({
       df_list <- lapply(experiments, function(e)
         read.experiment(e, validate = FALSE, output.env = new.env()))
-      pipeline_pshift(df_list,                        config)
+      pipeline_pshift(df_list, accepted.length = c(20, 21, 25:33), config)
       pipeline_validate_shifts(df_list,               config)
     })
     if (is(try, "try-error"))
@@ -80,7 +80,6 @@ pipeline_merge_per_study <- function(pipelines, config) {
     if (is(try, "try-error"))
       warning("Failed at step, merge_exp, study: ", experiments[1])
   }
-
 }
 
 

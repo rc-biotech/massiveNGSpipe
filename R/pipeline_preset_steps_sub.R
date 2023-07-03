@@ -294,11 +294,12 @@ pipeline_create_ofst <- function(df_list, config) {
   }
 }
 
-pipeline_pshift <- function(df_list, config) {
+pipeline_pshift <- function(df_list, accepted.length = c(20, 21, 25:33),
+                            config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "pshifted", name(df))) next
     res <- tryCatch(shiftFootprintsByExperiment(df, output_format = "ofst",
-                                                accepted.lengths = c(20, 21, 25:33)),
+                                                accepted.lengths = ),
                     error = function(e) {
                       message(e)
                       message("Fix manually (skipping to next project!)")

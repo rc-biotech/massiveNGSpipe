@@ -132,7 +132,6 @@ extract_srr_preformat <- function(accession, outdir, compress = TRUE,
       stopifnot("pigz exited with non-zero exit code" = ret == 0)
     }
   }
-
 }
 
 install_ascp <- function(path = ".aspera/connect/bin/ascp") {
