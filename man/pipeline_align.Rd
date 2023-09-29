@@ -10,6 +10,8 @@ pipeline_align(pipeline, config)
 }
 \arguments{
 \item{pipeline}{a pipeline object}
+
+\item{config}{the mNGSp config object}
 }
 \description{
 Remove contaminants and align the reads to genome. Single and paired end

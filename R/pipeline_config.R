@@ -5,7 +5,7 @@
 #' @param project_dir where will specific pipeline outputs be put
 #' @param config path, default \code{ORFik::config()}, where will
 #' fastq, bam, references and ORFik experiments go
-#' @param complete_metadata path, default: file.path(project_dir, "RFP_FINAL_LIST.csv")
+#' @param complete_metadata path, default: file.path(project_dir, "FINAL_LIST.csv")
 #' Where should completed valid metadata be stored as csv?
 #' @param google_url url or sheet object for google sheet to use. Set to NULL to
 #' not use google sheet.
@@ -21,6 +21,7 @@
 #' @param delete_raw_files logical, default: mode == "online". If online do delete
 #' raw fastq files after trim step is done, for local samples do not delete.
 #' Set only to TRUE for mode local, if you have backups!
+#' @param delete_collapsed_files logical, default TRUE. If TRUE deletes the collapsed fasta files.
 #' @param steps a list of functions, the functions called during 'run_pipeline'
 #' @param parallel_conf a bpoptions object, default:
 #' \code{bpoptions(log =TRUE, stop.on.error = TRUE)}
@@ -31,9 +32,9 @@
 #' @export
 pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pipeline"),
                             config = ORFik::config(),
-                            complete_metadata = file.path(project_dir, "RFP_FINAL_LIST.csv"),
-                            backup_metadata = file.path(project_dir, "ALL_BACKUP_LIST.csv"),
-                            temp_metadata = file.path(project_dir, "RFP_next_round_manual.csv"),
+                            complete_metadata = file.path(project_dir, "FINAL_LIST.csv"),
+                            backup_metadata = file.path(project_dir, "BACKUP_LIST.csv"),
+                            temp_metadata = file.path(project_dir, "next_round_manual.csv"),
                             google_url = default_sheets(project_dir),
                             preset = "Ribo-seq",
                             flags = pipeline_flags(project_dir, mode),
@@ -41,6 +42,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             pipeline_steps = preset_pipelines(preset, mode),
                             mode = c("online", "local")[1],
                             delete_raw_files = mode == "online",
+                            delete_collapsed_files = TRUE,
                             parallel_conf = bpoptions(log =TRUE,
                                                       stop.on.error = TRUE),
                             logdir = file.path(project_dir, "log_pipeline"),
@@ -72,6 +74,8 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               temp_metadata = temp_metadata,
               google_url = google_url, mode = mode,
               delete_raw_files = delete_raw_files,
+              delete_collapsed_files = delete_collapsed_files,
+              preset = preset,
               parallel_conf = parallel_conf, BPPARAM = BPPARAM))
 }
 
@@ -92,7 +96,7 @@ config_substeps <- function(flags, mode, preset = "Ribo-seq",
 }
 
 preset_substeps <- function(type = "Ribo-seq", flags, mode = c("online", "local")[1]) {
-  valid_presets <- c("Ribo-seq")
+  valid_presets <- c("Ribo-seq", "RNA-seq")
   if (type == "Ribo-seq") {
     if (mode == "online") {
       list(pipe_fetch = flags[1:2],
@@ -108,6 +112,23 @@ preset_substeps <- function(type = "Ribo-seq", flags, mode = c("online", "local"
            pipe_align = flags[3:4],
            pipe_exp = flags[5:6],
            pipe_pshift = flags[7:8],
+           pipe_merge = flags[9],
+           pipe_convert = flags[10:11],
+           pipe_counts = flags[12])
+    }
+  } else if (type == "RNA-seq") {
+    if (mode == "online") {
+      list(pipe_fetch = flags[1:2],
+           pipe_trim_col = flags[3:4],
+           pipe_align = flags[5:6],
+           pipe_exp = flags[7:8],
+           pipe_merge = flags[11],
+           pipe_convert = flags[12:13],
+           pipe_counts = flags[14])
+    } else {
+      list(pipe_trim_col = flags[1:2],
+           pipe_align = flags[3:4],
+           pipe_exp = flags[5:6],
            pipe_merge = flags[9],
            pipe_convert = flags[10:11],
            pipe_counts = flags[12])

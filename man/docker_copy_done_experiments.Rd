@@ -9,7 +9,8 @@ docker_copy_done_experiments(
   pipelines = pipeline_init_all(config),
   new_exp_dir = "~/livemount/Bio_data/ORFik_experiments/",
   docker_conversion = "'s/livemount\\\\///g'",
-  merged_by_organism = TRUE
+  merged_by_organism = TRUE,
+  all_by_organism = TRUE
 )
 }
 \arguments{

@@ -7,9 +7,9 @@
 pipeline_config(
   project_dir = file.path(dirname(config)[1], "NGS_pipeline"),
   config = ORFik::config(),
-  complete_metadata = file.path(project_dir, "RFP_FINAL_LIST.csv"),
-  backup_metadata = file.path(project_dir, "ALL_BACKUP_LIST.csv"),
-  temp_metadata = file.path(project_dir, "RFP_next_round_manual.csv"),
+  complete_metadata = file.path(project_dir, "FINAL_LIST.csv"),
+  backup_metadata = file.path(project_dir, "BACKUP_LIST.csv"),
+  temp_metadata = file.path(project_dir, "next_round_manual.csv"),
   google_url = default_sheets(project_dir),
   preset = "Ribo-seq",
   flags = pipeline_flags(project_dir, mode),
@@ -17,6 +17,7 @@ pipeline_config(
   pipeline_steps = preset_pipelines(preset, mode),
   mode = c("online", "local")[1],
   delete_raw_files = mode == "online",
+  delete_collapsed_files = TRUE,
   parallel_conf = bpoptions(log = TRUE, stop.on.error = TRUE),
   logdir = file.path(project_dir, "log_pipeline"),
   BPPARAM = bpparam()
@@ -28,7 +29,7 @@ pipeline_config(
 \item{config}{path, default \code{ORFik::config()}, where will
 fastq, bam, references and ORFik experiments go}
 
-\item{complete_metadata}{path, default: file.path(project_dir, "RFP_FINAL_LIST.csv")
+\item{complete_metadata}{path, default: file.path(project_dir, "FINAL_LIST.csv")
 Where should completed valid metadata be stored as csv?}
 
 \item{google_url}{url or sheet object for google sheet to use. Set to NULL to
@@ -49,6 +50,8 @@ online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.}
 \item{delete_raw_files}{logical, default: mode == "online". If online do delete
 raw fastq files after trim step is done, for local samples do not delete.
 Set only to TRUE for mode local, if you have backups!}
+
+\item{delete_collapsed_files}{logical, default TRUE. If TRUE deletes the collapsed fasta files.}
 
 \item{parallel_conf}{a bpoptions object, default:
 \code{bpoptions(log =TRUE, stop.on.error = TRUE)}

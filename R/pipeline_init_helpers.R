@@ -1,12 +1,26 @@
 #' Init all studies to pipeline objects
 #' @inheritParams curate_metadata
 #' @param simple_progress_report logical, default TRUE. Display current progress.
+#' @param only_complete_genomes logical, default FALSE. If TRUE, will only init the subset
+#' with complete genome/annotation directories. Will fail if 0 species are done.
 #' @return a list of pipelines
 #' @export
 pipeline_init_all <- function(config, complete_metadata = config$complete_metadata,
-                              simple_progress_report = TRUE, gene_symbols = TRUE) {
+                              simple_progress_report = TRUE, gene_symbols = TRUE,
+                              only_complete_genomes = FALSE) {
   if (!file.exists(complete_metadata)) stop("You have not create a successful metadata table yet!")
   final_list <- fread(complete_metadata)[KEEP == TRUE,]
+
+  if (only_complete_genomes) {
+    message("- Subsetting to only complete genomes")
+    complete_genomes <- list.genomes()$name
+    total_genomes <- length(unique(final_list$ScientificName))
+    total_samples <- nrow(final_list)
+    final_list <- final_list[ScientificName %in% gsub("_", " ", (stringr::str_to_title(complete_genomes))), ]
+
+    message("Complete genomes ratio:", round((length(complete_genomes) / total_genomes)*100, 2), "%")
+    message("Used samples ratio:", round((nrow(final_list) / total_samples)*100, 2), "%")
+  }
   if (nrow(final_list) == 0) stop("complete metadata table has 0 rows, ",
                                   "did you forget to set the 'KEEP' column to TRUE in",
                                   " 'config$temp_metadata'?")
@@ -64,12 +78,13 @@ pipeline_init <- function(study, study_accession, config, reference_list) {
   ))
 }
 
-path_config <- function(experiment, assembly_name, config) {
+path_config <- function(experiment, assembly_name, config, type = ifelse(config$preset == "Ribo-seq", "", config$preset)) {
   # Create ORFik experiment config manually, without separate folders
   # for different library strategies.
-  conf <- config.exper(experiment, assembly_name, "", config[["config"]])
+  conf <- config.exper(experiment, assembly_name, type, config[["config"]])
   # Fix bad naming from config.exper
   conf <- gsub("//", "/", conf); conf <- gsub("_$", "", conf)
+  names(conf) <- gsub(" .*", "", names(conf))
   names(conf) <- gsub(" $", "", names(conf))
   sapply(conf[1:3], fs::dir_create)
   return(conf)
@@ -183,6 +198,10 @@ get_symbols <- function(txdb, path = file.path(dirname(ORFik:::getGtfPathFromTxd
 
 organism_merged_exp_name <- function(organisms) {
   paste0("all_merged-", gsub(" ", "_", organisms))
+}
+
+organism_collection_exp_name <- function(organisms) {
+  paste0("all_samples-", gsub(" ", "_", organisms))
 }
 
 

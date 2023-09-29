@@ -42,6 +42,7 @@ pipeline_trim <- function(pipeline, config) {
             } else {
               paste0(runs[i]$Run, ".fastq")
             }
+
           filenames <- fs::path(source_dir, filenames)
           if (!all(file.exists(filenames))) {
             filenames <- paste0(filenames, ".gz")
@@ -54,7 +55,6 @@ pipeline_trim <- function(pipeline, config) {
           file2 <- if(is.na(filenames[2])) {NULL} else filenames[2]
           return(c(file, file2))
         })
-
         # Trim
         BiocParallel::bplapply(seq_len(nrow(runs)), function(i, all_files, runs) {
             message(runs[i]$Run)
@@ -90,42 +90,58 @@ pipeline_collapse <- function(pipeline, config) {
             LibraryLayout == "PAIRED"]
         runs_single <- study[ScientificName == organism &
             LibraryLayout != "PAIRED"]
-        for (i in seq_len(nrow(runs_paired))) {
-            outdir <- fs::path(trimmed_dir, runs_paired[i]$LibraryLayout)
+        any_paired_libs <- nrow(runs_paired) > 0
+        if (any_paired_libs) {
+            outdir <- fs::path(trimmed_dir, runs_paired[1]$LibraryLayout)
             fs::dir_create(outdir)
             filenames <- paste0(
-                "trimmed_", runs_paired[i]$Run, c("_1", "_2"), ".fastq"
+                "trimmed" , c("1_", "2_"), runs_paired[i]$Run, "_1", ".fastq"
             )
-            for (filename in filenames) {
-                fs::file_move(fs::path(trimmed_dir, filename), outdir)
+            message("Paired end data is now collapsed into 1 file,
+                    and 2nd file is reverse complimented before merging!")
+            full_filenames <- file.path(trimmed_dir, filenames)
+            BiocParallel::bplapply(full_filenames, function(filename) {
+              ORFik::collapse.fastq(
+                filename, outdir,
+                compress = TRUE
+              )
+              fs::file_delete(filename)
+            }, BPPARAM = BiocParallel::MulticoreParam(16))
+            # Read in and reverse second file, then merge back into 1.
+            full_filenames <- file.path(outdir, paste0("collapsed_", filenames))
+            first_files <- filenames[seq_along(filenames) %% 2 == 1]
+            second_files <- filenames[seq_along(filenames) %% 2 == 0]
+
+            for (i in seq_along(first_files)) {
+              first_file <- first_files[(i*2)-1]
+              second_file <- second_files[(i*2)]
+              a <- readDNAStringSet(first_file, format = "fasta", use.names = TRUE)
+              b <- readDNAStringSet(second_file, format = "fasta", use.names = TRUE)
+              b <- reverseComplement(b)
+              writeXStringSet(c(a,b), first_file, format = "fasta")
+              fs::file_delete(second_file)
             }
         }
 
-        for (i in seq_len(nrow(runs_paired))) {
-          outdir <- fs::path(trimmed_dir, runs_paired[i]$LibraryLayout)
+        any_single_libs <- nrow(runs_single) > 0
+        if (any_single_libs) {
+          outdir <- fs::path(trimmed_dir, "SINGLE")
           fs::dir_create(outdir)
-          filenames <- paste0(
-            "trimmed_", runs_paired[i]$Run, c("_1", "_2"), ".fastq"
-          )
-          for (filename in filenames) {
-            fs::file_move(fs::path(trimmed_dir, filename), outdir)
-          }
+          BiocParallel::bplapply(runs_single$Run, function(srr) {
+            filename <- list.files(trimmed_dir, paste0(srr, "\\."),
+                                   full.names = TRUE)
+            if (length(filename) != 1) {
+              filename <- file.path(trimmed_dir,
+                                    paste0("trimmed_", srr, ".fastq"))
+            }
+            ORFik::collapse.fastq(
+              filename, outdir,
+              compress = TRUE
+            )
+            fs::file_delete(filename)
+          }, BPPARAM = BiocParallel::MulticoreParam(16))
         }
-        outdir <- fs::path(trimmed_dir, "SINGLE")
-        fs::dir_create(outdir)
-        BiocParallel::bplapply(runs_single$Run, function(srr) {
-          filename <- list.files(trimmed_dir, paste0(srr, "\\."),
-                                 full.names = TRUE)
-          if (length(filename) != 1) {
-            filename <- file.path(trimmed_dir,
-                           paste0("trimmed_", srr, ".fastq"))
-          }
-          ORFik::collapse.fastq(
-            filename, outdir,
-            compress = TRUE
-          )
-          fs::file_delete(filename)
-        }, BPPARAM = BiocParallel::MulticoreParam(16))
+
         set_flag(config, "collapsed", conf["exp"])
     }
 }
@@ -134,6 +150,7 @@ pipeline_collapse <- function(pipeline, config) {
 #' reads are handled separately, so the resulting logs are renamed with a
 #' "_SINGLE" and/or "_PAIRED" suffix.
 #' @param pipeline a pipeline object
+#' @param config the mNGSp config object
 pipeline_align <- function(pipeline, config) {
     study <- pipeline$study
     for (organism in names(pipeline$organisms)) {
@@ -164,30 +181,35 @@ pipeline_align <- function(pipeline, config) {
                     ))
                 )
             }
-            fs::dir_delete(fs::path(trimmed_dir, "SINGLE"))
+            if (config$delete_collapsed_files)
+              fs::dir_delete(fs::path(trimmed_dir, "SINGLE"))
         }
         if (any(runs$LibraryLayout == "PAIRED")) {
+            message("Paired end ignored for now, running collapsed pair mode only!")
+            collapsed_paired_end_mode <- TRUE
             ORFik::STAR.align.folder(
                 input.dir = fs::path(trimmed_dir, "PAIRED"),
                 output.dir = output_dir,
-                index.dir = index, steps = "co-ge", paired.end = TRUE,
+                index.dir = index, steps = "co-ge",
+                paired.end = collapsed_paired_end_mode,
             )
-            for (stage in c("contaminants_depletion", "aligned")) {
-                fs::file_move(
-                    fs::path(output_dir, stage, "LOGS"),
-                    fs::path(output_dir, stage, "LOGS_PAIRED")
-                )
-            }
-            for (filename in c("full_process.csv", "runCommand.log")) {
-                fs::file_move(
-                    fs::path(output_dir, filename),
-                    fs::path(output_dir, paste0(
-                        fs::path_ext_remove(filename), "_PAIRED.",
-                        fs::path_ext(filename)
-                    ))
-                )
-            }
-            fs::dir_delete(fs::path(trimmed_dir, "PAIRED"))
+            # for (stage in c("contaminants_depletion", "aligned")) {
+            #     fs::file_move(
+            #         fs::path(output_dir, stage, "LOGS"),
+            #         fs::path(output_dir, stage, "LOGS_PAIRED")
+            #     )
+            # }
+            # for (filename in c("full_process.csv", "runCommand.log")) {
+            #     fs::file_move(
+            #         fs::path(output_dir, filename),
+            #         fs::path(output_dir, paste0(
+            #             fs::path_ext_remove(filename), "_PAIRED.",
+            #             fs::path_ext(filename)
+            #         ))
+            #     )
+            # }
+            if (config$delete_collapsed_files)
+              fs::dir_delete(fs::path(trimmed_dir, "PAIRED"))
         }
         set_flag(config, "aligned", conf["exp"])
     }
@@ -225,21 +247,20 @@ pipeline_create_experiment <- function(pipeline, config) {
     df_list <- list()
     for (organism in names(pipeline$organisms)) {
         conf <- pipeline$organisms[[organism]]$conf
-        if (!step_is_next_not_done(config, "exp", conf["exp"])) {
+        experiment <- conf["exp"]
+        if (!step_is_next_not_done(config, "exp", experiment)) {
           if (!step_is_done(config, "exp", conf["exp"])) return(NULL)
           df_list <- c(df_list, read.experiment(conf["exp"],
                                                 output.env = new.env()))
           next
         }
         annotation <- pipeline$organisms[[organism]]$annotation
-        assembly_name <- gsub(" ", "_", trimws(tolower(organism)))
-        accession <- pipeline$accession
         study <- pipeline$study
         stopifnot(nrow(study) > 0)
         study <- study[ScientificName == organism,]
         if (nrow(study) == 0)
           stop("No samples for organism wanted in study!")
-        experiment <- paste(accession, assembly_name, sep = "-")
+
         # Do some small correction to info and merge
         remove <- "^_|_$|^NA_|_NA$|^NA$|^_$|^__$|^___$"
         # Stage
@@ -248,11 +269,13 @@ pipeline_create_experiment <- function(pipeline, config) {
         stage <- gsub(paste0(remove, "|NONE_|_NONE"), "", stage) # Twice
         # Condition
         condition <- paste0(study$CONDITION)
+        if (!is.null(study$GENE)) condition <- paste(condition, study$GENE, sep = "_")
+        condition <- gsub(remove, "", condition)
+        condition <- gsub(remove, "", condition)
         condition <- gsub(remove, "", condition)
         condition <- gsub(remove, "", condition)
         # Fraction
         fraction <- paste(study$FRACTION,study$TIMEPOINT, study$BATCH, sep = "_")
-        if (!is.null(study$GENE)) fraction <- paste(fraction, study$GENE, sep = "_")
         fraction <- gsub(remove, "", fraction)
         study$INHIBITOR[is.na(study$INHIBITOR)] <- ""
         add_inhibitor_to_fraction <-
@@ -264,7 +287,10 @@ pipeline_create_experiment <- function(pipeline, config) {
         fraction <- gsub(remove, "", fraction); fraction <- gsub(remove, "", fraction)
         # PAIRED END
         paired_end <- study$LibraryLayout == "PAIRED"
-        if (any(paired_end)) stop("TODO: Fix for paired end, will not work for now")
+        if (any(paired_end)) {
+          message("Only running single end for now, make fix for this to work normally")
+          paired_end <- FALSE
+        }
 
         bam_dir <- fs::path(conf["bam"], "aligned")
         bam_files <- match_bam_to_metadata(bam_dir, study, paired_end)
@@ -275,7 +301,7 @@ pipeline_create_experiment <- function(pipeline, config) {
             stage = stage, rep = study$REPLICATE,
             condition = condition, fraction = fraction,
             author = unique(study$AUTHOR),
-            files = bam_files
+            files = bam_files, runIDs = study$Run
         )
         df <- ORFik::read.experiment(experiment,
                                      output.env = new.env())
@@ -288,8 +314,7 @@ pipeline_create_experiment <- function(pipeline, config) {
 pipeline_create_ofst <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "ofst", name(df))) next
-    convertLibs(df)
-    remove.experiments(df)
+    convert_bam_to_ofst(df)
     set_flag(config, "ofst", name(df))
   }
 }
@@ -299,7 +324,7 @@ pipeline_pshift <- function(df_list, accepted.length = c(20, 21, 25:33),
   for (df in df_list) {
     if (!step_is_next_not_done(config, "pshifted", name(df))) next
     res <- tryCatch(shiftFootprintsByExperiment(df, output_format = "ofst",
-                                                accepted.lengths = ),
+                                                accepted.lengths = accepted.length),
                     error = function(e) {
                       message(e)
                       message("Fix manually (skipping to next project!)")

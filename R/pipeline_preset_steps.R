@@ -101,11 +101,70 @@ pipeline_convert_psite_reads <- function(pipelines, config) {
   }
 }
 
+#' Create the superset collection of all samples per organism
+#' @inheritParams run_pipeline
+#' @return invisible(NULL)
+#' @export
+pipeline_collection_org <- function(config, pipelines = pipelines_init_all(config)) {
+  message("- Collection of all samples per organism")
+  names(pipelines) <- NULL
+  exp <- get_experiment_names(pipelines)
+  done_exp <- unlist(lapply(exp, function(e) step_is_done(config, "pcounts", e)))
+
+  # Merge all per organism
+  done_exp_list <- exp[done_exp]
+  done_organisms <- unique(names(done_exp_list))
+
+  for (org in done_organisms) {
+    message("-- Organism: ", org)
+    df_list <- lapply(done_exp_list[names(done_exp_list) == org], function(e)
+      read.experiment(e, validate = F))
+    df <- do.call(rbind, df_list)
+    exp_name <- organism_collection_exp_name(org)
+    out_dir <- file.path(config$config["bam"], exp_name)
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+    fraction <- df$fraction
+    #fraction <- gsub("auto_.*", "", df$fraction)
+    study_size <- unlist(lapply(df_list, function(e) nrow(e)))
+    studies <- rep(unlist(done_exp_list[names(done_exp_list) == org], use.names = F), study_size)
+    studies <- gsub("-.*", "", studies)
+    fraction <- paste(fraction, studies, sep = "_")
+    fraction <- gsub("^_", "",fraction)
+    fraction <- gsub("^NA_", "",fraction)
+    create.experiment(out_dir, exper = exp_name,
+                      txdb = df@txdb, fa = df@fafile, organism = org,
+                      libtype = df$libtype,
+                      condition = df$condition, rep = df$rep,
+                      stage = df$stage, fraction = fraction,
+                      files = df$filepath, result_folder = out_dir)
+
+    df <- read.experiment(exp_name, output.env = new.env())
+    rel_dir <- "QC_STATS"
+    count_folder <- file.path(out_dir, rel_dir)
+    dir.create(count_folder, recursive = TRUE, showWarnings = FALSE)
+    for (region in c("mrna", "cds", "leaders", "trailers")) {
+      message("--- ", region)
+      count_lists <- bplapply(df_list,
+                             function(e, region) suppressMessages(countTable(e, region,
+                                                           type = "summarized")),
+                             region = region)
+      count_list <- do.call(BiocGenerics::cbind, count_lists)
+      saveName <- file.path(count_folder, paste0("countTable_", region, ".rds"))
+      saveRDS(count_list, file = saveName)
+      saveName <- file.path(count_folder, paste0("totalCounts_", region, ".rds"))
+      saveRDS(colSums(assay(count_list)), file = saveName)
+    }
+  }
+}
+
 #' Merge all studies per organism
+#'
+#' Collected
 #' @inheritParams run_pipeline
 #' @return invisible(NULL)
 #' @export
 pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config)) {
+  message("- Merge all samples per organism")
   names(pipelines) <- NULL
   exp <- get_experiment_names(pipelines)
   done_exp <- unlist(lapply(exp, function(e) step_is_done(config, "merged_lib", e)))
