@@ -16,6 +16,8 @@
 #' resource usage.
 #' @param flag_steps a list of subsets of flags that maps which flags are set in
 #' each function in 'step'.
+#' @param pipeline_steps a list of the functions to actually run,
+#' that map to the checkpoint flags given.
 #' @param mode = c("online", "local")[1]. "online" will assume project IDs for
 #' online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.
 #' @param delete_raw_files logical, default: mode == "online". If online do delete
@@ -37,9 +39,10 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             temp_metadata = file.path(project_dir, "next_round_manual.csv"),
                             google_url = default_sheets(project_dir),
                             preset = "Ribo-seq",
-                            flags = pipeline_flags(project_dir, mode),
-                            flag_steps = config_substeps(names(flags), mode, preset),
-                            pipeline_steps = preset_pipelines(preset, mode),
+                            flags = pipeline_flags(project_dir, mode, preset),
+                            flag_steps = flag_grouping(flags),
+                            pipeline_steps = lapply(names(flag_steps),
+                                                    function(x) get(x, mode = "function")),
                             mode = c("online", "local")[1],
                             delete_raw_files = mode == "online",
                             delete_collapsed_files = TRUE,
@@ -79,83 +82,30 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               parallel_conf = parallel_conf, BPPARAM = BPPARAM))
 }
 
-#' Configure which flags are done in each function
-#' @inheritParams pipeline_config
-#' @param flags character vector, names of flags
+#' Define which flags are done in each function
+#' @param flags character vector, of paths with names as flag steps and
+#' attribute called "grouping" with length same as flag with grouping information,
+#' where group names are the group functions.
 #' @param substeps a list of character vectors, where each sub list
 #' is the steps that happen in that sub component of the pipeline
 #' @return a list, returns the validated 'substeps' argument.
-config_substeps <- function(flags, mode, preset = "Ribo-seq",
-                            substeps = preset_substeps(preset, flags, mode)) {
-  stopifnot(all(unlist(substeps) %in% flags))
+#' @export
+flag_grouping <- function(flags,
+                          substeps = preset_grouping(flags)) {
+  stopifnot(all(unlist(substeps) %in% names(flags)))
   stopifnot(length(unlist(substeps)) > 0)
   stopifnot(length(flags) > 0)
-  if (!all(flags %in% unlist(substeps)))
+  if (!all(names(flags) %in% unlist(substeps)))
     message("Running pipeline with not all flags set, is this intentional?")
   return(substeps)
 }
 
-preset_substeps <- function(type = "Ribo-seq", flags, mode = c("online", "local")[1]) {
-  valid_presets <- c("Ribo-seq", "RNA-seq")
-  if (type == "Ribo-seq") {
-    if (mode == "online") {
-      list(pipe_fetch = flags[1:2],
-           pipe_trim_col = flags[3:4],
-           pipe_align = flags[5:6],
-           pipe_exp = flags[7:8],
-           pipe_pshift = flags[9:10],
-           pipe_merge = flags[11],
-           pipe_convert = flags[12:13],
-           pipe_counts = flags[14])
-    } else {
-      list(pipe_trim_col = flags[1:2],
-           pipe_align = flags[3:4],
-           pipe_exp = flags[5:6],
-           pipe_pshift = flags[7:8],
-           pipe_merge = flags[9],
-           pipe_convert = flags[10:11],
-           pipe_counts = flags[12])
-    }
-  } else if (type == "RNA-seq") {
-    if (mode == "online") {
-      list(pipe_fetch = flags[1:2],
-           pipe_trim_col = flags[3:4],
-           pipe_align = flags[5:6],
-           pipe_exp = flags[7:8],
-           pipe_merge = flags[11],
-           pipe_convert = flags[12:13],
-           pipe_counts = flags[14])
-    } else {
-      list(pipe_trim_col = flags[1:2],
-           pipe_align = flags[3:4],
-           pipe_exp = flags[5:6],
-           pipe_merge = flags[9],
-           pipe_convert = flags[10:11],
-           pipe_counts = flags[12])
-    }
-  } else stop(paste("Currently valid preset pipelines are of types:",
-                    valid_presets))
-}
-
-
-preset_pipelines <- function(type = "Ribo-seq", mode = c("online", "local")[1]) {
-  valid_presets <- c("Ribo-seq", "RNA-seq")
-  if (type == "Ribo-seq") {
-    preset <- list(pipeline_fetch, pipeline_trim_collapse,
-                   pipeline_align_clean, pipeline_exp_ofst,
-                   pipeline_pshift_and_validate,
-                   pipeline_merge_per_study,
-                   pipeline_convert_psite_reads,
-                   pipeline_counts_psites)
-    if (mode == "local") preset <- preset[-1]
-  } else if (type == "RNA-seq") {
-    preset <- list(pipeline_fetch, pipeline_trim_collapse,
-                   pipeline_align_clean, pipeline_exp_ofst,
-                   pipeline_merge_per_study,
-                   pipeline_convert_psite_reads,
-                   pipeline_counts_psites)
-    if (mode == "local") preset <- preset[-1]
-  } else stop(paste("Currently valid preset pipelines are of types:",
-                    valid_presets))
-  return(preset)
+preset_grouping <- function(flags) {
+  grouping <- attr(flags, "grouping")
+  if (is.null(names(flags))) stop("flags must have names!")
+  if (is.null(grouping)) stop("Your flags does not have defined attr 'grouping',",
+                              "it should contain the grouping of flags")
+  if (length(flags) != length(grouping)) stop("The grouping attribute must be",
+                                              "equal size to number of flags!")
+  return(split(names(flags), grouping)[unique(grouping)])
 }

@@ -77,74 +77,7 @@ pipeline_trim <- function(pipeline, config) {
     }
 }
 
-#' Collapse trimmed single-end reads and move them into "trim/SINGLE"
-#' subdirectory. PE reads are moved into "trim/PAIRED" without modification.
-#' @param pipeline a pipeline object
-pipeline_collapse <- function(pipeline, config) {
-    study <- pipeline$study
-    for (organism in names(pipeline$organisms)) {
-        conf <- pipeline$organisms[[organism]]$conf
-        if (!step_is_next_not_done(config, "collapsed", conf["exp"])) next
-        trimmed_dir <- fs::path(conf["bam"], "trim")
-        runs_paired <- study[ScientificName == organism &
-            LibraryLayout == "PAIRED"]
-        runs_single <- study[ScientificName == organism &
-            LibraryLayout != "PAIRED"]
-        any_paired_libs <- nrow(runs_paired) > 0
-        if (any_paired_libs) {
-            outdir <- fs::path(trimmed_dir, runs_paired[1]$LibraryLayout)
-            fs::dir_create(outdir)
-            filenames <- paste0(
-                "trimmed" , c("1_", "2_"), runs_paired[i]$Run, "_1", ".fastq"
-            )
-            message("Paired end data is now collapsed into 1 file,
-                    and 2nd file is reverse complimented before merging!")
-            full_filenames <- file.path(trimmed_dir, filenames)
-            BiocParallel::bplapply(full_filenames, function(filename) {
-              ORFik::collapse.fastq(
-                filename, outdir,
-                compress = TRUE
-              )
-              fs::file_delete(filename)
-            }, BPPARAM = BiocParallel::MulticoreParam(16))
-            # Read in and reverse second file, then merge back into 1.
-            full_filenames <- file.path(outdir, paste0("collapsed_", filenames))
-            first_files <- filenames[seq_along(filenames) %% 2 == 1]
-            second_files <- filenames[seq_along(filenames) %% 2 == 0]
 
-            for (i in seq_along(first_files)) {
-              first_file <- first_files[(i*2)-1]
-              second_file <- second_files[(i*2)]
-              a <- readDNAStringSet(first_file, format = "fasta", use.names = TRUE)
-              b <- readDNAStringSet(second_file, format = "fasta", use.names = TRUE)
-              b <- reverseComplement(b)
-              writeXStringSet(c(a,b), first_file, format = "fasta")
-              fs::file_delete(second_file)
-            }
-        }
-
-        any_single_libs <- nrow(runs_single) > 0
-        if (any_single_libs) {
-          outdir <- fs::path(trimmed_dir, "SINGLE")
-          fs::dir_create(outdir)
-          BiocParallel::bplapply(runs_single$Run, function(srr) {
-            filename <- list.files(trimmed_dir, paste0(srr, "\\."),
-                                   full.names = TRUE)
-            if (length(filename) != 1) {
-              filename <- file.path(trimmed_dir,
-                                    paste0("trimmed_", srr, ".fastq"))
-            }
-            ORFik::collapse.fastq(
-              filename, outdir,
-              compress = TRUE
-            )
-            fs::file_delete(filename)
-          }, BPPARAM = BiocParallel::MulticoreParam(16))
-        }
-
-        set_flag(config, "collapsed", conf["exp"])
-    }
-}
 
 #' Remove contaminants and align the reads to genome. Single and paired end
 #' reads are handled separately, so the resulting logs are renamed with a
@@ -160,11 +93,15 @@ pipeline_align <- function(pipeline, config) {
         runs <- study[ScientificName == organism]
         trimmed_dir <- fs::path(conf["bam"], "trim")
         output_dir <- conf["bam"]
+        did_collapse <- "collapsed" %in% names(config$flag)
         if (any(runs$LibraryLayout == "SINGLE")) {
+          input_dir <- ifelse(did_collapse,
+                              fs::path(trimmed_dir, "SINGLE"),
+                              trimmed_dir)
             ORFik::STAR.align.folder(
-                input.dir = fs::path(trimmed_dir, "SINGLE"),
+                input.dir = input_dir,
                 output.dir = output_dir,
-                index.dir = index, steps = "co-ge", paired.end = FALSE,
+                index.dir = index, steps = "co-ge", paired.end = FALSE
             )
             for (stage in c("contaminants_depletion", "aligned")) {
                 fs::file_move(
@@ -182,16 +119,20 @@ pipeline_align <- function(pipeline, config) {
                 )
             }
             if (config$delete_collapsed_files)
-              fs::dir_delete(fs::path(trimmed_dir, "SINGLE"))
+              fs::dir_delete(input_dir)
         }
         if (any(runs$LibraryLayout == "PAIRED")) {
-            message("Paired end ignored for now, running collapsed pair mode only!")
+          input_dir <- ifelse(did_collapse,
+                              fs::path(trimmed_dir, "PAIRED"),
+                              trimmed_dir)
+            # message("Paired end ignored for now, running collapsed pair mode only!")
             collapsed_paired_end_mode <- TRUE
             ORFik::STAR.align.folder(
-                input.dir = fs::path(trimmed_dir, "PAIRED"),
+                input.dir = input_dir,
                 output.dir = output_dir,
-                index.dir = index, steps = "co-ge",
-                paired.end = collapsed_paired_end_mode,
+                index.dir = index, steps = "tr-co-ge",
+                resume = "co",
+                paired.end = collapsed_paired_end_mode
             )
             # for (stage in c("contaminants_depletion", "aligned")) {
             #     fs::file_move(
@@ -209,7 +150,7 @@ pipeline_align <- function(pipeline, config) {
             #     )
             # }
             if (config$delete_collapsed_files)
-              fs::dir_delete(fs::path(trimmed_dir, "PAIRED"))
+              fs::dir_delete(input_dir)
         }
         set_flag(config, "aligned", conf["exp"])
     }
@@ -297,9 +238,11 @@ pipeline_create_experiment <- function(pipeline, config) {
         ORFik::create.experiment(
             dir = bam_dir,
             exper = experiment, txdb = paste0(annotation["gtf"], ".db"),
-            libtype = "RFP",  fa = annotation["genome"], organism = organism,
+            libtype = study$LIBRARYTYPE,
+            fa = annotation["genome"], organism = organism,
             stage = stage, rep = study$REPLICATE,
             condition = condition, fraction = fraction,
+            pairedEndBam = paired_end,
             author = unique(study$AUTHOR),
             files = bam_files, runIDs = study$Run
         )

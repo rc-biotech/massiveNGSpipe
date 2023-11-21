@@ -12,9 +12,9 @@ pipeline_config(
   temp_metadata = file.path(project_dir, "next_round_manual.csv"),
   google_url = default_sheets(project_dir),
   preset = "Ribo-seq",
-  flags = pipeline_flags(project_dir, mode),
-  flag_steps = config_substeps(names(flags), mode, preset),
-  pipeline_steps = preset_pipelines(preset, mode),
+  flags = pipeline_flags(project_dir, mode, preset),
+  flag_steps = flag_grouping(flags),
+  pipeline_steps = lapply(names(flag_steps), function(x) get(x, mode = "function")),
   mode = c("online", "local")[1],
   delete_raw_files = mode == "online",
   delete_collapsed_files = TRUE,
@@ -43,6 +43,9 @@ resource usage.}
 
 \item{flag_steps}{a list of subsets of flags that maps which flags are set in
 each function in 'step'.}
+
+\item{pipeline_steps}{a list of the functions to actually run,
+that map to the checkpoint flags given.}
 
 \item{mode}{= c("online", "local")\link{1}. "online" will assume project IDs for
 online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.}

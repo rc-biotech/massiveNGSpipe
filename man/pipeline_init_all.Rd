@@ -8,7 +8,8 @@ pipeline_init_all(
   config,
   complete_metadata = config$complete_metadata,
   simple_progress_report = TRUE,
-  gene_symbols = TRUE
+  gene_symbols = TRUE,
+  only_complete_genomes = FALSE
 )
 }
 \arguments{
@@ -19,6 +20,9 @@ NGS pipeline}
 The list of final candidates that are checked and have unique rows per bioproject}
 
 \item{simple_progress_report}{logical, default TRUE. Display current progress.}
+
+\item{only_complete_genomes}{logical, default FALSE. If TRUE, will only init the subset
+with complete genome/annotation directories. Will fail if 0 species are done.}
 }
 \value{
 a list of pipelines

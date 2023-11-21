@@ -164,7 +164,7 @@ Important to remember is that the pipeline has 2 main modes:
 - 'local': for local machine / server data
 
 Since the input steps are just a set of input function, you as a user can fully
-custimize the pipeline. 
+customize the pipeline. 
 
 #### curate_metadata (Which samples to run and what are they)
 

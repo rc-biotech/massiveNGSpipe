@@ -7,12 +7,9 @@
 pipeline_flags(
   project_dir,
   mode = c("online", "local")[1],
-  flag_sub = c("start", "fetch", "trim", "collapsed", "aligned", "cleanbam", "exp",
-    "ofst", "pshifted", "valid_pshift", "merged_lib", "covrle", "bigwig", "pcounts"),
-  flags_to_use = if (mode == "online") {
-     seq(length(flag_sub))
- } else
-    seq(length(flag_sub))[-c(1, 2)]
+  preset,
+  flag_names = libtype_flags(preset, mode),
+  create_dirs = TRUE
 )
 }
 \arguments{
@@ -21,10 +18,10 @@ pipeline_flags(
 \item{mode}{= c("online", "local")\link{1}. "online" will assume project IDs for
 online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.}
 
-\item{flag_sub}{character vector of names of flag steps to include}
+\item{flag_names}{character vector of names of flag steps to include}
 
-\item{flags_to_use}{numeric, vector of indices of 'flag_sub' to use.
-c(1,2), would mean only download.}
+\item{create_dirs}{logical, default TRUE. For test purpose you can turn of
+dir creation if needed.}
 }
 \value{
 a named character vector of directories in 'project_dir'

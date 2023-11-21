@@ -12,10 +12,12 @@ curate_metadata(
   complete_metadata = config$complete_metadata,
   LibraryLayouts = c("SINGLE", "PAIRED"),
   LibraryStrategy = c("RNA-Seq", "miRNA-Seq", "OTHER"),
+  libtypes = "RFP",
   Platforms = "ILLUMINA",
   step_mode = FALSE,
   open_google_sheet = interactive(),
-  fix_loop = TRUE
+  fix_loop = TRUE,
+  only_curated = FALSE
 )
 }
 \arguments{
@@ -50,6 +52,11 @@ c("RNA-Seq", "miRNA-Seq", "OTHER"). Which library Strategies to keep.
 Default is the total set of normal RNA sequencing. (RNA-seq, miRNA-seq,
 Ribo-seq, CHIP-seq, CAGE etc.) Change if you only want a subset, or some
 rare type.}
+
+\item{libtypes}{character vector, default "RFP". Which NGS library types to
+keep from all LIBRARYLAYOUT values. These names are made by mNGSp
+automatically. If you made "disome" as a LIBRARYLAYOUT category, then
+c("RFP", "disome") will keep both, but exclude any other.}
 
 \item{Platforms}{character vector, default: "ILLUMINA". The sequencer technologies allowed.}
 

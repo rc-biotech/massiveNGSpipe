@@ -1,3 +1,38 @@
+#' Define the library specific steps
+#'
+#' This is called flags
+#' @param preset either of c("Ribo-seq", "RNA-seq")
+#' @param mode either of c("online", "local")
+#' @return a character vector with names being the grouping in functions
+libtype_flags <- function(preset, mode = "online") {
+  valid_presets <- c("Ribo-seq", "RNA-seq", "disome")
+
+  download_flags <- if (mode == "online") {
+    c(fetch = "start", fetch = "fetch")
+  } else {
+    c()
+  }
+  trim_flags <- c(trim_collapse = "trim", trim_collapse = "collapsed")
+  align_flags <- c(align_clean = "aligned", align_clean = "cleanbam")
+  exp_flags <- c(exp_ofst = "exp", exp_ofst = "ofst")
+  merge_flags <- c(merge_study = "merged_lib")
+
+  lib_type_flags <- if (preset == "Ribo-seq") {
+    c(pshift_and_validate = "pshifted", pshift_and_validate = "valid_pshift")
+  } else if (preset %in% c("RNA-seq", "disome")) {
+    trim_flags <- trim_flags[1]
+    c(cigar_collapse = "cigar_collapse")
+  } else stop(paste("Currently valid preset pipelines are of types:",
+                    valid_presets))
+  format_processing <- c(convert = "covrle", convert = "bigwig")
+  count_tables <- c(counts = "pcounts")
+
+  full_pipe <- c(download_flags, trim_flags, align_flags, exp_flags,
+                 lib_type_flags, merge_flags, format_processing, count_tables)
+  names(full_pipe) <- paste0("pipe_", names(full_pipe))
+  return(full_pipe)
+}
+
 all_substeps_done <- function(config, steps, exp) {
   # Check which steps are done
   steps_done <- c()
@@ -29,26 +64,23 @@ all_substeps_done_all <- function(config, steps, exps) {
 #'
 #' @param project_dir pipeline directory
 #' @inheritParams pipeline_config
-#' @param flag_sub character vector of names of flag steps to include
-#' @param flags_to_use numeric, vector of indices of 'flag_sub' to use.
-#' c(1,2), would mean only download.
+#' @param flag_names character vector of names of flag steps to include
+#' @param create_dirs logical, default TRUE. For test purpose you can turn of
+#' dir creation if needed.
 #' @return a named character vector of directories in 'project_dir'
 #'  named as 'flag_sub' with names 'flag_sub'
 pipeline_flags <- function(project_dir, mode = c("online", "local")[1],
-                           flag_sub = c("start","fetch", "trim", "collapsed",
-                                        "aligned", "cleanbam","exp","ofst",
-                                        "pshifted", "valid_pshift",
-                                        "merged_lib",
-                                        "covrle", "bigwig",
-                                        "pcounts"),
-                           flags_to_use = if(mode == "online")
-                             {seq(length(flag_sub))} else seq(length(flag_sub))[-c(1,2)]) {
+                           preset,
+                           flag_names = libtype_flags(preset, mode),
+                           create_dirs = TRUE
+                           ) {
   flag_dir <- file.path(project_dir, "flags")
-  flag_sub <- flag_sub[flags_to_use]
-  flags <- file.path(flag_dir, flag_sub)
+  flags <- file.path(flag_dir, flag_names)
   stopifnot(length(flags) > 0)
-  names(flags) <- flag_sub
-  lapply(flags, function(f) dir.create(f, showWarnings = FALSE, recursive = TRUE))
+  names(flags) <- flag_names
+  attr(flags, "grouping") <- names(flag_names)
+  if (create_dirs)
+    lapply(flags, function(f) dir.create(f, showWarnings = FALSE, recursive = TRUE))
   return(flags)
 }
 

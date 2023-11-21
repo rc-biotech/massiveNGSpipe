@@ -84,6 +84,9 @@ progress_report <- function(pipelines, config, show_stats = FALSE,
       out.aligned <- conf["bam"] #TODO, fix when it works to subset by name!
       trimmed.out <- file.path(out.aligned, "trim")
       alignment.stats <- file.path(out.aligned, "full_process_SINGLE.csv")
+      if (!file.exists(alignment.stats))
+        alignment.stats <- file.path(out.aligned, "full_process.csv")
+
       dt <- rbindlist(list(dt, fread(alignment.stats, header = TRUE)))
       dt.trim <- rbindlist(list(dt.trim, ORFik:::trimming.table(trimmed.out)))
     }

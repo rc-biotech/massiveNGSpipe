@@ -7,6 +7,8 @@
 pipeline_validate_metadata(
   dt,
   config,
+  accessions = NULL,
+  only_curated = FALSE,
   output_file = config$complete_metadata,
   backup_file = config$backup_metadata,
   next_round_file = config$temp_metadata,
@@ -19,10 +21,26 @@ pipeline_validate_metadata(
 \item{config}{list, output from pipeline_config(), the global config for your
 NGS pipeline}
 
+\item{accessions}{character vector, all candidate accession numbers, allowed types:\cr
+\itemize{
+\item Biorpoject ID (Only numbers)\cr
+\item Bioproject accession (PRJ)\cr
+\item SRA study (SRA)\cr
+\item ENA study (ERA)\cr
+\item GEO study (GSE)\cr
+\item NULL (not "NULL", but NULL), don't add new accession, only look if you
+current google sheet or local csv is ready.
+}}
+
 \item{output_file}{a path to store final Ribo csv, default config$complete_metadata}
 
 \item{backup_file}{a path to store backup csv, default: config$backup_metadata,
 store all runs, even non Ribo-seq, such that it can be used if wanted.}
+
+\item{libtypes}{character vector, default "RFP". Which NGS library types to
+keep from all LIBRARYLAYOUT values. These names are made by mNGSp
+automatically. If you made "disome" as a LIBRARYLAYOUT category, then
+c("RFP", "disome") will keep both, but exclude any other.}
 }
 \description{
 Only checks validity of columns that are set to KEEP = TRUE.

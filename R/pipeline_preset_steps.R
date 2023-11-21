@@ -1,5 +1,5 @@
 # Pipeline 1: Download
-pipeline_fetch <- function(pipelines, config) {
+pipe_fetch <- function(pipelines, config) {
   for (pipeline in pipelines) {
     try <- try(
       pipeline_download(pipeline, config)
@@ -9,11 +9,13 @@ pipeline_fetch <- function(pipelines, config) {
   }
 }
 
-pipeline_trim_collapse <- function(pipelines, config) {
+pipe_trim_collapse <- function(pipelines, config) {
+  do_collapse <- "collapsed" %in% names(config$flag)
   for (pipeline in pipelines) {
     try <- try({
       pipeline_trim(pipeline,     config)
-      pipeline_collapse(pipeline, config)
+      if (do_collapse)
+        pipeline_collapse(pipeline, config)
     })
     if (is(try, "try-error"))
       warning("Failed at step, trim_collapse, study: ", pipeline$accession)
@@ -21,7 +23,7 @@ pipeline_trim_collapse <- function(pipelines, config) {
 }
 
 # Pipeline: trim -> bam files
-pipeline_align_clean <- function(pipelines, config) {
+pipe_align_clean <- function(pipelines, config) {
   for (pipeline in pipelines) {
     try <- try({
       pipeline_align(pipeline,    config)
@@ -33,7 +35,7 @@ pipeline_align_clean <- function(pipelines, config) {
 }
 
 # Pipeline: exp -> ofst
-pipeline_exp_ofst <- function(pipelines, config) {
+pipe_exp_ofst <- function(pipelines, config) {
   for (pipeline in pipelines) {
     try <- try({
       df_list <- pipeline_create_experiment(pipeline, config)
@@ -46,7 +48,7 @@ pipeline_exp_ofst <- function(pipelines, config) {
 }
 
 # Pipeline: pshifts -> validated pshifts
-pipeline_pshift_and_validate <- function(pipelines, config) {
+pipe_pshift_and_validate <- function(pipelines, config) {
   exp <- get_experiment_names(pipelines)
   done_exp <- unlist(lapply(exp, function(e)
     step_is_next_not_done(config, "pshifted", e) |
@@ -66,25 +68,9 @@ pipeline_pshift_and_validate <- function(pipelines, config) {
 }
 #TODO: Add possibility to fix wrong pshifting
 
-# Pipeline, Merge libraries: per study -> all merged per organism
-pipeline_merge_per_study <- function(pipelines, config) {
-  exp <- get_experiment_names(pipelines)
-  done_exp <- unlist(lapply(exp, function(e) step_is_next_not_done(config, "merged_lib", e)))
-
-  for (experiments in exp[done_exp]) {
-    try <- try({
-      df_list <- lapply(experiments, function(e)
-        read.experiment(e, validate = FALSE, output.env = new.env()))
-      pipeline_merge_study(df_list, config)
-    })
-    if (is(try, "try-error"))
-      warning("Failed at step, merge_exp, study: ", experiments[1])
-  }
-}
-
 
 # Pipeline 4: Merge libraries: per study -> all merged per organism
-pipeline_convert_psite_reads <- function(pipelines, config) {
+pipe_convert <- function(pipelines, config) {
   exp <- get_experiment_names(pipelines)
   done_exp <- unlist(lapply(exp, function(e) step_is_next_not_done(config, "covrle", e)))
 
@@ -194,7 +180,7 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config)) {
   return(invisible(NULL))
 }
 
-pipeline_counts_psites <- function(pipelines, config) {
+pipe_counts <- function(pipelines, config) {
   exp <- get_experiment_names(pipelines)
   done_exp <- unlist(lapply(exp, function(e) step_is_next_not_done(config, "pcounts", e)))
 

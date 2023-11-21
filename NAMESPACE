@@ -3,6 +3,7 @@
 export(accessions_to_use)
 export(curate_metadata)
 export(docker_copy_done_experiments)
+export(flag_grouping)
 export(get_annotation)
 export(is_progressing)
 export(local_study_csv)

@@ -25,6 +25,10 @@
 #' Default is the total set of normal RNA sequencing. (RNA-seq, miRNA-seq,
 #' Ribo-seq, CHIP-seq, CAGE etc.) Change if you only want a subset, or some
 #' rare type.
+#' @param libtypes character vector, default "RFP". Which NGS library types to
+#' keep from all LIBRARYLAYOUT values. These names are made by mNGSp
+#' automatically. If you made "disome" as a LIBRARYLAYOUT category, then
+#' c("RFP", "disome") will keep both, but exclude any other.
 #' @param LibraryLayouts character vector, default c("SINGLE", "PAIRED"),
 #' either or both of: c("SINGLE", "PAIRED")
 #' @param Platforms character vector, default: "ILLUMINA". The sequencer technologies allowed.
@@ -42,9 +46,10 @@ curate_metadata <- function(accessions, config, organisms = "all",
                             complete_metadata = config$complete_metadata,
                             LibraryLayouts = c("SINGLE", "PAIRED"),
                             LibraryStrategy = c("RNA-Seq", "miRNA-Seq", "OTHER"),
+                            libtypes = "RFP",
                             Platforms = "ILLUMINA",
                             step_mode = FALSE, open_google_sheet = interactive(),
-                            fix_loop = TRUE) {
+                            fix_loop = TRUE, only_curated = FALSE) {
   if (!interactive() & step_mode)
     stop("In non interactive mode you can not run step_mode = TRUE!")
   stopifnot(length(fix_loop) == 1); stopifnot(is(fix_loop, "logical"))
@@ -65,7 +70,9 @@ curate_metadata <- function(accessions, config, organisms = "all",
       message("- Reading google sheet")
       sheet <- read_sheet_safe(google_url)
     } else sheet <- fread(config$temp_metadata)
-    finished <- pipeline_validate_metadata(sheet, config)
+    finished <- pipeline_validate_metadata(sheet, config, accessions = accessions,
+                                           only_curated = only_curated,
+                                           libtypes = libtypes)
     if (!is.null(google_url)) {
       message("Uploading updated version to google sheet:")
       write_sheet(read.csv(config$temp_metadata),
@@ -166,10 +173,15 @@ pipeline_metadata_filter <- function(all_SRA_metadata, organisms = "all",
   # Now remove columns not wanted
   if (removeAllNACols) {
     # Remove all NA columns:
-    filtered_RFP <- filtered_RFP[,which(unlist(lapply(filtered_RFP, function(x)!all(is.na(x))))),with=F]
-    # Keep sample_title and sample_source
-    if (is.null(filtered_RFP$sample_source)) filtered_RFP$sample_source <- ""
-    if (is.null(filtered_RFP$sample_title)) filtered_RFP$sample_title <- ""
+    empty_cols <- unlist(lapply(filtered_RFP, function(x)!all(is.na(x))))
+    force_keep_cols <- c("sample_source", "sample_title", "CONDITION")
+    stopifnot(all(names(force_keep_cols) %in% colnames(filtered_RFP)))
+    empty_cols[force_keep_cols] <- TRUE
+    filtered_RFP <- filtered_RFP[,which(empty_cols),with=F]
+    if (is.logical(filtered_RFP$CONDITION)) {
+      filtered_RFP$CONDITION <- as.character(filtered_RFP$CONDITION)
+      filtered_RFP$CONDITION <- ""
+    }
   }
 
   return(filtered_RFP)
@@ -194,10 +206,12 @@ pipeline_metadata_annotate <- function(filtered_RFP) {
   filtered_RFP[LIBRARYTYPE == "" & !(LibraryStrategy %in%  c("RNA-Seq", "OTHER")),]$LIBRARYTYPE <-
     ORFik:::findFromPath(filtered_RFP[LIBRARYTYPE == "" & !(LibraryStrategy %in%  c("RNA-Seq", "OTHER")),]$LibraryStrategy,
                          ORFik:::libNames(), "auto")
-  filtered_RFP$BATCH <- ORFik:::findFromPath(filtered_RFP$sample_title,
-                                             ORFik:::batchNames(), "auto")
+
   filtered_RFP$REPLICATE <- ORFik:::findFromPath(filtered_RFP$sample_title,
                                                  ORFik:::repNames(), "auto")
+
+  filtered_RFP$BATCH <- ORFik:::findFromPath(filtered_RFP$sample_title,
+                                             ORFik:::batchNames(), "auto")
   filtered_RFP$TIMEPOINT <- ORFik:::findFromPath(filtered_RFP$sample_title,
                                                  ORFik:::stageNames(), "auto")
   filtered_RFP$TISSUE <- ORFik:::findFromPath(filtered_RFP$sample_title,
@@ -253,6 +267,8 @@ pipeline_metadata_annotate <- function(filtered_RFP) {
 #' @param backup_file a path to store backup csv, default: config$backup_metadata,
 #' store all runs, even non Ribo-seq, such that it can be used if wanted.
 pipeline_validate_metadata <- function(dt, config,
+                                       accessions = NULL,
+                                       only_curated = FALSE,
                                        output_file = config$complete_metadata,
                                        backup_file = config$backup_metadata,
                                        next_round_file = config$temp_metadata,
@@ -279,8 +295,9 @@ pipeline_validate_metadata <- function(dt, config,
   }
   # Check if metadata is now valid
   files <- metadata_is_valid(files)
-
-  any_not_unique <- sum(files[KEEP == TRUE,]$not_unique) != 0
+  if (!is.null(accessions) & only_curated) {
+    any_not_unique <- sum(files[KEEP == TRUE & study_accession %in% accessions,]$not_unique) != 0
+  } else any_not_unique <- sum(files[KEEP == TRUE,]$not_unique) != 0
   if (any_not_unique) {
     message("Sorry, still not unique, try again, may the force be with you!")
   } else {
@@ -361,6 +378,13 @@ add_new_data <- function(accessions, config, organisms = "all",
         DataEditR::data_edit(config$temp_metadata, read_fun = "fread") %>%
           fwrite(config$temp_metadata)
       }
+    }
+  } else {
+    if (interactive()) {
+        message("Update data for unique rows and press syncronize,",
+                " then press 'done'!")
+        DataEditR::data_edit(config$temp_metadata, read_fun = "fread") %>%
+          fwrite(config$temp_metadata)
     }
   }
   return(invisible(NULL))

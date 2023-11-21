@@ -53,6 +53,9 @@ fastqc_adapters_info <- function(file) {
   adapters <- data.table::fread(
     text = head(report[-(1:grep("^>>Adapter Content", report))], -1)
   )
+  if (nrow(adapters) == 0) {
+    return("disable")
+  }
   adapter_name <- names(which.max(colSums(adapters[, -c("#Position")])))
   return(candidates[name == adapter_name]$value)
 }
