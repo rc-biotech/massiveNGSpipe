@@ -6,6 +6,12 @@
 \usage{
 bad_pshifting_report(df)
 }
+\arguments{
+\item{df}{an ORFik experiment object}
+}
+\value{
+invisible(NULL)
+}
 \description{
 If pshifting fails, Check qc and shift plots
 }

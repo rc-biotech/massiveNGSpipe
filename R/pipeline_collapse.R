@@ -1,6 +1,7 @@
 #' Collapse trimmed single-end reads and move them into "trim/SINGLE"
 #' subdirectory. PE reads are moved into "trim/PAIRED" without modification.
-#' @param pipeline a pipeline object
+#' @param pipeline a pipeline object, subset of init_pipelines output
+#' @param config a pipeline_config object
 pipe_collapse <- function(pipeline, config) {
   study <- pipeline$study
   for (organism in names(pipeline$organisms)) {

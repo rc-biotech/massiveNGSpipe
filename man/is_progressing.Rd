@@ -7,10 +7,10 @@
 is_progressing(config, max_time_since_update = 1)
 }
 \arguments{
+\item{config}{a pipeline_config object}
+
 \item{max_time_since_update}{numeric, in days, default 1.
 1 Hour is 0.041}
-
-\item{a}{config object}
 }
 \value{
 logical, FALSE if nothing happend since max time

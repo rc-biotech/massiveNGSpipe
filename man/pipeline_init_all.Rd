@@ -13,8 +13,8 @@ pipeline_init_all(
 )
 }
 \arguments{
-\item{config}{list, output from pipeline_config(), the global config for your
-NGS pipeline}
+\item{config}{path, default \code{ORFik::config()}, where will
+fastq, bam, references and ORFik experiments go}
 
 \item{complete_metadata}{path, default file.path(project_dir, "RFP_FINAL_LIST.csv").
 The list of final candidates that are checked and have unique rows per bioproject}

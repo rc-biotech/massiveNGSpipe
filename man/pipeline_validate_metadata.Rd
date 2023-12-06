@@ -18,8 +18,8 @@ pipeline_validate_metadata(
 \arguments{
 \item{dt}{a data.table of all metadata for all studies}
 
-\item{config}{list, output from pipeline_config(), the global config for your
-NGS pipeline}
+\item{config}{path, default \code{ORFik::config()}, where will
+fastq, bam, references and ORFik experiments go}
 
 \item{accessions}{character vector, all candidate accession numbers, allowed types:\cr
 \itemize{
@@ -31,6 +31,9 @@ NGS pipeline}
 \item NULL (not "NULL", but NULL), don't add new accession, only look if you
 current google sheet or local csv is ready.
 }}
+
+\item{only_curated}{logical FALSE, if TRUE. Only validate (or fail) based on
+inserted accessions (not the full list). Ignored if accessions is NULL.}
 
 \item{output_file}{a path to store final Ribo csv, default config$complete_metadata}
 

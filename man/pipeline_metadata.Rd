@@ -18,8 +18,8 @@ pipeline_metadata(accessions, config, force = FALSE, max_attempts = 7)
 current google sheet or local csv is ready.
 }}
 
-\item{config}{list, output from pipeline_config(), the global config for your
-NGS pipeline}
+\item{config}{path, default \code{ORFik::config()}, where will
+fastq, bam, references and ORFik experiments go}
 
 \item{force}{logical, default FALSE. Force redownload of all, if something failed}
 

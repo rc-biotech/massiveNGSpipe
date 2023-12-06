@@ -6,6 +6,12 @@
 \usage{
 fastqc_adapters_info(file)
 }
+\arguments{
+\item{file}{full path to file to check with qc}
+}
+\value{
+adapter candidates
+}
 \description{
 Helper function to find the main adapter in a .fastq.gz file
 }

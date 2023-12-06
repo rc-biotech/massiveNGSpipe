@@ -7,12 +7,9 @@
 last_update_diff(config, units = "days")
 }
 \arguments{
+\item{config}{a pipeline_config object}
+
 \item{units}{character, default "days"}
-
-\item{a}{config object}
-
-\item{flagdir}{character, default: dirname(config$flag\link{1}),
-path to flag directory}
 }
 \value{
 character, a date string

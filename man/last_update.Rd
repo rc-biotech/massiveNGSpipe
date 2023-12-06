@@ -7,10 +7,10 @@
 last_update(config, flagdir = dirname(config$flag[1]))
 }
 \arguments{
-\item{flagdir}{character, default: dirname(config$flag\link{1}),
-path to flag directory}
+\item{config}{a pipeline_config object}
 
-\item{a}{config object}
+\item{flagdir}{character, default: \code{dirname(config$flag[1])},
+path to flag directory}
 }
 \value{
 character, a date string

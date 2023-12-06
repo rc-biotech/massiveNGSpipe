@@ -13,11 +13,10 @@
 #' - GEO study (GSE)\cr
 #' - NULL (not "NULL", but NULL), don't add new accession, only look if you
 #' current google sheet or local csv is ready.
+#' @inheritParams pipeline_config
 #' @inheritParams run_pipeline
 #' @param organisms character vector, default "all" (Use all organisms found).
 #' Else binomial latin name with capital letter for genus: "Homo sapiens" etc.
-#' @param google_url character, default config$google_url. If not NULL,
-#' will use the google sheet to check for updated metadata.
 #' @param complete_metadata path, default file.path(project_dir, "RFP_FINAL_LIST.csv").
 #' The list of final candidates that are checked and have unique rows per bioproject
 #' @param LibraryStrategy character vector, default:
@@ -38,6 +37,8 @@
 #' the end that runs until your metadata is valid. If you
 #' only want to updata csv / google docs with new data and not try to complete
 #' now, set this to FALSE.
+#' @param only_curated logical FALSE, if TRUE. Only validate (or fail) based on
+#' inserted accessions (not the full list). Ignored if accessions is NULL.
 #' @return logical, TRUE if you had unique rows per accession per organism
 #' @import googlesheets4 data.table ORFik BiocParallel fs stringr DataEditR
 #' @export
@@ -486,12 +487,12 @@ fill_with_random <- function(table, libtypes_keep = "all", checked_by = "auto") 
   table[LIBRARYTYPE == "RFP" & is.na(KEEP), KEEP := TRUE]
   table[LIBRARYTYPE == "RFP" & is.na(KEEP), CHECKED := "auto"]
   table[LIBRARYTYPE == "RFP" & KEEP == TRUE & CHECKED == "auto",]
-  table <- massiveNGSpipe:::metadata_is_valid(table)
+  table <- metadata_is_valid(table)
   non_unique <- nrow(table[KEEP == TRUE & not_unique,]); non_unique
 
   if (non_unique > 0)
     table[LIBRARYTYPE == "RFP" & CHECKED == "auto" & not_unique & is.na(FRACTION), FRACTION := paste0("auto_", seq(.N) + 4010)]
-  table <- massiveNGSpipe:::metadata_is_valid(table)
+  table <- metadata_is_valid(table)
   non_unique <- nrow(table[KEEP == TRUE & not_unique,]); non_unique
   if (non_unique > 0)
     table[LIBRARYTYPE == "RFP" & CHECKED == "auto" & not_unique & is.na(TIMEPOINT), TIMEPOINT := paste0("auto_", seq(.N) + 100)]
@@ -508,7 +509,8 @@ fill_with_random <- function(table, libtypes_keep = "all", checked_by = "auto") 
 #'  (fasta or fastq, uncompressed/compressed)
 #' @param name a basis for directory name. The relative path without
 #' the -organism part.
-#' @param file_basenames character vector, file_basenames
+#' @param files character vector of full paths,
+#'  default: \code{list.files(dir, pattern = "\\.fast.*", full.names = TRUE)}
 #' @param organism Scientific latin name of organism, give single if all
 #' are equal, or specify for each file if multiple. Example: "Homo sapiens"
 #' @param sample_title Define a valid sample name per sample, like,

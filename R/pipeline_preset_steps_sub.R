@@ -184,6 +184,7 @@ pipeline_cleanup <- function(pipeline, config) {
 }
 
 #' Create ORFik experiment from config study and bam files
+#' @noRd
 pipeline_create_experiment <- function(pipeline, config) {
     df_list <- list()
     for (organism in names(pipeline$organisms)) {

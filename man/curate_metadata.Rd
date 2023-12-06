@@ -32,14 +32,14 @@ curate_metadata(
 current google sheet or local csv is ready.
 }}
 
-\item{config}{list, output from pipeline_config(), the global config for your
-NGS pipeline}
+\item{config}{path, default \code{ORFik::config()}, where will
+fastq, bam, references and ORFik experiments go}
 
 \item{organisms}{character vector, default "all" (Use all organisms found).
 Else binomial latin name with capital letter for genus: "Homo sapiens" etc.}
 
-\item{google_url}{character, default config$google_url. If not NULL,
-will use the google sheet to check for updated metadata.}
+\item{google_url}{url or sheet object for google sheet to use. Set to NULL to
+not use google sheet.}
 
 \item{complete_metadata}{path, default file.path(project_dir, "RFP_FINAL_LIST.csv").
 The list of final candidates that are checked and have unique rows per bioproject}
@@ -67,6 +67,9 @@ each step in debug mode for full control.}
 the end that runs until your metadata is valid. If you
 only want to updata csv / google docs with new data and not try to complete
 now, set this to FALSE.}
+
+\item{only_curated}{logical FALSE, if TRUE. Only validate (or fail) based on
+inserted accessions (not the full list). Ignored if accessions is NULL.}
 }
 \value{
 logical, TRUE if you had unique rows per accession per organism

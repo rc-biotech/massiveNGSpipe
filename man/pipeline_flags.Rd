@@ -15,8 +15,11 @@ pipeline_flags(
 \arguments{
 \item{project_dir}{pipeline directory}
 
-\item{mode}{= c("online", "local")\link{1}. "online" will assume project IDs for
+\item{mode}{= \code{c("online", "local")[1]}. "online" will assume project IDs for
 online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.}
+
+\item{preset}{character, default "Ribo-seq".
+Alternatives: c("Ribo-seq", "RNA-seq", "disome")}
 
 \item{flag_names}{character vector of names of flag steps to include}
 

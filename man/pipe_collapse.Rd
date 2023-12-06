@@ -8,7 +8,9 @@ subdirectory. PE reads are moved into "trim/PAIRED" without modification.}
 pipe_collapse(pipeline, config)
 }
 \arguments{
-\item{pipeline}{a pipeline object}
+\item{pipeline}{a pipeline object, subset of init_pipelines output}
+
+\item{config}{a pipeline_config object}
 }
 \description{
 Collapse trimmed single-end reads and move them into "trim/SINGLE"

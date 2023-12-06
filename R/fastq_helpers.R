@@ -1,4 +1,6 @@
 #' Helper function to find the main adapter in a .fastq.gz file
+#' @param file full path to file to check with qc
+#' @return adapter candidates
 fastqc_adapters_info <- function(file) {
   message("- Auto detecting adapter with fastQC candidate list:")
   # Create and save the candidate adapter table.

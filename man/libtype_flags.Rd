@@ -7,7 +7,8 @@
 libtype_flags(preset, mode = "online")
 }
 \arguments{
-\item{preset}{either of c("Ribo-seq", "RNA-seq")}
+\item{preset}{character, default "Ribo-seq".
+Alternatives: c("Ribo-seq", "RNA-seq", "disome")}
 
 \item{mode}{either of c("online", "local")}
 }

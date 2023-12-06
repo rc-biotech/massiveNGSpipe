@@ -30,6 +30,9 @@ local_study_csv(
 \item{name}{a basis for directory name. The relative path without
 the -organism part.}
 
+\item{files}{character vector of full paths,
+default: \code{list.files(dir, pattern = "\\.fast.*", full.names = TRUE)}}
+
 \item{organism}{Scientific latin name of organism, give single if all
 are equal, or specify for each file if multiple. Example: "Homo sapiens"}
 
@@ -43,8 +46,6 @@ give single if all are equal, or specify for each file if multiple.}
 
 \item{Platform}{Sequencing machine platform, default: "ILLUMINA",
 give single if all are equal, or specify for each file if multiple.}
-
-\item{file_basenames}{character vector, file_basenames}
 }
 \value{
 a data.table with required columns:\cr

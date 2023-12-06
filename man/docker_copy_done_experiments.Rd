@@ -21,6 +21,14 @@ docker_copy_done_experiments(
 \item{new_exp_dir}{character, default "~/livemount/Bio_data/ORFik_experiments/"}
 
 \item{docker_conversion}{the sed conversion string: 's/livemount\///g'}
+
+\item{merged_by_organism}{logical, default TRUE.
+Create a new study, merge the superset of all per organism into single file.
+This requires that you have run: pipeline_merge_org}
+
+\item{all_by_organism}{logical, default TRUE.
+Create a new study, the superset of all studies of all per organism.
+This requires that you have run: pipeline_merge_org}
 }
 \value{
 logical, TRUE if sucessful for all.

@@ -1,7 +1,8 @@
 #' Define the library specific steps
 #'
 #' This is called flags
-#' @param preset either of c("Ribo-seq", "RNA-seq")
+#' @param preset character, default "Ribo-seq".
+#'  Alternatives: c("Ribo-seq", "RNA-seq", "disome")
 #' @param mode either of c("online", "local")
 #' @return a character vector with names being the grouping in functions
 libtype_flags <- function(preset, mode = "online") {

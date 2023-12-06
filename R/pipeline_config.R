@@ -2,11 +2,19 @@
 #'
 #' Set up all paths, functions to be run and flag directories.
 #' Also adds parallel processing settings and google integration.
+#' @inheritParams libtype_flags
 #' @param project_dir where will specific pipeline outputs be put
 #' @param config path, default \code{ORFik::config()}, where will
 #' fastq, bam, references and ORFik experiments go
 #' @param complete_metadata path, default: file.path(project_dir, "FINAL_LIST.csv")
 #' Where should completed valid metadata be stored as csv?
+#' @param backup_metadata path, default: file.path(project_dir, "BACKUP_LIST.csv").
+#' The complete list of all unique runs checked in this pipelines,
+#'  even ones deleted earlier. Useful for check of what has been done before.
+#' @param temp_metadata  path, default: file.path(project_dir, "next_round_manual.csv").
+#' The intermediate file used after curation, but before it is validated. This is
+#' the where you update the current new metadata annotations for final aproval into the
+#' complete_metadat. This syncs automatically to the google_url sheet.
 #' @param google_url url or sheet object for google sheet to use. Set to NULL to
 #' not use google sheet.
 #' @param flags named character vector, with cut points, where can
@@ -15,16 +23,16 @@
 #' Increasing break points makes the pipeline run faster at the cost of more
 #' resource usage.
 #' @param flag_steps a list of subsets of flags that maps which flags are set in
-#' each function in 'step'.
+#' each function in 'step' in pipeline_steps. I.e. flags defined in each function
+#' in pipeline_steps functions, must be declared here.
 #' @param pipeline_steps a list of the functions to actually run,
-#' that map to the checkpoint flags given.
-#' @param mode = c("online", "local")[1]. "online" will assume project IDs for
+#' that map to the checkpoint flags given of the functions called during 'run_pipeline'
+#' @param mode = \code{c("online", "local")[1]}. "online" will assume project IDs for
 #' online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.
 #' @param delete_raw_files logical, default: mode == "online". If online do delete
 #' raw fastq files after trim step is done, for local samples do not delete.
 #' Set only to TRUE for mode local, if you have backups!
 #' @param delete_collapsed_files logical, default TRUE. If TRUE deletes the collapsed fasta files.
-#' @param steps a list of functions, the functions called during 'run_pipeline'
 #' @param parallel_conf a bpoptions object, default:
 #' \code{bpoptions(log =TRUE, stop.on.error = TRUE)}
 #' Specific pipeline config for parallel settings and log directory

@@ -18,7 +18,7 @@ get_annotation(
 Danio rerio, Mus musculus, etc. See \code{biomartr:::get.ensembl.info()}
 for full list of supported organisms.}
 
-\item{output.dir}{path, file.path(ORFik::config()\link{"ref"}, organism)}
+\item{output.dir}{path, default: reference_folder_name(organism, TRUE)}
 
 \item{genome}{logical, default: TRUE, download genome of organism
 specified in "organism" argument. If FALSE, check if the downloaded
@@ -39,7 +39,7 @@ If db is not "ensembl", you will instead get a gff file.}
 \item{db}{database to use for genome and GTF,
 default adviced: "ensembl" (remember to set assembly_type to "primary_assembly",
 else it will contain haplotypes, very large file!).
-Alternatives: "refseq" (primary assembly) and "genbank" (mix)}
+Alternatives: "refseq" (reference assemblies) and "genbank" (all assemblies)}
 
 \item{gene_symbols}{logical default FALSE. If TRUE, will download
 and store all gene symbols for all transcripts (coding and noncoding)-

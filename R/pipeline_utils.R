@@ -6,6 +6,12 @@
 #' @param pipelines pipeline objects, default pipeline_init_all(config)
 #' @param new_exp_dir character, default "~/livemount/Bio_data/ORFik_experiments/"
 #' @param docker_conversion the sed conversion string: 's/livemount\///g'
+#' @param merged_by_organism logical, default TRUE.
+#' Create a new study, merge the superset of all per organism into single file.
+#' This requires that you have run: pipeline_merge_org
+#' @param all_by_organism logical, default TRUE.
+#' Create a new study, the superset of all studies of all per organism.
+#' This requires that you have run: pipeline_merge_org
 #' @return logical, TRUE if sucessful for all.
 #' @export
 docker_copy_done_experiments <- function(config, pipelines = pipeline_init_all(config),

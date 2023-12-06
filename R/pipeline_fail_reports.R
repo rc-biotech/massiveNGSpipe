@@ -1,4 +1,7 @@
 #' If pshifting fails, Check qc and shift plots
+#'
+#' @param df an ORFik experiment object
+#' @return invisible(NULL)
 bad_pshifting_report <- function(df) {
   report_flag_path <- file.path(QCfolder(df), "bad_shift_report_done.rds")
   report_exists <- file.exists(report_flag_path)

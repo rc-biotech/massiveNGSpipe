@@ -119,7 +119,7 @@ get_all_annotation_and_index <- function(final_list, config,
 #' For local annotation, set genome and GTF arguments to full
 #' path of respective objects.
 #' @inheritParams ORFik::getGenomeAndAnnotation
-#' @param output.dir path, file.path(ORFik::config()["ref"], organism)
+#' @param output.dir path, default: reference_folder_name(organism, TRUE)
 #' @return the annotation paths as vector
 #' @export
 get_annotation <- function(organism,

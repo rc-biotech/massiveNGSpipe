@@ -32,8 +32,20 @@ fastq, bam, references and ORFik experiments go}
 \item{complete_metadata}{path, default: file.path(project_dir, "FINAL_LIST.csv")
 Where should completed valid metadata be stored as csv?}
 
+\item{backup_metadata}{path, default: file.path(project_dir, "BACKUP_LIST.csv").
+The complete list of all unique runs checked in this pipelines,
+even ones deleted earlier. Useful for check of what has been done before.}
+
+\item{temp_metadata}{path, default: file.path(project_dir, "next_round_manual.csv").
+The intermediate file used after curation, but before it is validated. This is
+the where you update the current new metadata annotations for final aproval into the
+complete_metadat. This syncs automatically to the google_url sheet.}
+
 \item{google_url}{url or sheet object for google sheet to use. Set to NULL to
 not use google sheet.}
+
+\item{preset}{character, default "Ribo-seq".
+Alternatives: c("Ribo-seq", "RNA-seq", "disome")}
 
 \item{flags}{named character vector, with cut points, where can
 the pipeline continue if it breaks? Is defined in combination with
@@ -42,12 +54,13 @@ Increasing break points makes the pipeline run faster at the cost of more
 resource usage.}
 
 \item{flag_steps}{a list of subsets of flags that maps which flags are set in
-each function in 'step'.}
+each function in 'step' in pipeline_steps. I.e. flags defined in each function
+in pipeline_steps functions, must be declared here.}
 
 \item{pipeline_steps}{a list of the functions to actually run,
-that map to the checkpoint flags given.}
+that map to the checkpoint flags given of the functions called during 'run_pipeline'}
 
-\item{mode}{= c("online", "local")\link{1}. "online" will assume project IDs for
+\item{mode}{= \code{c("online", "local")[1]}. "online" will assume project IDs for
 online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.}
 
 \item{delete_raw_files}{logical, default: mode == "online". If online do delete
@@ -63,8 +76,6 @@ Specific pipeline config for parallel settings and log directory}
 \item{logdir}{= file.path(project_dir, "log_pipeline"),}
 
 \item{BPPARAM}{= bpparam()}
-
-\item{steps}{a list of functions, the functions called during 'run_pipeline'}
 }
 \value{
 a list with a defined config

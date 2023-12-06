@@ -19,8 +19,8 @@ progress_log <- function(config, task = 1, lines = 100,
 
 #' Get latest time of pipeline update flag
 #'
-#' @param a config object
-#' @param flagdir character, default: dirname(config$flag[1]),
+#' @param config a pipeline_config object
+#' @param flagdir character, default: \code{dirname(config$flag[1])},
 #' path to flag directory
 #' @return character, a date string
 last_update <- function(config, flagdir = dirname(config$flag[1])) {
@@ -32,9 +32,7 @@ last_update <- function(config, flagdir = dirname(config$flag[1])) {
 
 #' Get last pipeline update, in days relative to now
 #'
-#' @param a config object
-#' @param flagdir character, default: dirname(config$flag[1]),
-#' path to flag directory
+#' @inheritParams last_update
 #' @param units character, default "days"
 #' @return character, a date string
 last_update_diff <- function(config, units = "days") {
@@ -45,7 +43,7 @@ last_update_diff <- function(config, units = "days") {
 
 #' Check if anything happened since given time
 #'
-#' @param a config object
+#' @inheritParams last_update
 #' @param max_time_since_update numeric, in days, default 1.
 #' 1 Hour is 0.041
 #' @return logical, FALSE if nothing happend since max time
