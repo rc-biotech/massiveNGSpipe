@@ -60,8 +60,7 @@ pipeline_init_all <- function(config, complete_metadata = config$complete_metada
 #' @return a list of pipeline objects, one for each study,
 #' subsetted by organism per study.
 pipeline_init <- function(study, study_accession, config, reference_list) {
-  # For each organism in the study, create an ORFik experiment config,
-  # fetch reference genome and contaminants, and create an index.
+  # For each organism in the study, create an ORFik experiment path config
   organisms <- list()
   for (organism in unique(study$ScientificName)) {
     assembly_name <- reference_folder_name(organism)
@@ -133,8 +132,7 @@ get_annotation <- function(organism,
       organism = organism,
       genome = genome, GTF = GTF,
       phix = TRUE, ncRNA = TRUE, tRNA = TRUE, rRNA = TRUE,
-      output.dir = output.dir,
-      assembly_type = "primary_assembly", optimize = TRUE,
+      output.dir = output.dir, optimize = TRUE,
       pseudo_5UTRS_if_needed = 100, notify_load_existing = FALSE
     )
   )
@@ -151,6 +149,7 @@ get_annotation <- function(organism,
   return(annotation)
 }
 
+#' @import fst biomartr
 get_symbols <- function(txdb, path = file.path(dirname(ORFik:::getGtfPathFromTxdb(txdb)), "gene_symbol_tx_table.fst"),
                         org = organism(txdb), force = FALSE, verbose = FALSE,
                         uniprot_id = FALSE) {
@@ -158,37 +157,40 @@ get_symbols <- function(txdb, path = file.path(dirname(ORFik:::getGtfPathFromTxd
     if (verbose) message("Loading pre-existing symbols from file")
     return(invisible(NULL))
   }
-  useEnsembl <- biomaRt::useEnsembl
-  listDatasets <- biomaRt::listDatasets
-  listEnsemblGenomes <- biomaRt::listEnsemblGenomes
-  useEnsemblGenomes <- biomaRt::useEnsemblGenomes
+  not_supported_by_biomart <- file.path(dirname(path), "no_symbols_found.rds")
+  if (file.exists(not_supported_by_biomart))
+    return(invisible(NULL))
+
 
   organism <- org
   name <- paste0(tolower(substr(organism,
                                 1, 1)), gsub(".* ", replacement = "", organism),
                  "_gene_ensembl")
-  vertebrate_list <- setDT(listDatasets(useEnsembl("ensembl")))$dataset
+
+  vertebrate_list <- biomartr::getDatasets("ENSEMBL_MART_ENSEMBL")$dataset
   non_vertebrate <- !(name %in% vertebrate_list)
 
   if (non_vertebrate) {
-    ensembl_genomes_marts <- setDT(listEnsemblGenomes())[grep("_mart", biomart)]
+    ensembl_genomes_marts <- setDT(biomartr::getMarts())[grep("_mart", mart)]
     name <- paste0(tolower(substr(organism,
                                   1, 1)), gsub(".* ", replacement = "", organism), "_eg_gene")
     valid_mart <- NULL
-    for (mart in ensembl_genomes_marts$biomart) {
-      test <- try(useEnsemblGenomes(biomart = mart, dataset = name),
-                  silent = TRUE)
-      if (!is(test, "try-error")) {
-        valid_mart <- test
+    for (mart in ensembl_genomes_marts$mart) {
+      test <- try(biomartr::getDatasets(mart, TRUE), silent = TRUE)
+      is_in_biomart <- !is(test, "try-error") & (name %in% test$dataset)
+      if (is_in_biomart) {
+        valid_mart <- try(biomaRt::useEnsemblGenomes(mart, name))
+        if (is(dt, "try-error")) message("Error was catched and ignored, report on github")
         break
       }
     }
-    if (!is.null(valid_mart)) {
+    if (is_in_biomart) {
       dt <- try(geneToSymbol(txdb, include_tx_ids = TRUE, ensembl = valid_mart,
                          force = force, uniprot_id = uniprot_id))
-      if (is(dt, "try-error")) message("Error was catched and ignored")
+      if (is(dt, "try-error")) message("Error was catched and ignored, report on github")
     } else {
       warning("Species not support on ensembl mart, ignoring symbols")
+      saveRDS(FALSE, not_supported_by_biomart)
     }
   } else dt <- geneToSymbol(txdb, include_tx_ids = TRUE, force = force,
                             uniprot_id = uniprot_id)

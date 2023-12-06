@@ -87,7 +87,7 @@ progress_report <- function(pipelines, config, show_stats = FALSE,
       if (!file.exists(alignment.stats))
         alignment.stats <- file.path(out.aligned, "full_process.csv")
 
-      dt <- rbindlist(list(dt, fread(alignment.stats, header = TRUE)))
+      dt <- rbindlist(list(dt, fread(alignment.stats, header = TRUE)), fill = TRUE)
       dt.trim <- rbindlist(list(dt.trim, ORFik:::trimming.table(trimmed.out)))
     }
 
