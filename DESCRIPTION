@@ -25,6 +25,7 @@ Imports:
     ggplot2,
     stringr,
     jsonlite,
+    googledrive,
     googlesheets4,
     scales,
     plotly

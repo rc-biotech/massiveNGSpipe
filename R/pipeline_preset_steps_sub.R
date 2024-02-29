@@ -34,27 +34,7 @@ pipeline_trim <- function(pipeline, config) {
         target_dir <- conf["bam"]
         runs <- study[ScientificName == organism]
         # Files to run (Single end / Paired end)
-        all_files <-
-        lapply(seq_len(nrow(runs)), function(i) {
-          filenames <-
-            if (runs[i]$LibraryLayout == "PAIRED") {
-              paste0(runs[i]$Run, c("_1", "_2"), ".fastq")
-            } else {
-              paste0(runs[i]$Run, ".fastq")
-            }
-
-          filenames <- fs::path(source_dir, filenames)
-          if (!all(file.exists(filenames))) {
-            filenames <- paste0(filenames, ".gz")
-            if (!all(file.exists(filenames))) {
-              stop("File does not exist to trim (both .gz and unzipped): ",
-                   filenames[1])
-            }
-          }
-          file <- filenames[1]
-          file2 <- if(is.na(filenames[2])) {NULL} else filenames[2]
-          return(c(file, file2))
-        })
+        all_files <- run_files_organizer(runs, source_dir)
         # Trim
         BiocParallel::bplapply(seq_len(nrow(runs)), function(i, all_files, runs) {
             message(runs[i]$Run)
@@ -62,10 +42,18 @@ pipeline_trim <- function(pipeline, config) {
             file <- filenames[1]
             file2 <- if(is.na(filenames[2])) {NULL} else filenames[2]
 
+            if (!grepl("\\.fasta$|\\.fasta\\.gz$", file)) {
+              adapter <- try(fastqc_adapters_info(file))
+              if (is(adapter, "try-error")) {
+                message("This is a fasta file, fastqc adapter detection disabled")
+                adapter <- "disable"
+              }
+            } else adapter <- "disable"
+
             ORFik::STAR.align.single(
               file, file2,
               output.dir = target_dir,
-              adapter.sequence = fastqc_adapters_info(file),
+              adapter.sequence = adapter,
               index.dir = index, steps = "tr"
             )
 
@@ -171,13 +159,15 @@ pipeline_cleanup <- function(pipeline, config) {
             glob = "**/*.out.*"
         ))
         for (run in runs) {
-            fs::file_move(
-                fs::dir_ls(
-                    fs::path(conf["bam"], "aligned"),
-                    glob = paste0("**/*", run, "*.out.bam")
-                ),
-                fs::path(conf["bam"], "aligned", run, ext = "bam")
-            )
+          old_file_name <- fs::dir_ls(
+            fs::path(conf["bam"], "aligned"),
+            glob = paste0("**/*", run, "*.out.bam")
+          )
+          new_file_name <- fs::path(conf["bam"], "aligned", run, ext = "bam")
+          if (length(old_file_name) > 0) {
+            fs::file_move(old_file_name, new_file_name)
+          }
+
         }
         set_flag(config, "cleanbam", conf["exp"])
     }

@@ -1,5 +1,5 @@
 #' Helper function to find the main adapter in a .fastq.gz file
-#' @param file full path to file to check with qc
+#' @param file full path to fastq file to check with qc
 #' @return adapter candidates
 fastqc_adapters_info <- function(file) {
   message("- Auto detecting adapter with fastQC candidate list:")
@@ -60,4 +60,51 @@ fastqc_adapters_info <- function(file) {
   }
   adapter_name <- names(which.max(colSums(adapters[, -c("#Position")])))
   return(candidates[name == adapter_name]$value)
+}
+
+run_files_organizer <- function(runs, source_dir) {
+  all_files <-
+    lapply(seq_len(nrow(runs)), function(i) {
+      filenames <-
+        if (runs[i]$LibraryLayout == "PAIRED") {
+          paste0(runs[i]$Run, c("_1", "_2"))
+        } else {
+          paste0(runs[i]$Run)
+        }
+      format <- c(".fastq", ".fq", ".fa", ".fasta")
+      compressions <- c("", ".gz")
+      format_used <- filenames[1]
+      file <- list.files(source_dir, filenames[1], full.names = TRUE)
+      file2 <- if(is.na(filenames[2])) {NULL} else list.files(source_dir, filenames[2], full.names = TRUE)
+      if (length(file) != 1) {
+        if (length(file) == 0) {
+          stop("File does not exist to trim (both .gz and unzipped): ",
+               file)
+        } else {
+          temp_file <- file[basename(file) %in% paste0(filenames[1], format,
+                                                       rep(compressions, each = length(format)))]
+          if (length(temp_file) != 1) {
+            stop("File format could not be detected",
+                 file[1])
+          } else file <- temp_file
+        }
+      }
+      if (!is.null(file2) && length(file2) != 1) {
+        if (length(file2) == 0) {
+          stop("File does not exist to trim (both .gz and unzipped): ",
+               file2)
+        } else {
+          temp_file <- file2[basename(file2) %in% paste0(filenames[2], format,
+                                                       rep(compressions, each = length(format)))]
+          if (length(temp_file) != 1) {
+            stop("File format could not be detected",
+                 file[2])
+          } else file2 <- temp_file
+        }
+      }
+      return(c(file, file2))
+    })
+  no_duplicates <- length(unique(unlist(all_files, use.names = F))) == length(unlist(all_files, use.names = F))
+  stopifnot(no_duplicates)
+  return(all_files)
 }

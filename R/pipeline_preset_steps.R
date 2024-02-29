@@ -164,18 +164,73 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config)) {
       read.experiment(e, validate = F)[1,])
     df <- do.call(rbind, df_list)
     # Overwrite default paths to merged
-    df@listData$filepath <- file.path(dirname(filepath(df, "default")), "pshifted_merged", "RFP.ofst")
+    libtype_df <- unique(df$libtype)
+    if (length(libtype_df) != 1) stop("Only single libtype experiments supported for merging")
+    if (libtype_df == "") stop("Libtype of experiment must be defined!")
+    df@listData$filepath <- file.path(dirname(filepath(df, "default")),
+                                      "pshifted_merged", paste0(libtype_df, ".ofst"))
     df@listData$rep <- seq(nrow(df))
     exp_name <- organism_merged_exp_name(org)
+    if (libtype_df != "RFP") exp_name <- paste0(exp_name, "_", libtype_df)
     out_dir <- file.path(config$config["bam"], exp_name)
     ORFik::mergeLibs(df, out_dir, "all", "default", FALSE)
     create.experiment(out_dir, exper = exp_name,
                       txdb = df@txdb,
-                      libtype = "RFP",  fa = df@fafile, organism = org)
+                      libtype = libtype_df,  fa = df@fafile, organism = org)
     df <- read.experiment(exp_name, output.env = new.env())
     convert_to_covRleList(df)
-    convert_to_bigWig(df)
+    if (libtype_df == "RFP") {
+      message("- Bigwig method: ORFik (5' ends)")
+      convert_to_bigWig(df)
+    } else {
+      message("- Bigwig method: full read")
+      dir <- file.path(libFolder(df), "bigwig")
+      dir.create(dir, showWarnings = FALSE)
+      bw_files <- file.path(dir, c("all_forward.bigWig", "all_reverse.bigWig"))
+      covrle <- fimport(filepath(df, "cov"))
+      message("-- Bigwig forward")
+      rtracklayer::export.bw(object = f(covrle), bw_files[1])
+      message("-- Bigwig reverse")
+      rtracklayer::export.bw(object = r(covrle), bw_files[2])
+    }
+
     ORFik::countTable_regions(df, lib.type = "pshifted", forceRemake = TRUE)
+  }
+  return(invisible(NULL))
+}
+
+#' Gather all modalities per organism into exp
+#'
+#' Using libtype modalities like Ribo-seq, RNA-seq, disome-seq, create
+#' a new experiment. Only applies to organisms with > 1 modality completed.
+#' @param all_exp data.table of all done experiment,
+#'  default: list.experiments(validate = FALSE)
+#' @return invisible(NULL)
+#' @export
+pipeline_merge_org_modalities <- function(all_exp = list.experiments(validate = FALSE)) {
+  message("- All modalities per organism")
+  candidates <- organism_merged_exp_name(unique(all_exp$organism))
+
+  all_done <- all_exp[grep(paste(candidates, collapse = "|"), all_exp$name),]
+  all_done <- all_done[!grepl("_modalities$", name),]
+  modalities <- table(all_done$organism)
+  done_organisms <- names(modalities[modalities > 1])
+  for (org in done_organisms) {
+    message("-- Organism: ", org)
+    all_modalities_org <- all_done[organism == org,]
+    df_list <- lapply(all_modalities_org$name, function(e)
+      read.experiment(e, validate = F)[1,])
+    df <- do.call(rbind, df_list)
+    # Overwrite default paths to merged
+    libtype_df <- unique(df$libtype)
+    if (length(libtype_df) == 1) stop("Minimum 2 libtypes required for merge")
+    if (any(libtype_df == "")) stop("Libtype of experiment must be defined!")
+    exp_name <- paste0(organism_merged_exp_name(org), "_modalities")
+    create.experiment(NULL, exper = exp_name,
+                      txdb = df@txdb,
+                      libtype = libtype_df, fa = df@fafile,
+                      organism = org, files = df$filepath)
+    df <- read.experiment(exp_name, output.env = new.env())
   }
   return(invisible(NULL))
 }

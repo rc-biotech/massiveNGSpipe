@@ -2,7 +2,7 @@
 #' subdirectory. PE reads are moved into "trim/PAIRED" without modification.
 #' @param pipeline a pipeline object, subset of init_pipelines output
 #' @param config a pipeline_config object
-pipe_collapse <- function(pipeline, config) {
+pipeline_collapse <- function(pipeline, config) {
   study <- pipeline$study
   for (organism in names(pipeline$organisms)) {
     conf <- pipeline$organisms[[organism]]$conf
@@ -14,23 +14,20 @@ pipe_collapse <- function(pipeline, config) {
                            LibraryLayout != "PAIRED"]
     any_paired_libs <- nrow(runs_paired) > 0
     if (any_paired_libs) {
-      outdir <- fs::path(trimmed_dir, runs_paired[1]$LibraryLayout)
-      fs::dir_create(outdir)
-      filenames <- paste0(
-        "trimmed" , c("1_", "2_"), runs_paired[i]$Run, "_1", ".fastq"
-      )
       message("Paired end data is now collapsed into 1 file,
                     and 2nd file is reverse complimented before merging!")
-      full_filenames <- file.path(trimmed_dir, filenames)
-      BiocParallel::bplapply(full_filenames, function(filename) {
+      outdir <- fs::path(trimmed_dir, runs_paired[1]$LibraryLayout)
+      fs::dir_create(outdir)
+      files <- run_files_organizer(runs_paired, trimmed_dir)
+      BiocParallel::bplapply(files, function(filename) {
         ORFik::collapse.fastq(
           filename, outdir,
           compress = TRUE
         )
-        fs::file_delete(filename)
+        if (config$mode != "local") fs::file_delete(filename)
       }, BPPARAM = BiocParallel::MulticoreParam(16))
       # Read in and reverse second file, then merge back into 1.
-      full_filenames <- file.path(outdir, paste0("collapsed_", filenames))
+      filenames <- file.path(outdir, paste0("collapsed_", basename(files)))
       first_files <- filenames[seq_along(filenames) %% 2 == 1]
       second_files <- filenames[seq_along(filenames) %% 2 == 0]
 
@@ -49,18 +46,13 @@ pipe_collapse <- function(pipeline, config) {
     if (any_single_libs) {
       outdir <- fs::path(trimmed_dir, "SINGLE")
       fs::dir_create(outdir)
-      BiocParallel::bplapply(runs_single$Run, function(srr) {
-        filename <- list.files(trimmed_dir, paste0(srr, "\\."),
-                               full.names = TRUE)
-        if (length(filename) != 1) {
-          filename <- file.path(trimmed_dir,
-                                paste0("trimmed_", srr, ".fastq"))
-        }
+      files <- run_files_organizer(runs_single, trimmed_dir)
+      BiocParallel::bplapply(files, function(filename) {
         ORFik::collapse.fastq(
           filename, outdir,
           compress = TRUE
         )
-        fs::file_delete(filename)
+        if (config$mode != "local") fs::file_delete(filename)
       }, BPPARAM = BiocParallel::MulticoreParam(16))
     }
 

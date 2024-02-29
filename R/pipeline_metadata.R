@@ -403,9 +403,13 @@ match_bam_to_metadata <- function(bam_dir, study, paired_end) {
     # TODO: Make this all more clear and failproof
     bam_files_base <- gsub("_Aligned.*", "", bam_files_base)
     bam_files_base <- sub(".*trimmed_", "", bam_files_base)
-    bam_files_base <- gsub(".*_", "", bam_files_base)
+    bam_files_base <- sub(".*collapsed_", "", bam_files_base)
     stopifnot(all(bam_files_base != ""))
     matches <- match(study$Run, bam_files_base)
+    if (anyNA(matches)) {
+      bam_files_base <- gsub(".*_", "", bam_files_base)
+      matches <- match(study$Run, bam_files_base)
+    }
   }
   bam_files <- bam_files[matches]
 

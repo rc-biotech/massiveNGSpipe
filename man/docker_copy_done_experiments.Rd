@@ -9,8 +9,10 @@ docker_copy_done_experiments(
   pipelines = pipeline_init_all(config),
   new_exp_dir = "~/livemount/Bio_data/ORFik_experiments/",
   docker_conversion = "'s/livemount\\\\///g'",
+  individual_studies = TRUE,
   merged_by_organism = TRUE,
-  all_by_organism = TRUE
+  all_by_organism = TRUE,
+  all_modalities_by_org = TRUE
 )
 }
 \arguments{
@@ -22,6 +24,9 @@ docker_copy_done_experiments(
 
 \item{docker_conversion}{the sed conversion string: 's/livemount\///g'}
 
+\item{individual_studies}{logical, default TRUE. Should raw ORFik experiments
+be exported per study.}
+
 \item{merged_by_organism}{logical, default TRUE.
 Create a new study, merge the superset of all per organism into single file.
 This requires that you have run: pipeline_merge_org}
@@ -29,6 +34,9 @@ This requires that you have run: pipeline_merge_org}
 \item{all_by_organism}{logical, default TRUE.
 Create a new study, the superset of all studies of all per organism.
 This requires that you have run: pipeline_merge_org}
+
+\item{all_modalities_by_org}{logical, default TRUE.
+Should the all modalities tracks be exported per organism.}
 }
 \value{
 logical, TRUE if sucessful for all.
