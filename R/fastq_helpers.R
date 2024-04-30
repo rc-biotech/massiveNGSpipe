@@ -65,6 +65,7 @@ fastqc_adapters_info <- function(file) {
 run_files_organizer <- function(runs, source_dir) {
   all_files <-
     lapply(seq_len(nrow(runs)), function(i) {
+
       filenames <-
         if (runs[i]$LibraryLayout == "PAIRED") {
           paste0(runs[i]$Run, c("_1", "_2"))
@@ -73,6 +74,9 @@ run_files_organizer <- function(runs, source_dir) {
         }
       format <- c(".fastq", ".fq", ".fa", ".fasta")
       compressions <- c("", ".gz")
+      prefix1 <- c("", "trimmed_")
+      prefix2 <- c("", "trimmed2_")
+
       format_used <- filenames[1]
       file <- list.files(source_dir, filenames[1], full.names = TRUE)
       file2 <- if(is.na(filenames[2])) {NULL} else list.files(source_dir, filenames[2], full.names = TRUE)
@@ -81,8 +85,11 @@ run_files_organizer <- function(runs, source_dir) {
           stop("File does not exist to trim (both .gz and unzipped): ",
                file)
         } else {
-          temp_file <- file[basename(file) %in% paste0(filenames[1], format,
-                                                       rep(compressions, each = length(format)))]
+          read_1_search <- paste0(filenames[1], format,
+                                  rep(compressions, each = length(format)))
+          read_1_search <- paste0(rep(prefix1, each = length(read_1_search)), read_1_search)
+
+          temp_file <- file[basename(file) %in% read_1_search]
           if (length(temp_file) != 1) {
             stop("File format could not be detected",
                  file[1])
@@ -90,12 +97,16 @@ run_files_organizer <- function(runs, source_dir) {
         }
       }
       if (!is.null(file2) && length(file2) != 1) {
+
+
         if (length(file2) == 0) {
           stop("File does not exist to trim (both .gz and unzipped): ",
                file2)
         } else {
-          temp_file <- file2[basename(file2) %in% paste0(filenames[2], format,
-                                                       rep(compressions, each = length(format)))]
+          read_2_search <- paste0(filenames[1], format,
+                                  rep(compressions, each = length(format)))
+          read_2_search <- paste0(rep(prefix2, each = length(read_2_search)), read_2_search)
+          temp_file <- file2[basename(file2) %in% read_2_search]
           if (length(temp_file) != 1) {
             stop("File format could not be detected",
                  file[2])

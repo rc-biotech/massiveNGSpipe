@@ -153,21 +153,18 @@ pipeline_cleanup <- function(pipeline, config) {
     for (organism in names(pipeline$organisms)) {
         conf <- pipeline$organisms[[organism]]$conf
         if (!step_is_next_not_done(config, "cleanbam", conf["exp"])) next
-        runs <- study[ScientificName == organism]$Run
+        study_org <- study[ScientificName == organism,]
+        bam_dir <- fs::path(conf["bam"], "aligned")
+
         fs::file_delete(fs::dir_ls(
             fs::path(conf["bam"], "contaminants_depletion"),
             glob = "**/*.out.*"
         ))
-        for (run in runs) {
-          old_file_name <- fs::dir_ls(
-            fs::path(conf["bam"], "aligned"),
-            glob = paste0("**/*", run, "*.out.bam")
-          )
-          new_file_name <- fs::path(conf["bam"], "aligned", run, ext = "bam")
-          if (length(old_file_name) > 0) {
-            fs::file_move(old_file_name, new_file_name)
-          }
-
+        old_file_names <- match_bam_to_metadata(bam_dir, study_org, FALSE)
+        new_file_names <- fs::path(bam_dir, study_org$Run, ext = "bam")
+        stopifnot(length(old_file_names) == length(new_file_names))
+        for (i in seq_along(old_file_names)) {
+          fs::file_move(old_file_names[i], new_file_names[i])
         }
         set_flag(config, "cleanbam", conf["exp"])
     }
@@ -193,47 +190,19 @@ pipeline_create_experiment <- function(pipeline, config) {
         if (nrow(study) == 0)
           stop("No samples for organism wanted in study!")
 
-        # Do some small correction to info and merge
-        remove <- "^_|_$|^NA_|_NA$|^NA$|^_$|^__$|^___$"
-        # Stage
-        stage <- paste0(study$CELL_LINE, "_",study$TISSUE)
-        stage <- gsub(paste0(remove, "|NONE_|_NONE"), "", stage)
-        stage <- gsub(paste0(remove, "|NONE_|_NONE"), "", stage) # Twice
-        # Condition
-        condition <- paste0(study$CONDITION)
-        if (!is.null(study$GENE)) condition <- paste(condition, study$GENE, sep = "_")
-        condition <- gsub(remove, "", condition)
-        condition <- gsub(remove, "", condition)
-        condition <- gsub(remove, "", condition)
-        condition <- gsub(remove, "", condition)
-        # Fraction
-        fraction <- paste(study$FRACTION,study$TIMEPOINT, study$BATCH, sep = "_")
-        fraction <- gsub(remove, "", fraction)
-        study$INHIBITOR[is.na(study$INHIBITOR)] <- ""
-        add_inhibitor_to_fraction <-
-          !all(study$INHIBITOR %in% c("chx", "CHX"))
-        if (add_inhibitor_to_fraction) {
-          fraction <- paste0(fraction, "_",study$INHIBITOR)
-        }
-        fraction <- gsub(remove, "", fraction); fraction <- gsub(remove, "", fraction)
-        fraction <- gsub(remove, "", fraction); fraction <- gsub(remove, "", fraction)
-        # PAIRED END
-        paired_end <- study$LibraryLayout == "PAIRED"
-        if (any(paired_end)) {
-          message("Only running single end for now, make fix for this to work normally")
-          paired_end <- FALSE
-        }
 
+        metadata_clean <- cleanup_metadata_for_exp(study)
         bam_dir <- fs::path(conf["bam"], "aligned")
-        bam_files <- match_bam_to_metadata(bam_dir, study, paired_end)
+        bam_files <- match_bam_to_metadata(bam_dir, study, metadata_clean$paired_end)
         ORFik::create.experiment(
             dir = bam_dir,
             exper = experiment, txdb = paste0(annotation["gtf"], ".db"),
             libtype = study$LIBRARYTYPE,
             fa = annotation["genome"], organism = organism,
-            stage = stage, rep = study$REPLICATE,
-            condition = condition, fraction = fraction,
-            pairedEndBam = paired_end,
+            stage = metadata_clean$stage, rep = study$REPLICATE,
+            condition = metadata_clean$condition,
+            fraction = metadata_clean$fraction,
+            pairedEndBam = metadata_clean$paired_end,
             author = unique(study$AUTHOR),
             files = bam_files, runIDs = study$Run
         )

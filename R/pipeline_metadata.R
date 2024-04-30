@@ -132,8 +132,10 @@ pipeline_metadata <- function(accessions, config, force = FALSE, max_attempts = 
     return(res)
   }
     , config = config, force = force)
+  if (any(lengths(all_SRA_metadata) == 0))
+    stop("Unstable connection, try again later!")
   if (any(length(table(lengths(all_SRA_metadata))) != 1))
-    stop("Malformed data, use 'force' = TRUE")
+    stop("Malformed data columns, use 'force' = TRUE")
   return(rbindlist(all_SRA_metadata))
 }
 
@@ -325,12 +327,14 @@ metadata_is_valid <- function(files) {
   return(files)
 }
 
+#' Add new data to the temp_metadata
 add_new_data <- function(accessions, config, organisms = "all",
                          google_url = config$google_url,
                          complete_metadata = config$complete_metadata,
                          LibraryStrategy = c("RNA-Seq", "miRNA-Seq", "OTHER"),
                          LibraryLayouts = c("SINGLE", "PAIRED"), Platforms = "ILLUMINA",
-                         open_google_sheet = interactive()) {
+                         open_google_sheet = interactive(),
+                         open_editor = interactive()) {
   # Step1: Get all metadata
   all_SRA_metadata <- pipeline_metadata(accessions, config)
   # Step2: Filter out what you do not want
@@ -370,7 +374,7 @@ add_new_data <- function(accessions, config, organisms = "all",
                   sheet = 1)
     }
 
-    if (interactive()) {
+    if (open_editor & interactive()) {
       if (open_google_sheet) {
         browseURL(google_url)
       } else if (config$mode == "local") {
@@ -381,7 +385,7 @@ add_new_data <- function(accessions, config, organisms = "all",
       }
     }
   } else {
-    if (interactive()) {
+    if (open_editor & interactive()) {
         message("Update data for unique rows and press syncronize,",
                 " then press 'done'!")
         DataEditR::data_edit(config$temp_metadata, read_fun = "fread") %>%
@@ -403,13 +407,19 @@ match_bam_to_metadata <- function(bam_dir, study, paired_end) {
     # TODO: Make this all more clear and failproof
     bam_files_base <- gsub("_Aligned.*", "", bam_files_base)
     bam_files_base <- sub(".*trimmed_", "", bam_files_base)
+    bam_files_base <- sub(".*trimmed2_", "", bam_files_base)
     bam_files_base <- sub(".*collapsed_", "", bam_files_base)
     stopifnot(all(bam_files_base != ""))
     matches <- match(study$Run, bam_files_base)
     if (anyNA(matches)) {
-      bam_files_base <- gsub(".*_", "", bam_files_base)
+      bam_files_base <- gsub("_[0-9]$", "", bam_files_base)
       matches <- match(study$Run, bam_files_base)
+      if (anyNA(matches)) {
+        bam_files_base <- gsub(".*_", "", bam_files_base)
+        matches <- match(study$Run, bam_files_base)
+      }
     }
+
   }
   bam_files <- bam_files[matches]
 
@@ -425,6 +435,41 @@ match_bam_to_metadata <- function(bam_dir, study, paired_end) {
   }
   if (length(bam_files) == 0) stop("Could not find SRR runs in aligned folder for: ")
   return(bam_files)
+}
+
+cleanup_metadata_for_exp <- function(study) {
+  # Do some small correction to info and merge
+  remove <- "^_|_$|^NA_|_NA$|^NA$|^_$|^__$|^___$"
+  # Stage
+  stage <- paste0(study$CELL_LINE, "_",study$TISSUE)
+  stage <- gsub(paste0(remove, "|NONE_|_NONE"), "", stage)
+  stage <- gsub(paste0(remove, "|NONE_|_NONE"), "", stage) # Twice
+  # Condition
+  condition <- paste0(study$CONDITION)
+  if (!is.null(study$GENE)) condition <- paste(condition, study$GENE, sep = "_")
+  condition <- gsub(remove, "", condition)
+  condition <- gsub(remove, "", condition)
+  condition <- gsub(remove, "", condition)
+  condition <- gsub(remove, "", condition)
+  # Fraction
+  fraction <- paste(study$FRACTION,study$TIMEPOINT, study$BATCH, sep = "_")
+  fraction <- gsub(remove, "", fraction)
+  study$INHIBITOR[is.na(study$INHIBITOR)] <- ""
+  add_inhibitor_to_fraction <-
+    !all(study$INHIBITOR %in% c("chx", "CHX"))
+  if (add_inhibitor_to_fraction) {
+    fraction <- paste0(fraction, "_",study$INHIBITOR)
+  }
+  fraction <- gsub(remove, "", fraction); fraction <- gsub(remove, "", fraction)
+  fraction <- gsub(remove, "", fraction); fraction <- gsub(remove, "", fraction)
+  # PAIRED END
+  paired_end <- study$LibraryLayout == "PAIRED"
+  if (any(paired_end)) {
+    message("Only running single end for now, make fix for this to work normally")
+    paired_end <- FALSE
+  }
+  return(list(condition = condition, stage = stage, fraction = fraction,
+              paired_end = paired_end))
 }
 
 add_backup <- function(dt, backup_file) {
