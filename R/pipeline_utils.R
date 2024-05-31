@@ -3,7 +3,8 @@
 #' If you have download docker and release docker.
 #' This is useful to copy files from download to release
 #' @param config a config object
-#' @param pipelines pipeline objects, default pipeline_init_all(config)
+#' @param pipelines pipeline objects, default:
+#' \code{pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE)}
 #' @param new_exp_dir character, default "~/livemount/Bio_data/ORFik_experiments/"
 #' @param docker_conversion the sed conversion string: 's/livemount\///g'
 #' @param individual_studies logical, default TRUE. Should raw ORFik experiments
@@ -18,7 +19,7 @@
 #' Should the all modalities tracks be exported per organism.
 #' @return logical, TRUE if sucessful for all.
 #' @export
-docker_copy_done_experiments <- function(config, pipelines = pipeline_init_all(config),
+docker_copy_done_experiments <- function(config, pipelines = pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE),
                                          new_exp_dir = "~/livemount/Bio_data/ORFik_experiments/",
                                          docker_conversion = "'s/livemount\\///g'",
                                          individual_studies = TRUE,

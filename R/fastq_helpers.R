@@ -62,10 +62,10 @@ fastqc_adapters_info <- function(file) {
   return(candidates[name == adapter_name]$value)
 }
 
-run_files_organizer <- function(runs, source_dir) {
+run_files_organizer <- function(runs, source_dir, exclude = c("json", "html")) {
   all_files <-
     lapply(seq_len(nrow(runs)), function(i) {
-
+      # browser()
       filenames <-
         if (runs[i]$LibraryLayout == "PAIRED") {
           paste0(runs[i]$Run, c("_1", "_2"))
@@ -79,7 +79,12 @@ run_files_organizer <- function(runs, source_dir) {
 
       format_used <- filenames[1]
       file <- list.files(source_dir, filenames[1], full.names = TRUE)
-      file2 <- if(is.na(filenames[2])) {NULL} else list.files(source_dir, filenames[2], full.names = TRUE)
+      file <- file[!(tools::file_ext(file) %in% exclude)]
+      file2 <- NULL
+      if(!is.na(filenames[2])) {
+        file2 <- list.files(source_dir, filenames[2], full.names = TRUE)
+        file2 <- file2[!(tools::file_ext(file2) %in% exclude)]
+      }
       if (length(file) != 1) {
         if (length(file) == 0) {
           stop("File does not exist to trim (both .gz and unzipped): ",

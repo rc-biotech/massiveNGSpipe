@@ -17,7 +17,8 @@ curate_metadata(
   step_mode = FALSE,
   open_google_sheet = interactive(),
   fix_loop = TRUE,
-  only_curated = FALSE
+  only_curated = FALSE,
+  update_google_sheet = TRUE
 )
 }
 \arguments{
@@ -70,6 +71,9 @@ now, set this to FALSE.}
 
 \item{only_curated}{logical FALSE, if TRUE. Only validate (or fail) based on
 inserted accessions (not the full list). Ignored if accessions is NULL.}
+
+\item{update_google_sheet}{logical TRUE, Ignored if google_url is NULL.
+If FALSE, will not update sheet after check. This}
 }
 \value{
 logical, TRUE if you had unique rows per accession per organism

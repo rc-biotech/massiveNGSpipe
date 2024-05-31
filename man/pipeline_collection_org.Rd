@@ -4,7 +4,11 @@
 \alias{pipeline_collection_org}
 \title{Create the superset collection of all samples per organism}
 \usage{
-pipeline_collection_org(config, pipelines = pipelines_init_all(config))
+pipeline_collection_org(
+  config,
+  pipelines = pipelines_init_all(config, gene_symbols = FALSE, only_complete_genomes =
+    TRUE)
+)
 }
 \arguments{
 \item{config}{list, output from pipeline_config(), the global config for your

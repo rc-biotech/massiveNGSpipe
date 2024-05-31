@@ -6,7 +6,8 @@
 \usage{
 docker_copy_done_experiments(
   config,
-  pipelines = pipeline_init_all(config),
+  pipelines = pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes =
+    TRUE),
   new_exp_dir = "~/livemount/Bio_data/ORFik_experiments/",
   docker_conversion = "'s/livemount\\\\///g'",
   individual_studies = TRUE,
@@ -18,7 +19,8 @@ docker_copy_done_experiments(
 \arguments{
 \item{config}{a config object}
 
-\item{pipelines}{pipeline objects, default pipeline_init_all(config)}
+\item{pipelines}{pipeline objects, default:
+\code{pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE)}}
 
 \item{new_exp_dir}{character, default "~/livemount/Bio_data/ORFik_experiments/"}
 

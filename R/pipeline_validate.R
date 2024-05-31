@@ -99,6 +99,7 @@ progress_report <- function(pipelines, config, show_stats = FALSE,
   }
   cat("Number of studies completed\n")
   cat(done, " / ", n_bioprojects, "\n")
+  print(current_step_table(progress_index, steps))
   cat("Last update:")
   cat("(", round(last_update_diff(config, units = "hours"), 1), " hours ago): ",
       format(last_update(config),usetz=TRUE), "\n", sep = "")
@@ -151,6 +152,16 @@ save_report <- function(dt, dt.trim, done, total, report_dir) {
   return(invisible(NULL))
 }
 
+current_step_table <- function(progress_index, steps) {
+  all_flag_steps <- c(steps, "complete")
+
+  tab <- table(progress_index)
+  old_index <- names(tab)
+  message("Current steps active: name(flag_index):")
+  names(tab) <- paste0(all_flag_steps[as.numeric(old_index) + 1], "(", old_index, ")")
+  return(tab)
+}
+
 #' Status plot of pipeline
 #'
 #' Given all studies, report how far they have come as a heatmap (y-axis
@@ -158,7 +169,7 @@ save_report <- function(dt, dt.trim, done, total, report_dir) {
 status_plot <- function(steps, progress_index, projects, n_bioprojects, done) {
   status_matrix <- lapply(seq(length(steps)) - 1, function(x) as.data.table(matrix(as.integer(x <= progress_index), nrow = 1, byrow = TRUE)))
   status_matrix <- as.matrix(rbindlist(status_matrix))
-  fig1 <- plot_ly(z = status_matrix, x = projects, y = steps, type = "heatmap", colors = c("red", "green"), showscale=FALSE) %>%
+  fig1 <- plot_ly(z = status_matrix, x = projects, y = steps, type = "heatmap", colors = c("red", "green")[unique(as.vector(status_matrix)) + 1], showscale=FALSE) %>%
     layout(title = list(text = paste0('NGS Processing Status',
                                       '<br>',
                                       '<sup>',

@@ -39,6 +39,8 @@
 #' now, set this to FALSE.
 #' @param only_curated logical FALSE, if TRUE. Only validate (or fail) based on
 #' inserted accessions (not the full list). Ignored if accessions is NULL.
+#' @param update_google_sheet logical TRUE, Ignored if google_url is NULL.
+#' If FALSE, will not update sheet after check. This
 #' @return logical, TRUE if you had unique rows per accession per organism
 #' @import googlesheets4 data.table ORFik BiocParallel fs stringr DataEditR
 #' @export
@@ -50,12 +52,16 @@ curate_metadata <- function(accessions, config, organisms = "all",
                             libtypes = "RFP",
                             Platforms = "ILLUMINA",
                             step_mode = FALSE, open_google_sheet = interactive(),
-                            fix_loop = TRUE, only_curated = FALSE) {
+                            fix_loop = TRUE, only_curated = FALSE,
+                            update_google_sheet = TRUE) {
   if (!interactive() & step_mode)
     stop("In non interactive mode you can not run step_mode = TRUE!")
   stopifnot(length(fix_loop) == 1); stopifnot(is(fix_loop, "logical"))
-  if (step_mode) browser()
   add_new_accessions <- !is.null(accessions)
+  if (!update_google_sheet & add_new_accessions)
+    message("update_google_sheet is FALSE and add_new_accessions is TRUE, is this intentional?")
+  if (step_mode) browser()
+
   if (add_new_accessions) {
     add_new_data(accessions, config, organisms,
                  google_url, complete_metadata,
@@ -74,7 +80,7 @@ curate_metadata <- function(accessions, config, organisms = "all",
     finished <- pipeline_validate_metadata(sheet, config, accessions = accessions,
                                            only_curated = only_curated,
                                            libtypes = libtypes)
-    if (!is.null(google_url)) {
+    if (!is.null(google_url) & update_google_sheet) {
       message("Uploading updated version to google sheet:")
       write_sheet(read.csv(config$temp_metadata),
                   ss = google_url,
@@ -299,10 +305,15 @@ pipeline_validate_metadata <- function(dt, config,
   # Check if metadata is now valid
   files <- metadata_is_valid(files)
   if (!is.null(accessions) & only_curated) {
-    any_not_unique <- sum(files[KEEP == TRUE & study_accession %in% accessions,]$not_unique) != 0
-  } else any_not_unique <- sum(files[KEEP == TRUE,]$not_unique) != 0
+    files_to_check <- files[KEEP == TRUE & study_accession %in% accessions,]
+  } else files_to_check <- files[KEEP == TRUE,]
+  any_not_unique <- sum(files_to_check$not_unique) != 0
   if (any_not_unique) {
     message("Sorry, still not unique, try again, may the force be with you!")
+    message("Number of not unique: ", sum(files_to_check$not_unique))
+    top30 <- ifelse(sum(files_to_check$not_unique) > 30, "(showing first 30)", "")
+    message("Run ids of non unique: ", top30)
+    print(head(files_to_check[not_unique == TRUE, ]$Run, 30))
   } else {
     export_sucessful_metadata(files, libtypes, output_file,
                               next_round_file)
@@ -585,7 +596,7 @@ local_study_csv <- function(dir, name, files = list.files(dir, pattern = "\\.fas
                             MONTH = substr(Sys.time(), 6,7),
                             YEAR = substr(Sys.time(), 1,4),
                             AUTHOR = Sys.info()["user"]) {
-  if (any(paired %in% "PAIRED")) stop("Only single end supported for now!")
+  #if (any(paired %in% "PAIRED")) stop("Only single end supported for now!")
   message("Using files:")
   print(basename(files))
   message("total files: ", length(files))

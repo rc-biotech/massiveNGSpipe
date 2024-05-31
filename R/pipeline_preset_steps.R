@@ -91,7 +91,7 @@ pipe_convert <- function(pipelines, config) {
 #' @inheritParams run_pipeline
 #' @return invisible(NULL)
 #' @export
-pipeline_collection_org <- function(config, pipelines = pipelines_init_all(config)) {
+pipeline_collection_org <- function(config, pipelines = pipelines_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE)) {
   message("- Collection of all samples per organism")
   names(pipelines) <- NULL
   exp <- get_experiment_names(pipelines)
@@ -106,7 +106,12 @@ pipeline_collection_org <- function(config, pipelines = pipelines_init_all(confi
     df_list <- lapply(done_exp_list[names(done_exp_list) == org], function(e)
       read.experiment(e, validate = F))
     df <- do.call(rbind, df_list)
+
+    libtype_df <- libraryTypes(df)
+    if (length(libtype_df) != 1) stop("Only single libtype experiments supported for merging")
+    if (libtype_df == "") stop("Libtype of experiment must be defined!")
     exp_name <- organism_collection_exp_name(org)
+    if (libtype_df != "RFP") exp_name <- paste0(exp_name, "_", libtype_df)
     out_dir <- file.path(config$config["bam"], exp_name)
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
     fraction <- df$fraction
@@ -164,7 +169,7 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config)) {
       read.experiment(e, validate = F)[1,])
     df <- do.call(rbind, df_list)
     # Overwrite default paths to merged
-    libtype_df <- unique(df$libtype)
+    libtype_df <- libraryTypes(df)
     if (length(libtype_df) != 1) stop("Only single libtype experiments supported for merging")
     if (libtype_df == "") stop("Libtype of experiment must be defined!")
     df@listData$filepath <- file.path(dirname(filepath(df, "default")),
