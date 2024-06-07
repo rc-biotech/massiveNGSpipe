@@ -107,3 +107,11 @@ docker_copy_done_experiments <- function(config, pipelines = pipeline_init_all(c
   }
   return(all(res == 0))
 }
+
+#' Get name of function
+#' @importFrom rlang ensyms
+#' @importFrom purrr map
+#' @param ... functions
+#' @return character, name of function
+#' @export
+name_of_function <- function(...) unlist(purrr:::map(rlang::ensyms(...) , as.character), use.names = FALSE)

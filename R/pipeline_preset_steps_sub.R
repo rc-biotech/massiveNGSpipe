@@ -82,13 +82,16 @@ pipeline_align <- function(pipeline, config) {
         trimmed_dir <- fs::path(conf["bam"], "trim")
         output_dir <- conf["bam"]
         did_collapse <- "collapsed" %in% names(config$flag)
+        keep.contaminants <- config$keep_contaminants
+        keep.unaligned.genome <- config$keep.unaligned.genome
         if (any(runs$LibraryLayout == "SINGLE")) {
           input_dir <- ifelse(did_collapse,
                               fs::path(trimmed_dir, "SINGLE"),
                               trimmed_dir)
             ORFik::STAR.align.folder(
                 input.dir = input_dir,
-                output.dir = output_dir,
+                output.dir = output_dir, keep.contaminants = keep.contaminants,
+                keep.unaligned.genome = keep.unaligned.genome,
                 index.dir = index, steps = "co-ge", paired.end = FALSE
             )
             for (stage in c("contaminants_depletion", "aligned")) {
@@ -119,7 +122,8 @@ pipeline_align <- function(pipeline, config) {
                 input.dir = input_dir,
                 output.dir = output_dir,
                 index.dir = index, steps = "tr-co-ge",
-                resume = "co",
+                resume = "co", keep.contaminants = keep.contaminants,
+                keep.unaligned.genome = keep.unaligned.genome,
                 paired.end = collapsed_paired_end_mode
             )
             # for (stage in c("contaminants_depletion", "aligned")) {

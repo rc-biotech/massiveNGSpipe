@@ -22,17 +22,25 @@
 #' 'steps' argument that defines that actuall function called for each break point.
 #' Increasing break points makes the pipeline run faster at the cost of more
 #' resource usage.
-#' @param flag_steps a list of subsets of flags that maps which flags are set in
-#' each function in 'step' in pipeline_steps. I.e. flags defined in each function
-#' in pipeline_steps functions, must be declared here.
-#' @param pipeline_steps a list of the functions to actually run,
-#' that map to the checkpoint flags given of the functions called during 'run_pipeline'
+#' @param flag_steps list, mapping of functions to ids. The names per list element is a function.
+#' The character elements inside each list element are the flag name ids for all steps that will
+#' be "marked as done" inside that function. Example: In default preset,
+#' the pipe_trim_collapse function marks as done both the trim and collapse flags.
+#' @param pipeline_steps a list of the functions to actually run, the functions
+#' must be named equal to names of the 'flag_step' argument.
 #' @param mode = \code{c("online", "local")[1]}. "online" will assume project IDs for
 #' online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.
 #' @param delete_raw_files logical, default: mode == "online". If online do delete
 #' raw fastq files after trim step is done, for local samples do not delete.
 #' Set only to TRUE for mode local, if you have backups!
-#' @param delete_collapsed_files logical, default TRUE. If TRUE deletes the collapsed fasta files.
+#' @param delete_trimmed_files logical, default: mode == "online".
+#' If TRUE deletes the trimmed fasta files.
+#' @param delete_collapsed_files logical, default: mode == "online".
+#' If TRUE deletes the collapsed fasta files.
+#' @param keep_contaminants logical, default FALSE. Do not keep contaminant aligned reads,
+#'  else saved in contamination dir.
+#' @param keep.unaligned.genome logical, default FALSE. Do not keep contaminant aligned reads,
+#'  else saved in contamination dir.
 #' @param parallel_conf a bpoptions object, default:
 #' \code{bpoptions(log =TRUE, stop.on.error = TRUE)}
 #' Specific pipeline config for parallel settings and log directory
@@ -53,26 +61,32 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                                                     function(x) get(x, mode = "function")),
                             mode = c("online", "local")[1],
                             delete_raw_files = mode == "online",
-                            delete_collapsed_files = TRUE,
+                            delete_trimmed_files = mode == "online",
+                            delete_collapsed_files = mode == "online",
+                            keep_contaminants = FALSE,
+                            keep.unaligned.genome = FALSE,
                             parallel_conf = bpoptions(log =TRUE,
                                                       stop.on.error = TRUE),
                             logdir = file.path(project_dir, "log_pipeline"),
                             BPPARAM = bpparam()) {
 
   stopifnot(mode %in% c("online", "local"))
-  stopifnot(is.logical(delete_raw_files))
+  stopifnot(is.logical(delete_raw_files) & is.logical(delete_trimmed_files) &
+            is.logical(delete_collapsed_files) & is.logical(keep_contaminants) &
+            is.logical(keep.unaligned.genome))
   stopifnot(is(pipeline_steps, "list"))
-  stopifnot(is(pipeline_steps[[1]], "function"))
+  if (preset == "empty") message("Using empty preset, now add your steps: using add_step_to_pipeline()")
+  if (preset != "empty") stopifnot(is(pipeline_steps[[1]], "function"))
   stopifnot(length(pipeline_steps) == length(flag_steps))
-  if (mode == "local" & delete_raw_files)
-    message("You have run local fastq files with delete raw files,",
+
+  delete_any_files <- c(delete_raw_files, delete_trimmed_files, delete_collapsed_files)
+  names(delete_any_files) <- c("raw", "trimmed", "collapsed")
+  if (mode == "local" & any(delete_any_files))
+    message("You have run local fastq files with delete ",
+    paste(names(delete_any_files)[delete_any_files], collapse = " & "), " files,",
             "are you sure this is what you want?")
-  if (!is.null(parallel_conf)) {
-    if (!is.null(logdir)) {
-      dir.create(logdir, recursive = TRUE, showWarnings = FALSE)
-      bplog(BPPARAM) <- TRUE
-      bplogdir(BPPARAM) <- logdir
-    }
+  if (!is.null(parallel_conf) && !is.null(logdir)) {
+    BPPARAM <- set_log_dir(BPPARAM, logdir)
   }
 
 
@@ -85,7 +99,10 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               temp_metadata = temp_metadata,
               google_url = google_url, mode = mode,
               delete_raw_files = delete_raw_files,
+              delete_trimmed_files = delete_trimmed_files,
               delete_collapsed_files = delete_collapsed_files,
+              keep_contaminants = keep_contaminants,
+              keep.unaligned.genome = keep.unaligned.genome,
               preset = preset,
               parallel_conf = parallel_conf, BPPARAM = BPPARAM))
 }
@@ -98,8 +115,8 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
 #' is the steps that happen in that sub component of the pipeline
 #' @return a list, returns the validated 'substeps' argument.
 #' @export
-flag_grouping <- function(flags,
-                          substeps = preset_grouping(flags)) {
+flag_grouping <- function(flags, substeps = preset_grouping(flags)) {
+  if (length(flags) == 0) return(list())
   stopifnot(all(unlist(substeps) %in% names(flags)))
   stopifnot(length(unlist(substeps)) > 0)
   stopifnot(length(flags) > 0)

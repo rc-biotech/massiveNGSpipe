@@ -17,7 +17,10 @@ pipeline_config(
   pipeline_steps = lapply(names(flag_steps), function(x) get(x, mode = "function")),
   mode = c("online", "local")[1],
   delete_raw_files = mode == "online",
-  delete_collapsed_files = TRUE,
+  delete_trimmed_files = mode == "online",
+  delete_collapsed_files = mode == "online",
+  keep_contaminants = FALSE,
+  keep.unaligned.genome = FALSE,
   parallel_conf = bpoptions(log = TRUE, stop.on.error = TRUE),
   logdir = file.path(project_dir, "log_pipeline"),
   BPPARAM = bpparam()
@@ -45,7 +48,7 @@ complete_metadat. This syncs automatically to the google_url sheet.}
 not use google sheet.}
 
 \item{preset}{character, default "Ribo-seq".
-Alternatives: c("Ribo-seq", "RNA-seq", "disome")}
+Alternatives: c("Ribo-seq", "RNA-seq", "disome", "empty")}
 
 \item{flags}{named character vector, with cut points, where can
 the pipeline continue if it breaks? Is defined in combination with
@@ -53,12 +56,13 @@ the pipeline continue if it breaks? Is defined in combination with
 Increasing break points makes the pipeline run faster at the cost of more
 resource usage.}
 
-\item{flag_steps}{a list of subsets of flags that maps which flags are set in
-each function in 'step' in pipeline_steps. I.e. flags defined in each function
-in pipeline_steps functions, must be declared here.}
+\item{flag_steps}{list, mapping of functions to ids. The names per list element is a function.
+The character elements inside each list element are the flag name ids for all steps that will
+be "marked as done" inside that function. Example: In default preset,
+the pipe_trim_collapse function marks as done both the trim and collapse flags.}
 
-\item{pipeline_steps}{a list of the functions to actually run,
-that map to the checkpoint flags given of the functions called during 'run_pipeline'}
+\item{pipeline_steps}{a list of the functions to actually run, the functions
+must be named equal to names of the 'flag_step' argument.}
 
 \item{mode}{= \code{c("online", "local")[1]}. "online" will assume project IDs for
 online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.}
@@ -67,7 +71,17 @@ online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.}
 raw fastq files after trim step is done, for local samples do not delete.
 Set only to TRUE for mode local, if you have backups!}
 
-\item{delete_collapsed_files}{logical, default TRUE. If TRUE deletes the collapsed fasta files.}
+\item{delete_trimmed_files}{logical, default: mode == "online".
+If TRUE deletes the trimmed fasta files.}
+
+\item{delete_collapsed_files}{logical, default: mode == "online".
+If TRUE deletes the collapsed fasta files.}
+
+\item{keep_contaminants}{logical, default FALSE. Do not keep contaminant aligned reads,
+else saved in contamination dir.}
+
+\item{keep.unaligned.genome}{logical, default FALSE. Do not keep contaminant aligned reads,
+else saved in contamination dir.}
 
 \item{parallel_conf}{a bpoptions object, default:
 \code{bpoptions(log =TRUE, stop.on.error = TRUE)}

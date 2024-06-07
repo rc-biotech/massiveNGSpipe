@@ -1,3 +1,11 @@
+set_log_dir <- function(BPPARAM, logdir) {
+  stopifnot(is.character(logdir))
+  dir.create(logdir, recursive = TRUE, showWarnings = FALSE)
+  bplog(BPPARAM) <- TRUE
+  bplogdir(BPPARAM) <- logdir
+  return(BPPARAM)
+}
+
 #' Get log for specific pipeline run
 #'
 #' Get the n lasts line of a specific job for pipeline

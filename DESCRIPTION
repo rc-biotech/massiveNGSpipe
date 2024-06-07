@@ -17,18 +17,21 @@ Depends:
     ORFik,
     BiocParallel
 Imports:
-    DataEditR,
     biomartr,
+    DataEditR,
+    filelock,
     fs,
     fst,
-    filelock,
     ggplot2,
-    stringr,
-    jsonlite,
     googledrive,
     googlesheets4,
+    jsonlite,
+    plotly,
+    purrr,
+    rlang,
     scales,
-    plotly
+    stringr
 Remotes:
     Roleren/ORFik,
     Roleren/biomartr
+    m-swirski/RiboCrypt

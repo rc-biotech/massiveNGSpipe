@@ -10,13 +10,20 @@ massiveNGSpipe is a R package for full process integration of
 NGS studies, it can handle thousands of samples from multiple organisms
 in a single run.
 
+The pipelines flow is built on 4 steps:
+
+- 1. Set up pipeline config (What steps to do: download, trimming, alignmnets) (presets supported)
+- 2. Curate data (define which samples you want to run & metadata)
+- 3. Download organism annotations from linked metadata per study (set up pipeline objects)
+- 4. Run pipeline
+
 It currently supports to set up easily a fail safe and fallback supported 
 pipeline that does the specific steps:
 - Find candidate accessions for studies you might be interested in
 - A clean way of helping with annotating samples using
 either google sheet integration or local csv files.
 - Automatic download of genome and gff for each organism (supports
-fixing malformed gffs, adding pseudo 5' UTRs etc)
+fixing malformed gffs, adding pseudo 5' UTRs, contamants etc)
 - Automatic download of samples with fallback options:
  1. AWS (amazon, fastest), 2. ENA (fast), 3. fastq-dump (slowest)
 - Automatic detection of 3' adapters and trimming (fastp)
@@ -202,6 +209,106 @@ error to a log and let's you know. It then continues to the next pipeline object
 When all objects are done it will retry the ones that failed.
 
 You can also get a progress report of how long you have come. 
+
+### The flow of data through the pipeline (code examples)
+
+The pipeline consists of several steps where the user can add their custom
+steps. Here we will walk through the 4 main steps with code examples (theory described in section above):
+
+#### Running custom functions
+
+Template for new functions
+```r
+# If you want to work on finished ORFik experiments
+pipe_doX <- function(pipelines, config, step = "doX") {
+  for (pipeline in pipelines) { # Per pipeline object
+    try <- try({
+      # For each species in study
+      df_list <- lapply(experiments, function(e) read.experiment(e, validate = FALSE, output.env = new.env()))
+      # Your code here ---->
+      for (df in df_list) {
+        # First skip if step is done
+        if (!step_is_next_not_done(config, step, name(df))) next
+        # Do something
+        # Then set flag when done
+        set_flag(config, step, name(df))
+      }
+    })
+    if (is(try, "try-error"))
+      warning("Failed at step, ", step ,", study: ", pipeline$accession)
+  }
+}
+
+# If you want to work on pipeline objects
+pipe_count_reades <- function(pipelines, config, step = "countReads") {
+  for (pipeline in pipelines) { # Per pipeline object
+    try <- try({
+      conf <- pipeline$organisms[[organism]]$conf
+      if (!step_is_next_not_done(config, step, conf["exp"])) next
+      
+      index <- pipeline$organisms[[organism]]$index
+      source_dir <- conf["fastq"]
+      runs <- study[ScientificName == organism]
+      # Files to run (Single end / Paired end)
+      all_files <- massiveNGSpipe:::run_files_organizer(runs, source_dir)
+      lengths <- sapply(all_files, function(file) length(readDNAStringSet(file)))
+      saveRDS(file.path(source_dir, "count_reads.rds"))
+      }
+    })
+    if (is(try, "try-error"))
+      warning("Failed at step, ", step ,", study: ", pipeline$accession)
+  }
+}
+```
+
+Actuall example:
+```r
+library(massiveNGSpipe)
+
+# Setting up custom pipelines
+config_dirs <- ORFik::config() # Where all data is stored (all your pipelines)
+# -> project_dir specifies log, status and metadata folder for specific pipeline
+project_dir <- file.path(dirname(config_dirs)[1], "local_pipeline_ribo")
+mode <- "local" # Data already exists on your computer / server
+google_url <- NULL # Do not use google sheet for metadata storage
+preset <- "Ribo-seq" # What kind of pipeline (use Ribo-seq preset)
+# Init config (set up paths and pipeline settings)
+config <- pipeline_config(project_dir, config_dirs, mode = mode,
+                          preset = preset, google_url = google_url,
+                          keep_contaminants = TRUE,
+                          keep.unaligned.genome = TRUE)
+                          
+# Adding new step
+
+# 3 things: flag_id name, name of function, and the function itself
+
+#' Differential expression analysis on primary contrast
+#' @inheritParams run_pipeline
+#' @param step name_id of current step
+pipe_difexp <- function(pipelines, config, step = "difexp") {
+  for (pipeline in pipelines) { # Per pipeline object
+    try <- try({
+      # For each species in study
+      df_list <- lapply(experiments, function(e) read.experiment(e, validate = FALSE, output.env = new.env()))
+      # Your code here ---->
+      for (df in df_list) {
+        # First skip if step is done
+        if (!step_is_next_not_done(config, step, name(df))) next
+        DEG.analysis(df)
+        # Then set flag when done
+        set_flag(config, step, name(df))
+      }
+    })
+    if (is(try, "try-error"))
+      warning("Failed at step, ", step ,", study: ", pipeline$accession)
+  }
+}
+
+flag_id <- "difexp" # The id of the flag step
+# By default appends as last step, you can also set new steps to be appended in front.
+new_config <- add_step_to_pipeline(config, flag_id, function_name, FUN = pipe_difexp)
+pipeline_init_all(config)
+```
 
 # Overview of making metadata for massiveNGSpipe:
 

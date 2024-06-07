@@ -2,11 +2,11 @@
 #'
 #' This is called flags
 #' @param preset character, default "Ribo-seq".
-#'  Alternatives: c("Ribo-seq", "RNA-seq", "disome")
+#'  Alternatives: c("Ribo-seq", "RNA-seq", "disome", "empty")
 #' @param mode either of c("online", "local")
 #' @return a character vector with names being the grouping in functions
 libtype_flags <- function(preset, mode = "online") {
-  valid_presets <- c("Ribo-seq", "RNA-seq", "disome")
+  valid_presets <- c("Ribo-seq", "RNA-seq", "disome", "empty")
 
   download_flags <- if (mode == "online") {
     c(fetch = "start", fetch = "fetch")
@@ -70,11 +70,13 @@ all_substeps_done_all <- function(config, steps, exps) {
 #' dir creation if needed.
 #' @return a named character vector of directories in 'project_dir'
 #'  named as 'flag_sub' with names 'flag_sub'
+#' @export
 pipeline_flags <- function(project_dir, mode = c("online", "local")[1],
                            preset,
                            flag_names = libtype_flags(preset, mode),
                            create_dirs = TRUE
                            ) {
+  if (preset == "empty") return(character())
   flag_dir <- file.path(project_dir, "flags")
   flags <- file.path(flag_dir, flag_names)
   stopifnot(length(flags) > 0)
@@ -171,4 +173,48 @@ remove_flag_all <- function(config, steps = names(config$flag), pipelines) {
   progress_report(pipelines, config, show_stats = FALSE)
   message("Flag remove: Done")
   return(invisible(NULL))
+}
+
+#' Add additional step to pipeline
+#'
+#' @param config list, a NGS pipeline object
+#' @param short_name character, the flag id, a short identifier (differential expression could be: difexp etc)
+#' @param FUN a function, the to be added
+#' @param group_name character, name of the function FUN.
+#' @param tail_or_head character, c("tail", "head")[1]. Default is to append last, can also front append.
+#' @return list, the updated config object
+#' @export
+add_step_to_pipeline <- function(config, short_name, FUN, group_name = name_of_function(FUN), tail_or_head = "tail") {
+  stopifnot(is.list(config) & !is.null(config$project))
+  stopifnot(is.character(short_name))
+  stopifnot(is.function(FUN))
+  stopifnot(is.character(group_name))
+  stopifnot(tail_or_head %in% c("tail", "head"))
+
+  flags <- config$flag
+  grouping <- attr(flags, "grouping") # Grouping attribute
+
+  if (short_name %in% names(flags)) stop("Step short_name already exists in pipeline config!")
+  if (group_name %in% grouping) stop("Function name already exist in config!")
+
+  if (tail_or_head == "tail") {
+    flags <- c(flags, file.path(dirname(flags[1]), short_name))
+    names(flags)[length(flags)] <- short_name
+    grouping <- c(grouping, group_name) # <---- name of new function
+  } else {
+    flags <- c(file.path(dirname(flags[1]), short_name), flags)
+    names(flags)[1] <- short_name
+    grouping <- c(group_name, grouping) # <---- name of new function
+  }
+
+  dir.create(flags[short_name], showWarnings = FALSE, recursive = TRUE)
+
+  attr(flags, "grouping") <- grouping
+  flag_steps <- flag_grouping(flags)
+
+  pipeline_steps <- lapply(names(flag_steps), function(x) get(x, mode = "function"))
+  config$flag <- flags
+  config$flag_steps <- flag_steps
+  config$pipeline_steps <- pipeline_steps
+  return(config)
 }

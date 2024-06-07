@@ -19,7 +19,7 @@ pipeline_flags(
 online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.}
 
 \item{preset}{character, default "Ribo-seq".
-Alternatives: c("Ribo-seq", "RNA-seq", "disome")}
+Alternatives: c("Ribo-seq", "RNA-seq", "disome", "empty")}
 
 \item{flag_names}{character vector of names of flag steps to include}
 

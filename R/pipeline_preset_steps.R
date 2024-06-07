@@ -10,10 +10,12 @@ pipe_fetch <- function(pipelines, config) {
 }
 
 pipe_trim_collapse <- function(pipelines, config) {
+  do_trim <- "trim" %in% names(config$flag)
   do_collapse <- "collapsed" %in% names(config$flag)
   for (pipeline in pipelines) {
     try <- try({
-      pipeline_trim(pipeline,     config)
+      if (do_trim)
+        pipeline_trim(pipeline,     config)
       if (do_collapse)
         pipeline_collapse(pipeline, config)
     })

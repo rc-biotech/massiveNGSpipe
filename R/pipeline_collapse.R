@@ -24,7 +24,7 @@ pipeline_collapse <- function(pipeline, config) {
           filename, outdir,
           compress = TRUE
         )
-        if (config$mode != "local") fs::file_delete(filename)
+        if (config$delete_trimmed_files) fs::file_delete(filename)
       }, BPPARAM = BiocParallel::MulticoreParam(16))
       # Read in and reverse second file, then merge back into 1.
       filenames <- file.path(outdir, paste0("collapsed_", basename(files)))
@@ -52,7 +52,7 @@ pipeline_collapse <- function(pipeline, config) {
           filename, outdir,
           compress = TRUE
         )
-        if (config$mode != "local") fs::file_delete(filename)
+        if (config$delete_trimmed_files) fs::file_delete(filename)
       }, BPPARAM = BiocParallel::MulticoreParam(16))
     }
 
