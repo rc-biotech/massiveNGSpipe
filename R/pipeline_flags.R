@@ -3,7 +3,8 @@
 #' This is called flags
 #' @param preset character, default "Ribo-seq".
 #'  Alternatives: c("Ribo-seq", "RNA-seq", "disome", "empty")
-#' @param mode either of c("online", "local")
+#' @param mode either of c("online", "local"). Local will disable some steps
+#' like the fetch step (as data is already presumed to exist locally etc)
 #' @return a character vector with names being the grouping in functions
 libtype_flags <- function(preset, mode = "online") {
   valid_presets <- c("Ribo-seq", "RNA-seq", "disome", "empty")

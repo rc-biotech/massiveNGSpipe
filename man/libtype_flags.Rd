@@ -10,7 +10,8 @@ libtype_flags(preset, mode = "online")
 \item{preset}{character, default "Ribo-seq".
 Alternatives: c("Ribo-seq", "RNA-seq", "disome", "empty")}
 
-\item{mode}{either of c("online", "local")}
+\item{mode}{either of c("online", "local"). Local will disable some steps
+like the fetch step (as data is already presumed to exist locally etc)}
 }
 \value{
 a character vector with names being the grouping in functions
