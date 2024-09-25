@@ -33,5 +33,5 @@ Imports:
     stringr
 Remotes:
     Roleren/ORFik,
-    Roleren/biomartr
+    Roleren/biomartr,
     m-swirski/RiboCrypt
