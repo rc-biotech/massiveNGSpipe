@@ -4,13 +4,26 @@
 \alias{pipeline_merge_org}
 \title{Merge all studies per organism}
 \usage{
-pipeline_merge_org(config, pipelines = pipeline_init_all(config))
+pipeline_merge_org(
+  config,
+  pipelines = pipeline_init_all(config, only_complete_genomes = TRUE, gene_symbols =
+    FALSE),
+  done_experiments = step_is_done_pipelines(config, "merged_lib", pipelines),
+  done_organisms = unique(names(done_experiments))
+)
 }
 \arguments{
 \item{config}{list, output from pipeline_config(), the global config for your
 NGS pipeline}
 
 \item{pipelines}{list, output of pipeline_init_all}
+
+\item{done_experiments}{named character vector, default:
+step_is_done_pipelines(config, "merged_lib", pipelines). Set of experiments to merge
+per species.}
+
+\item{done_organisms}{which organisms to run merging for, default
+unique(names(done_experiments))}
 }
 \value{
 invisible(NULL)

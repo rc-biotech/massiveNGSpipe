@@ -19,5 +19,6 @@ invisible(NULL)
 }
 \description{
 Set all flags as done for all experiments in pipeline up to and included
-the last step in steps
+the last step in steps. This will set for all organisms in per pipelines
+object. Use set_flag_all_exp if you want organism seperation.
 }

@@ -94,6 +94,17 @@ step_is_done <- function(config, step, experiment) {
   return(file.exists(flag_rds))
 }
 
+#' Check if step is done, pipeline input
+#'
+#' @inheritParams set_flag_all
+#' @return logical vector, TRUE if it is done.
+#' @export
+step_is_done_pipelines <- function(config, step, pipelines) {
+  names(pipelines) <- NULL
+  exp <- get_experiment_names(pipelines)
+  return(exp[step_is_done(config, step, exp)])
+}
+
 step_is_next_not_done <- function(config, step, experiment
                                   ) {
   if (step == "fetch") stop("fetch should use step_is_done directly!")
@@ -118,26 +129,43 @@ set_flag <- function(config, step, experiment, value = TRUE) {
 #' Set flags for all pipelines specified
 #'
 #' Set all flags as done for all experiments in pipeline up to and included
-#' the last step in steps
+#' the last step in steps. This will set for all organisms in per pipelines
+#' object. Use set_flag_all_exp if you want organism seperation.
 #' @inheritParams run_pipeline
 #' @param steps, which flags to set to TRUE for given pipeline objects
 #' @return invisible(NULL)
 #' @export
 set_flag_all <- function(config, steps = names(config$flag), pipelines) {
+  exps <- pipelines_names(pipelines)
+  set_flag_all_exp(config, steps = steps, exps)
+  progress_report(pipelines, config, show_stats = FALSE)
+  message("Flag set: Done")
+  return(invisible(NULL))
+}
+
+#' Set flags for all pipeline exp specified
+#'
+#' Set all flags as done for all experiments in pipeline up to and included
+#' the last step in steps. Remember this is exp subset of pipelines!
+#' @inheritParams run_pipeline
+#' @param exps name of experiments (i.e. subsets names of pipelines,
+#'  split by organisms.)
+#' @param steps, which flags to set to TRUE for given exp objects
+#'  (i.e. a subset of pipelines)
+#' @return invisible(NULL)
+#' @export
+set_flag_all_exp <- function(config, steps = names(config$flag), exps) {
   if (length(steps) == 1) {
     if (steps == "all") {
       steps <- names(config$flag)
     }
   }
   if (!all(steps %in% names(config$flag))) stop("Some steps given are not valid steps!")
-  exp <- lapply(pipelines, function(x) lapply(x$organisms, function(o) o$conf["exp"]))
-  exp <- unlist(exp, recursive = FALSE)
-  for (e in exp) {
+
+  for (e in exps) {
     for (step in steps) set_flag(config, step, e, value = TRUE)
   }
   message("Updated flags for pipeline subset:")
-  progress_report(pipelines, config, show_stats = FALSE)
-  message("Flag set: Done")
   return(invisible(NULL))
 }
 
@@ -159,20 +187,34 @@ remove_flag <- function(config, step, experiment, warning = FALSE) {
 #' @return invisible(NULL)
 #' @export
 remove_flag_all <- function(config, steps = names(config$flag), pipelines) {
+  exps <- pipelines_names(pipelines)
+  remove_flag_all_exp(config, steps, exps)
+  progress_report(pipelines, config, show_stats = FALSE)
+  message("Flag remove: Done")
+  return(invisible(NULL))
+}
+
+#' Remove flags for all pipelines specified
+#'
+#' Set all flags specified as not done for all experiments in
+#' for all pipeline objects specified. Remember this is exp subset of pipelines!
+#' @inheritParams set_flag_all_exp
+#' @param steps, which flags to set to FALSE (not done)
+#'  for given exp objects (i.e. a subset of pipelines)
+#' @return invisible(NULL)
+#' @export
+remove_flag_all_exp <- function(config, steps = names(config$flag), exps) {
   if (length(steps) == 1) {
     if (steps == "all") {
       steps <- names(config$flag)
     }
   }
   if (!all(steps %in% names(config$flag))) stop("Some steps given are not valid steps!")
-  exp <- lapply(pipelines, function(x) lapply(x$organisms, function(o) o$conf["exp"]))
-  exp <- unlist(exp, recursive = FALSE)
-  for (e in exp) {
+
+  for (e in exps) {
     for (step in steps) remove_flag(config, step, e)
   }
   message("Removed flags for pipeline subset:")
-  progress_report(pipelines, config, show_stats = FALSE)
-  message("Flag remove: Done")
   return(invisible(NULL))
 }
 

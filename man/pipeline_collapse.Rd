@@ -2,7 +2,8 @@
 % Please edit documentation in R/pipeline_collapse.R
 \name{pipeline_collapse}
 \alias{pipeline_collapse}
-\title{Collapse trimmed single-end reads and move them into "trim/SINGLE"
+\title{Collapse fastq/fasta
+Collapse trimmed single-end fasta/fastq reads and move them into "trim/SINGLE"
 subdirectory. PE reads are moved into "trim/PAIRED" without modification.}
 \usage{
 pipeline_collapse(pipeline, config)
@@ -13,6 +14,7 @@ pipeline_collapse(pipeline, config)
 \item{config}{a pipeline_config object}
 }
 \description{
-Collapse trimmed single-end reads and move them into "trim/SINGLE"
+Collapse fastq/fasta
+Collapse trimmed single-end fasta/fastq reads and move them into "trim/SINGLE"
 subdirectory. PE reads are moved into "trim/PAIRED" without modification.
 }

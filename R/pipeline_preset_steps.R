@@ -154,29 +154,28 @@ pipeline_collection_org <- function(config, pipelines = pipelines_init_all(confi
 #'
 #' Collected
 #' @inheritParams run_pipeline
+#' @param done_experiments named character vector, default:
+#' step_is_done_pipelines(config, "merged_lib", pipelines). Set of experiments to merge
+#' per species.
+#' @param done_organisms which organisms to run merging for, default
+#' unique(names(done_experiments))
 #' @return invisible(NULL)
 #' @export
-pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config)) {
+pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, only_complete_genomes = TRUE,
+                                                                     gene_symbols = FALSE),
+                               done_experiments = step_is_done_pipelines(config, "merged_lib", pipelines),
+                               done_organisms = unique(names(done_experiments))) {
   message("- Merge all samples per organism")
-  names(pipelines) <- NULL
-  exp <- get_experiment_names(pipelines)
-  done_exp <- unlist(lapply(exp, function(e) step_is_done(config, "merged_lib", e)))
 
-  # Merge all per organism
-  done_exp_list <- exp[done_exp]
-  done_organisms <- unique(names(done_exp_list))
   for (org in done_organisms) {
     message("-- Organism: ", org)
-    df_list <- lapply(done_exp_list[names(done_exp_list) == org], function(e)
+    df_list <- lapply(done_experiments[names(done_experiments) == org], function(e)
       read.experiment(e, validate = F)[1,])
     df <- do.call(rbind, df_list)
     # Overwrite default paths to merged
     libtype_df <- libraryTypes(df)
-    if (length(libtype_df) != 1) stop("Only single libtype experiments supported for merging")
-    if (libtype_df == "") stop("Libtype of experiment must be defined!")
-    df@listData$filepath <- file.path(dirname(filepath(df, "default")),
-                                      "pshifted_merged", paste0(libtype_df, ".ofst"))
-    df@listData$rep <- seq(nrow(df))
+    df <- update_path_per_sample(df, libtype)
+
     exp_name <- organism_merged_exp_name(org)
     if (libtype_df != "RFP") exp_name <- paste0(exp_name, "_", libtype_df)
     out_dir <- file.path(config$config["bam"], exp_name)

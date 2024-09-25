@@ -213,3 +213,12 @@ reference_folder_name <- function(organism, full = FALSE,
   if (full) res <- file.path(full_path, res)
   return(res)
 }
+
+update_path_per_sample <- function(df, libtype_df, rel_dir = "pshifted_merged", ext = ".ofst") {
+  if (length(libtype_df) != 1) stop("Only single libtype experiments supported for merging")
+  if (libtype_df == "") stop("Libtype of experiment must be defined!")
+  df@listData$filepath <- file.path(dirname(filepath(df, "default")),
+                                    rel_dir, paste0(libtype_df, ext))
+  df@listData$rep <- seq(nrow(df))
+  return(df)
+}

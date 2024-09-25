@@ -1,4 +1,5 @@
-#' Collapse trimmed single-end reads and move them into "trim/SINGLE"
+#' Collapse fastq/fasta
+#' Collapse trimmed single-end fasta/fastq reads and move them into "trim/SINGLE"
 #' subdirectory. PE reads are moved into "trim/PAIRED" without modification.
 #' @param pipeline a pipeline object, subset of init_pipelines output
 #' @param config a pipeline_config object
@@ -12,6 +13,7 @@ pipeline_collapse <- function(pipeline, config) {
                            LibraryLayout == "PAIRED"]
     runs_single <- study[ScientificName == organism &
                            LibraryLayout != "PAIRED"]
+    all_files <- c()
     any_paired_libs <- nrow(runs_paired) > 0
     if (any_paired_libs) {
       message("Paired end data is now collapsed into 1 file,
@@ -19,12 +21,12 @@ pipeline_collapse <- function(pipeline, config) {
       outdir <- fs::path(trimmed_dir, runs_paired[1]$LibraryLayout)
       fs::dir_create(outdir)
       files <- run_files_organizer(runs_paired, trimmed_dir)
+      all_files <- c(all_files, files)
       BiocParallel::bplapply(files, function(filename) {
         ORFik::collapse.fastq(
           filename, outdir,
           compress = TRUE
         )
-        if (config$delete_trimmed_files) fs::file_delete(filename)
       }, BPPARAM = BiocParallel::MulticoreParam(16))
       # Read in and reverse second file, then merge back into 1.
       filenames <- file.path(outdir, paste0("collapsed_", basename(files)))
@@ -38,7 +40,6 @@ pipeline_collapse <- function(pipeline, config) {
         b <- readDNAStringSet(second_file, format = "fasta", use.names = TRUE)
         b <- reverseComplement(b)
         writeXStringSet(c(a,b), first_file, format = "fasta")
-        fs::file_delete(second_file)
       }
     }
 
@@ -47,15 +48,15 @@ pipeline_collapse <- function(pipeline, config) {
       outdir <- fs::path(trimmed_dir, "SINGLE")
       fs::dir_create(outdir)
       files <- run_files_organizer(runs_single, trimmed_dir)
+      all_files <- c(all_files, files)
       BiocParallel::bplapply(files, function(filename) {
         ORFik::collapse.fastq(
           filename, outdir,
           compress = TRUE
         )
-        if (config$delete_trimmed_files) fs::file_delete(filename)
       }, BPPARAM = BiocParallel::MulticoreParam(16))
     }
-
+    if (config$delete_trimmed_files) file.remove(all_files)
     set_flag(config, "collapsed", conf["exp"])
   }
 }

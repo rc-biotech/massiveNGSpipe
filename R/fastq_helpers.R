@@ -1,5 +1,6 @@
 #' Helper function to find the main adapter in a .fastq.gz file
-#' @param file full path to fastq file to check with qc
+#' @param file full path to fastq file to check with qc. Supports both
+#' ".gz" and non compressed.
 #' @return adapter candidates
 fastqc_adapters_info <- function(file) {
   message("- Auto detecting adapter with fastQC candidate list:")
@@ -15,11 +16,11 @@ fastqc_adapters_info <- function(file) {
       list(name = "SOLID Small RNA Adapter", value = "CGCCTTGGCCGT"),
       list(name = "Ingolia 2012 adapter", value = "CTGTAGGCACCATCAAT"),
       list(name = "Illumina Uni. Adapter var2", value = "ATCGTAGATCGGAAG"),
+      list(name = "polyA", value = "AAAAAAAAAA"),
       list(name = "Hakon 2", value = "CACTCGGGCACCAAGGA"),
       list(name = "Hakon 3", value = "GTGTCAGTCACTTCCAGCGG"),
       list(name = "Hakon 4", value = "TGTAGGCACCATC"),
-      list(name = "Hakon 5", value = "AAAAAAAAAA"),
-      list(name = "Hakon 6", value = "TCGTATGCCGTCTTCTGCTTG")
+      list(name = "Hakon 5", value = "TCGTATGCCGTCTTCTGCTTG")
     ))
     data.table::fwrite(
       candidates,

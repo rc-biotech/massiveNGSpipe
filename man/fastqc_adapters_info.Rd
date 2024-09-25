@@ -7,7 +7,8 @@
 fastqc_adapters_info(file)
 }
 \arguments{
-\item{file}{full path to fastq file to check with qc}
+\item{file}{full path to fastq file to check with qc. Supports both
+".gz" and non compressed.}
 }
 \value{
 adapter candidates

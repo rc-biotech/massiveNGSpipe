@@ -94,54 +94,73 @@ curate_metadata <- function(accessions, config, organisms = "all",
 #' Download all metadata for all accessions
 #' @inheritParams curate_metadata
 #' @param force logical, default FALSE. Force redownload of all, if something failed
-#' @param max_attempts numeric, default 7. How many attempts to download beforing
+#' @param max_attempts numeric, default 7. How many attempts to download a specific study beforing
 #' failing? This call flood SRA with calls, so set it higher if you use a lot
-#' of samples.
+#' of samples. Will use a random increasing wait time between study attempts.
+#' @param max_attempts_loop numeric, default 7. How many attempts for full download loop beforing
+#' failing? This call flood SRA with calls, so set it higher if you use a lot
+#' of studies. Will use a random increasing wait time between study attempts. See log files for more error info.
 #' @return a data.table of all metadata for all accessions
-pipeline_metadata <- function(accessions, config, force = FALSE, max_attempts = 7) {
+pipeline_metadata <- function(accessions, config, force = FALSE, max_attempts = 7, max_attempts_loop = 1) {
+  message("- Metadata downloading...")
   accessions <- gsub(" $|^ ", "", accessions)
-  all_SRA_metadata <- bplapply(accessions, function(study_accession, config, force) {
-    # Avoid requirest overflow and still keep it fast
-    overflooding_error <- "Error in open.connection(x, \"rb\") : HTTP error 429.\n"
-    attempts <- 0
-    save_file <- file.path(config[["metadata"]], paste0("SraRunInfo_", study_accession, ".csv"))
-    while(attempts < max_attempts) {
-      if ((attempts > 0 | force) & file.exists(save_file)) file.remove(save_file)
-      res <- try(
-        cbind(study_accession = study_accession,
-              ORFik::download.SRA.metadata(study_accession, abstract = "no",
-                                           outdir = config[["metadata"]], auto.detect = TRUE))
-      , silent = TRUE)
-      if (!is(res, "try-error")) {
-        break
-      } else attempts <- attempts + 1
+  loop_attempts <- 0
+  while (loop_attempts < max_attempts_loop) {
+    if (loop_attempts > 0) {
+      message("Unstable connection / SRA server is haltig queries (loop attempt: ", loop_attempts, ")")
+      Sys.sleep(loop_attempts * 1.5)
     }
-    print(attempts)
-    if (is(res, "try-error")) {
-      if (res == overflooding_error) {
-        warnings("Network overflow with ", attempts, " for ", study_accession)
-      } else {
-        warnings("Failed to access study:", study_accession)
-        message("Here is error")
-        print(res)
+    all_SRA_metadata <- bplapply(accessions, function(study_accession, config, force) {
+      # Avoid requirest overflow and still keep it fast
+      overflooding_error <- "Error in open.connection(x, \"rb\") : HTTP error 429.\n"
+      attempts <- 0
+      save_file <- file.path(config[["metadata"]], paste0("SraRunInfo_", study_accession, ".csv"))
+      while(attempts < max_attempts) {
+        if ((attempts > 0 | force) & file.exists(save_file)) file.remove(save_file)
+        if ((force | !file.exists(save_file))) Sys.sleep((attempts * 0.5) + runif(1, min = 0.1, max = 1))
+        res <- try(
+          cbind(study_accession = study_accession,
+                ORFik::download.SRA.metadata(study_accession, abstract = "no",
+                                             outdir = config[["metadata"]], auto.detect = TRUE))
+          , silent = TRUE)
+        if (!is(res, "try-error")) {
+          break
+        } else attempts <- attempts + 1
       }
-      return(data.table())
-    }
-    safety_check <- c("LIBRARYTYPE", "REPLICATE", "STAGE", "CONDITION",
-                      "INHIBITOR")
-    are_there <- safety_check %in% colnames(res)
-    if (!all(are_there)) {
-      check_add <- data.table(LIBRARYTYPE = "", REPLICATE = "", STAGE = "",
-                              CONDITION = "", INHIBITOR = "")
-      res <- cbind(res, check_add[, ..are_there])
-    }
-    return(res)
+      print(attempts)
+      if (is(res, "try-error")) {
+        if (res == overflooding_error) {
+          warnings("Network overflow with ", attempts, " for ", study_accession)
+        } else {
+          warnings("Failed to access study:", study_accession)
+          message("Here is error")
+          print(res)
+        }
+        return(data.table())
+      }
+      safety_check <- c("LIBRARYTYPE", "REPLICATE", "STAGE", "CONDITION",
+                        "INHIBITOR")
+      are_there <- safety_check %in% colnames(res)
+      if (!all(are_there)) {
+        check_add <- data.table(LIBRARYTYPE = "", REPLICATE = "", STAGE = "",
+                                CONDITION = "", INHIBITOR = "")
+        res <- cbind(res, check_add[, ..are_there])
+      }
+      return(res)
+    }, config = config, force = force)
+    loop_attempts <- loop_attempts + 1
   }
-    , config = config, force = force)
-  if (any(lengths(all_SRA_metadata) == 0))
-    stop("Unstable connection, try again later!")
+
+
+  if (any(lengths(all_SRA_metadata) == 0)) {
+    message("Studies with download errors:")
+    print(accessions[lengths(all_SRA_metadata) == 0])
+    stop("Unstable connection / SRA server is haltig queries, try again later!")
+  }
+
   if (any(length(table(lengths(all_SRA_metadata))) != 1))
     stop("Malformed data columns, use 'force' = TRUE")
+  message("-- Metadata download done")
   return(rbindlist(all_SRA_metadata))
 }
 
@@ -540,26 +559,42 @@ export_sucessful_metadata <- function(files, libtypes, output_file,
   return(invisible(NULL))
 }
 
-fill_with_random <- function(table, libtypes_keep = "all", checked_by = "auto") {
-  if (libtypes_keep == "all") libtypes_keep <- unique(table$LIBRARYTYPE)
-  table
-  nrow(table[LIBRARYTYPE == "RFP" & is.na(KEEP),])
-  table[LIBRARYTYPE == "RFP" & is.na(KEEP), KEEP := TRUE]
-  table[LIBRARYTYPE == "RFP" & is.na(KEEP), CHECKED := "auto"]
-  table[LIBRARYTYPE == "RFP" & KEEP == TRUE & CHECKED == "auto",]
+fill_with_random <- function(table_in, config, libtypes_keep = "all", checked_by = "auto",
+                             start_auto_at_frac = max(suppressWarnings(max(as.integer(gsub("^auto_", "", grep("^auto_", table$FRACTION, value = TRUE)))) + 1), 1),
+                             start_auto_at_time = max(suppressWarnings(max(as.integer(gsub("^auto_", "", grep("^auto_", table$TIMEPOINT, value = TRUE)))) + 1), 1)) {
+  if (libtypes_keep == "all") libtypes_keep <- unique(table_in$LIBRARYTYPE)
+  table <- copy(table_in)
+  message("Samples that will be auto-named: ", nrow(table[LIBRARYTYPE %in% libtypes_keep & is.na(KEEP),]))
+  table[LIBRARYTYPE %in% libtypes_keep & is.na(KEEP), CHECKED := "auto"]
+  table[LIBRARYTYPE %in% libtypes_keep & is.na(KEEP), KEEP := TRUE]
+
+
   table <- metadata_is_valid(table)
   non_unique <- nrow(table[KEEP == TRUE & not_unique,]); non_unique
 
   if (non_unique > 0)
-    table[LIBRARYTYPE == "RFP" & CHECKED == "auto" & not_unique & is.na(FRACTION), FRACTION := paste0("auto_", seq(.N) + 4010)]
+    suppressWarnings(table[LIBRARYTYPE %in% libtypes_keep & CHECKED == "auto" & not_unique & (is.na(FRACTION) || FRACTION == ""), FRACTION := paste0("auto_", seq(.N) + start_auto_at_frac)])
   table <- metadata_is_valid(table)
   non_unique <- nrow(table[KEEP == TRUE & not_unique,]); non_unique
   if (non_unique > 0)
-    table[LIBRARYTYPE == "RFP" & CHECKED == "auto" & not_unique & is.na(TIMEPOINT), TIMEPOINT := paste0("auto_", seq(.N) + 100)]
-  # fwrite(table, config$temp_metadata)
-  googlesheets4::write_sheet(read.csv(config$temp_metadata),
-                             ss = config$google_url,
-                             sheet = 1)
+    suppressWarnings(table[LIBRARYTYPE == "RFP" & CHECKED == "auto" & not_unique & (is.na(TIMEPOINT) || TIMEPOINT == ""), TIMEPOINT := paste0("auto_", seq(.N) + start_auto_at_time)])
+
+  table <- metadata_is_valid(table)
+  non_unique <- nrow(table[KEEP == TRUE & not_unique,]); non_unique
+  if (non_unique > 0) warning("Some samples could not be auto named, check output and fix manually!")
+
+  if (!is.null(config)) {
+    message("Saving results and uploading")
+    local_google_copy <- file.path(config$project, "temp_google_local.csv")
+    fwrite(table, config$temp_metadata)
+    fwrite(table, local_google_copy)
+    if (!is.null(config$google_url)) {
+      googlesheets4::write_sheet(read.csv(local_google_copy),
+                                 ss = config$google_url,
+                                 sheet = 1)
+    }
+  }
+
   return(table)
 }
 
