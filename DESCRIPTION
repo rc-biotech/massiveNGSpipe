@@ -34,4 +34,6 @@ Imports:
 Remotes:
     Roleren/ORFik,
     Roleren/biomartr,
-    m-swirski/RiboCrypt
+    m-swirski/RiboCrypt,
+    Bioconductor/BiocFileCache
+

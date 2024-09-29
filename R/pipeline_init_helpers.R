@@ -13,7 +13,7 @@ pipeline_init_all <- function(config, complete_metadata = config$complete_metada
 
   if (only_complete_genomes) {
     message("- Subsetting to only complete genomes")
-    complete_genomes <- list.genomes()$name
+    complete_genomes <- list.genomes(reference.folder = config$config["ref"])$name
     total_genomes <- length(unique(final_list$ScientificName))
     total_samples <- nrow(final_list)
     final_list <- final_list[ScientificName %in% gsub("_", " ", (stringr::str_to_title(complete_genomes))), ]
