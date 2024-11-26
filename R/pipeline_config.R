@@ -3,7 +3,9 @@
 #' Set up all paths, functions to be run and flag directories.
 #' Also adds parallel processing settings and google integration.
 #' @inheritParams libtype_flags
-#' @param project_dir where will specific pipeline outputs be put
+#' @param project_dir where will specific pipeline outputs be put. Default:
+#'  file.path(dirname(config)[1], "NGS_pipeline").
+#'  If you need seperat pipelines, please use different locations.
 #' @param config path, default \code{ORFik::config()}, where will
 #' fastq, bam, references and ORFik experiments go
 #' @param complete_metadata path, default: file.path(project_dir, "FINAL_LIST.csv")
@@ -38,8 +40,8 @@
 #' @param delete_collapsed_files logical, default: mode == "online".
 #' If TRUE deletes the collapsed fasta files.
 #' @param keep_contaminants logical, default FALSE. Do not keep contaminant aligned reads,
-#'  else saved in contamination dir.
-#' @param keep.unaligned.genome logical, default FALSE. Do not keep contaminant aligned reads,
+#'  if TRUE they are saved in contamination dir. Ignored if "contam" is not in flags to use.
+#' @param keep_unaligned_genome logical, default FALSE. Do not keep contaminant aligned reads,
 #'  else saved in contamination dir.
 #' @param parallel_conf a bpoptions object, default:
 #' \code{bpoptions(log =TRUE, stop.on.error = TRUE)}
@@ -55,16 +57,17 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             temp_metadata = file.path(project_dir, "next_round_manual.csv"),
                             google_url = default_sheets(project_dir),
                             preset = "Ribo-seq",
-                            flags = pipeline_flags(project_dir, mode, preset),
+                            flags = pipeline_flags(project_dir, mode, preset, contam),
                             flag_steps = flag_grouping(flags),
                             pipeline_steps = lapply(names(flag_steps),
                                                     function(x) get(x, mode = "function")),
                             mode = c("online", "local")[1],
+                            contam = FALSE,
                             delete_raw_files = mode == "online",
                             delete_trimmed_files = mode == "online",
                             delete_collapsed_files = mode == "online",
                             keep_contaminants = FALSE,
-                            keep.unaligned.genome = FALSE,
+                            keep_unaligned_genome = FALSE,
                             parallel_conf = bpoptions(log =TRUE,
                                                       stop.on.error = TRUE),
                             logdir = file.path(project_dir, "log_pipeline"),
@@ -73,7 +76,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
   stopifnot(mode %in% c("online", "local"))
   stopifnot(is.logical(delete_raw_files) & is.logical(delete_trimmed_files) &
             is.logical(delete_collapsed_files) & is.logical(keep_contaminants) &
-            is.logical(keep.unaligned.genome))
+            is.logical(keep_unaligned_genome))
   stopifnot(is(pipeline_steps, "list"))
   if (preset == "empty") message("Using empty preset, now add your steps: using add_step_to_pipeline()")
   if (preset != "empty") stopifnot(is(pipeline_steps[[1]], "function"))
@@ -102,7 +105,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               delete_trimmed_files = delete_trimmed_files,
               delete_collapsed_files = delete_collapsed_files,
               keep_contaminants = keep_contaminants,
-              keep.unaligned.genome = keep.unaligned.genome,
+              keep.unaligned.genome = keep_unaligned_genome,
               preset = preset,
               parallel_conf = parallel_conf, BPPARAM = BPPARAM))
 }

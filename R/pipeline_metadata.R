@@ -102,7 +102,8 @@ curate_metadata <- function(accessions, config, organisms = "all",
 #' of studies. Will use a random increasing wait time between study attempts. See log files for more error info.
 #' @return a data.table of all metadata for all accessions
 pipeline_metadata <- function(accessions, config, force = FALSE, max_attempts = 7, max_attempts_loop = 1) {
-  message("- Metadata downloading...")
+  do <- ifelse(config$mode == "online", "downloading", "processing")
+  message("- Metadata ", do, "...")
   accessions <- gsub(" $|^ ", "", accessions)
   loop_attempts <- 0
   while (loop_attempts < max_attempts_loop) {
@@ -160,7 +161,7 @@ pipeline_metadata <- function(accessions, config, force = FALSE, max_attempts = 
 
   if (any(length(table(lengths(all_SRA_metadata))) != 1))
     stop("Malformed data columns, use 'force' = TRUE")
-  message("-- Metadata download done")
+  message("-- Metadata ", do, " done")
   return(rbindlist(all_SRA_metadata))
 }
 
@@ -315,8 +316,22 @@ pipeline_validate_metadata <- function(dt, config,
   files[LIBRARYTYPE == "RPF", LIBRARYTYPE := "RFP"] # Force RFP naming for safety!
   # files <- files[KEEP %in% c(TRUE, NA),]; nrow(files)
   # files <- files[LIBRARYTYPE %in% c(libtypes),]
-  if (length(unique(files$Run)) != length(files$Run)) {
+  if (config$mode == "local") {
+    duplicate_stats <- files[,sum(duplicated(Run)), by = .(study_accession, ScientificName)]
+    duplicates <- sum(duplicate_stats$V1)
+    if (duplicates > 0) {
+      message("You have duplicated runs in you metadata!")
+      message("For mode = local, Runs are presumed to be file paths and should
+             therefor never be duplicated within the (study, organism) pair!")
+      print(duplicate_stats)
+      fwrite(files, next_round_file)
+      return(FALSE)
+    }
+  }
+  if (config$mode == "online" && length(unique(files$Run)) != length(files$Run)) {
     message("You have duplicated runs in you metadata!")
+    message("For mode = online, Runs are presumed to be SRR numbers and should
+             therefor never be duplicated!")
     print(files[duplicated(files$Run),]$Run)
     fwrite(files, next_round_file)
     return(FALSE)
@@ -508,7 +523,8 @@ add_backup <- function(dt, backup_file) {
   if (file.exists(backup_file)) {
     message("Appending new studies from current input to the backup file")
     backup <- fread(backup_file)
-    new_backup <- rbind(backup, dt[!(study_accession %in% backup$study_accession),])
+    new_backup <- rbindlist(list(backup,
+                                 dt[!(study_accession %in% backup$study_accession),]), fill = TRUE)
     fwrite(new_backup, backup_file)
   } else fwrite(dt, backup_file)
   return(invisible(NULL))
@@ -602,8 +618,8 @@ fill_with_random <- function(table_in, config, libtypes_keep = "all", checked_by
 #' Create template study csv info
 #' @param dir a directory with fast files
 #'  (fasta or fastq, uncompressed/compressed)
-#' @param name a basis for directory name. The relative path without
-#' the -organism part.
+#' @param exp_name experiment name, a prefix for directory name.
+#'  The relative path without the -organism part.
 #' @param files character vector of full paths,
 #'  default: \code{list.files(dir, pattern = "\\.fast.*", full.names = TRUE)}
 #' @param organism Scientific latin name of organism, give single if all
@@ -620,13 +636,14 @@ fill_with_random <- function(table_in, config, libtypes_keep = "all", checked_by
 #' RUN: The sample name (For paired end, still 1 row, with basename of sample)\cr
 #' ...
 #' @export
-local_study_csv <- function(dir, name, files = list.files(dir, pattern = "\\.fast.*", full.names = TRUE),
+local_study_csv <- function(dir, exp_name, files = list.files(dir, pattern = "\\.fast.*", full.names = TRUE),
                             organism, sample_title, paired = FALSE,
                             Model = "Illumina Genome Analyzer",
                             Platform = "ILLUMINA",
                             LibraryName = "",
                             LibraryStrategy = "RNA-Seq",
                             LibrarySource = "TRANSCRIPTOMIC",
+                            avgLength = NA,
                             SampleName = c(""), sample_source = c(""),
                             MONTH = substr(Sys.time(), 6,7),
                             YEAR = substr(Sys.time(), 1,4),
@@ -637,16 +654,19 @@ local_study_csv <- function(dir, name, files = list.files(dir, pattern = "\\.fas
   message("total files: ", length(files))
   stopifnot(length(files) > 0)
   stopifnot(all(paired %in% c("SINGLE", "PAIRED")))
+  if (is.character(avgLength) && length(avgLength) == 1 && avgLength == "auto") {
+    avgLength <- sapply(files, function(file) round(mean(width(readDNAStringSet(file, format = c("fasta", "fastq")[1 + grepl("\\.fastq|\\.fq", file)], nrec = 100)))))
+  }
 
   file_basenames <- gsub("\\.fast.*", "", basename(files))
   file_basenames_split <- file_basenames
   file_basenames_unique <- unique(gsub("_\\.[1-9]\\.fast", "", file_basenames))
   size_MB <- floor(file.size(files)/1024^2)
   dt_temp <- data.table(Run = file_basenames_unique,
-                        spots = NA, bases = NA, avgLength = NA,
+                        spots = NA, bases = NA, avgLength = avgLength,
                         size_MB, LibraryName, LibraryStrategy,
                         LibrarySource, LibraryLayout = paired,
-                        Submission = name,
+                        Submission = exp_name,
                         Platform, Model, ScientificName = organism,
                         SampleName, MONTH, YEAR, AUTHOR, sample_source,
                         sample_title)

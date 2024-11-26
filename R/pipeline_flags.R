@@ -5,8 +5,10 @@
 #'  Alternatives: c("Ribo-seq", "RNA-seq", "disome", "empty")
 #' @param mode either of c("online", "local"). Local will disable some steps
 #' like the fetch step (as data is already presumed to exist locally etc)
+#' @param contam logical, FALSE, do contamint removal, using a seperat made
+#' STAR index during genome preparation step.
 #' @return a character vector with names being the grouping in functions
-libtype_flags <- function(preset, mode = "online") {
+libtype_flags <- function(preset, mode = "online", contam = FALSE) {
   valid_presets <- c("Ribo-seq", "RNA-seq", "disome", "empty")
 
   download_flags <- if (mode == "online") {
@@ -16,6 +18,7 @@ libtype_flags <- function(preset, mode = "online") {
   }
   trim_flags <- c(trim_collapse = "trim", trim_collapse = "collapsed")
   align_flags <- c(align_clean = "aligned", align_clean = "cleanbam")
+  if (contam) align_flags <- c(align_clean = "contam", align_flags)
   exp_flags <- c(exp_ofst = "exp", exp_ofst = "ofst")
   merge_flags <- c(merge_study = "merged_lib")
 
@@ -74,7 +77,8 @@ all_substeps_done_all <- function(config, steps, exps) {
 #' @export
 pipeline_flags <- function(project_dir, mode = c("online", "local")[1],
                            preset,
-                           flag_names = libtype_flags(preset, mode),
+                           flag_names = libtype_flags(preset, mode, contam),
+                           contam = FALSE,
                            create_dirs = TRUE
                            ) {
   if (preset == "empty") return(character())

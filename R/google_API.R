@@ -76,3 +76,73 @@ download_fastq_google_drive <- function(drive_url = "https://drive.google.com/dr
   print(Sys.time() - start)
   return(invisible(NULL))
 }
+
+
+#' Export ggplots to multiple platforms
+#'
+#' Supports: Disc, google drive and discord
+#' @param plot the ggplot
+#' @param file_prefix the name of plot without the file extension
+#' @param formats c("jpg", "svg")
+#' @param send_to_google_drive = FALSE,
+#' @param send_to_discord = FALSE
+#' @param width = 8
+#' @param height = 6
+#' @param dpi = 600
+#' @param discord_connection = discord_connection_default_cached()
+#' @return invisible(NULL)
+#' @export
+plot_all_versions <- function(plot, file_prefix, formats = c("jpg", "svg"), send_to_google_drive = FALSE,
+                              send_to_discord = FALSE, width = 8, height = 6, dpi = 600,
+                              discord_connection = discord_connection_default_cached(),
+                              google_drive_dir = google_drive_dir_links()) {
+  if (send_to_discord){
+    if (is.null(discord_connection[[1]])) stop("Must have discord connection set!")
+  }
+  if (send_to_google_drive && is.null(google_drive_dir)) stop("Must have google drive folder connection set!")
+  stopifnot(length(formats) > 0)
+
+  for (f in formats) {
+    message(f)
+    file <- paste0(file_prefix, ".", f)
+    ggsave(file, plot = plot,
+           dpi = dpi, height = height, width = width)
+    if (send_to_google_drive) {
+      googledrive::drive_upload(file, google_drive_dir, name = basename(file))
+    }
+    if (send_to_discord) {
+      discordr::send_webhook_file(file, conn = discord_connection)
+    }
+  }
+  return(invisible(NULL))
+}
+
+#' Get discord default webhook
+#' @param channel_id numeric, id of channel to use.
+#' @param connection_file character, file path to cached webhooks
+#' @param verbose logical, FALSE. If TRUE, will display discordr info.
+#' @return list of size 4, a webhook object
+#' @import discordr
+discord_connection_default_cached <- function(channel_id = 1,
+                                              connection_file = "~/livemount/.cache/discordr/r_to_discord_config",
+                                              verbose = FALSE) {
+  if (is.null(getOption("default_discordr_connection"))) {
+    discordr::set_default_discord_connection(discordr::import_discord_connections(connection_file)[[channel_id]])}
+  else {getOption("default_discordr_connection")}
+}
+
+google_drive_dir_links <- function(id = 1, id_file = "~/livemount/.cache/gargle/drive_folder_links") {
+  dt <- fread(id_file)
+  ids <- id
+  if (is.numeric(id)) {
+    if (!(id %in% seq_along(dt$id))) stop("numeric id > max ids")
+    return(dt[ids,]$link)
+  }
+  if (is.character(id)) {
+    if (!(id %in% dt$id)) {
+      print(dt$id)
+      stop("ID given is not in list, valid ids given above")
+      return(dt[id == ids,])
+    }
+  } else stop("id must be numeric (index) or character (id name)!")
+}

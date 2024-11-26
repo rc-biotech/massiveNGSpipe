@@ -7,7 +7,9 @@
 default_sheets(project_dir, id = 1, sheet_name = basename(project_dir))
 }
 \arguments{
-\item{project_dir}{where will specific pipeline outputs be put}
+\item{project_dir}{where will specific pipeline outputs be put. Default:
+file.path(dirname(config)\link{1}, "NGS_pipeline").
+If you need seperat pipelines, please use different locations.}
 
 \item{id}{numeric, the row index of id. Default is 1.}
 

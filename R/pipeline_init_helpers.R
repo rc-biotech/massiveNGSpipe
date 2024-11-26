@@ -201,6 +201,9 @@ get_symbols <- function(txdb, path = file.path(dirname(ORFik:::getGtfPathFromTxd
 organism_merged_exp_name <- function(organisms) {
   paste0("all_merged-", gsub(" ", "_", organisms))
 }
+organism_merged_exp_name <- function(organisms) {
+  paste0(organism_merged_exp_name(organisms), "_modalities")
+}
 
 organism_collection_exp_name <- function(organisms) {
   paste0("all_samples-", gsub(" ", "_", organisms))

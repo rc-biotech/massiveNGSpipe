@@ -6,8 +6,9 @@
 \usage{
 pipeline_collection_org(
   config,
-  pipelines = pipelines_init_all(config, gene_symbols = FALSE, only_complete_genomes =
-    TRUE)
+  pipelines = pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes =
+    TRUE),
+  path_suffix = ""
 )
 }
 \arguments{
@@ -15,6 +16,8 @@ pipeline_collection_org(
 NGS pipeline}
 
 \item{pipelines}{list, output of pipeline_init_all}
+
+\item{path_suffix}{character, default "". Add suffix to saved collection name, like a date to seperate version.}
 }
 \value{
 invisible(NULL)

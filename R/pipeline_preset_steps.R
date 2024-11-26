@@ -26,8 +26,12 @@ pipe_trim_collapse <- function(pipelines, config) {
 
 # Pipeline: trim -> bam files
 pipe_align_clean <- function(pipelines, config) {
+  do_contamint_removal <- "contam" %in% names(config$flag)
   for (pipeline in pipelines) {
     try <- try({
+      if (do_contamint_removal)
+        pipeline_align_contaminants(pipeline, config)
+
       pipeline_align(pipeline,    config)
       pipeline_cleanup(pipeline,  config)
     })
@@ -91,9 +95,11 @@ pipe_convert <- function(pipelines, config) {
 
 #' Create the superset collection of all samples per organism
 #' @inheritParams run_pipeline
+#' @param path_suffix character, default "". Add suffix to saved collection name, like a date to seperate version.
 #' @return invisible(NULL)
 #' @export
-pipeline_collection_org <- function(config, pipelines = pipelines_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE)) {
+pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE),
+                                    path_suffix = "") {
   message("- Collection of all samples per organism")
   names(pipelines) <- NULL
   exp <- get_experiment_names(pipelines)
@@ -114,6 +120,7 @@ pipeline_collection_org <- function(config, pipelines = pipelines_init_all(confi
     if (libtype_df == "") stop("Libtype of experiment must be defined!")
     exp_name <- organism_collection_exp_name(org)
     if (libtype_df != "RFP") exp_name <- paste0(exp_name, "_", libtype_df)
+    exp_name <- paste0(exp_name, path_suffix)
     out_dir <- file.path(config$config["bam"], exp_name)
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
     fraction <- df$fraction
@@ -132,8 +139,7 @@ pipeline_collection_org <- function(config, pipelines = pipelines_init_all(confi
                       files = df$filepath, result_folder = out_dir)
 
     df <- read.experiment(exp_name, output.env = new.env())
-    rel_dir <- "QC_STATS"
-    count_folder <- file.path(out_dir, rel_dir)
+    count_folder <- QCfolder(df)
     dir.create(count_folder, recursive = TRUE, showWarnings = FALSE)
     for (region in c("mrna", "cds", "leaders", "trailers")) {
       message("--- ", region)
@@ -172,6 +178,7 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
     df_list <- lapply(done_experiments[names(done_experiments) == org], function(e)
       read.experiment(e, validate = F)[1,])
     df <- do.call(rbind, df_list)
+    df_ref <- df[1,]
     # Overwrite default paths to merged
     libtype_df <- libraryTypes(df)
     df <- update_path_per_sample(df, libtype)
@@ -180,28 +187,51 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
     if (libtype_df != "RFP") exp_name <- paste0(exp_name, "_", libtype_df)
     out_dir <- file.path(config$config["bam"], exp_name)
     ORFik::mergeLibs(df, out_dir, "all", "default", FALSE)
-    create.experiment(out_dir, exper = exp_name,
-                      txdb = df@txdb,
-                      libtype = libtype_df,  fa = df@fafile, organism = org)
-    df <- read.experiment(exp_name, output.env = new.env())
-    convert_to_covRleList(df)
-    if (libtype_df == "RFP") {
-      message("- Bigwig method: ORFik (5' ends)")
-      convert_to_bigWig(df)
-    } else {
-      message("- Bigwig method: full read")
-      dir <- file.path(libFolder(df), "bigwig")
-      dir.create(dir, showWarnings = FALSE)
-      bw_files <- file.path(dir, c("all_forward.bigWig", "all_reverse.bigWig"))
-      covrle <- fimport(filepath(df, "cov"))
-      message("-- Bigwig forward")
-      rtracklayer::export.bw(object = f(covrle), bw_files[1])
-      message("-- Bigwig reverse")
-      rtracklayer::export.bw(object = r(covrle), bw_files[2])
-    }
 
-    ORFik::countTable_regions(df, lib.type = "pshifted", forceRemake = TRUE)
+    make_additional_formats(df[1,], exp_name, out_dir)
   }
+  return(invisible(NULL))
+}
+
+#' Make additional formats for an experiment
+#'
+#' Creates a new experiment and new file formats.
+#' This is used for custom merge experiments mostly like all samples
+#' per organism.
+#' @param df_ref an ORFik experiment with only 1 libtype, giving info for new.
+#' @param exp_name name of experiment to be made
+#' @param out_dir_exp folder path, where study files are found.
+#' @return invisible(NULL)
+#' @export
+make_additional_formats <- function(df_ref, exp_name, out_dir_exp) {
+  message(exp_name)
+  stopifnot(is(df_ref, "experiment"))
+
+  libtype_df_ref <- libraryTypes(df_ref)
+  stopifnot(length(libtype_df_ref) == 1)
+  create.experiment(out_dir_exp, exper = exp_name,
+                    txdb = df_ref@txdb,
+                    libtype = libtype_df_ref,  fa = df_ref@fafile,
+                    organism = organism(df_ref))
+  df <- read.experiment(exp_name, output.env = new.env())
+
+  convert_to_covRleList(df)
+  if (libtype_df_ref == "RFP") {
+    message("- Bigwig method: ORFik (5' ends)")
+    convert_to_bigWig(df, in_files = filepath(df, "cov"))
+  } else {
+    message("- Bigwig method: full read")
+    dir <- file.path(libFolder(df), "bigwig")
+    dir.create(dir, showWarnings = FALSE)
+    bw_files <- file.path(dir, c("all_forward.bigWig", "all_reverse.bigWig"))
+    covrle <- fimport(filepath(df, "cov"))
+    message("-- Bigwig forward")
+    rtracklayer::export.bw(object = f(covrle), bw_files[1])
+    message("-- Bigwig reverse")
+    rtracklayer::export.bw(object = r(covrle), bw_files[2])
+  }
+
+  ORFik::countTable_regions(df, lib.type = "pshifted", forceRemake = TRUE)
   return(invisible(NULL))
 }
 

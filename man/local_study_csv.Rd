@@ -6,7 +6,7 @@
 \usage{
 local_study_csv(
   dir,
-  name,
+  exp_name,
   files = list.files(dir, pattern = "\\\\.fast.*", full.names = TRUE),
   organism,
   sample_title,
@@ -16,6 +16,7 @@ local_study_csv(
   LibraryName = "",
   LibraryStrategy = "RNA-Seq",
   LibrarySource = "TRANSCRIPTOMIC",
+  avgLength = NA,
   SampleName = c(""),
   sample_source = c(""),
   MONTH = substr(Sys.time(), 6, 7),
@@ -27,8 +28,8 @@ local_study_csv(
 \item{dir}{a directory with fast files
 (fasta or fastq, uncompressed/compressed)}
 
-\item{name}{a basis for directory name. The relative path without
-the -organism part.}
+\item{exp_name}{experiment name, a prefix for directory name.
+The relative path without the -organism part.}
 
 \item{files}{character vector of full paths,
 default: \code{list.files(dir, pattern = "\\.fast.*", full.names = TRUE)}}

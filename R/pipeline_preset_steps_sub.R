@@ -73,79 +73,138 @@ pipeline_trim <- function(pipeline, config) {
 #' @param pipeline a pipeline object
 #' @param config the mNGSp config object
 pipeline_align <- function(pipeline, config) {
-    study <- pipeline$study
-    for (organism in names(pipeline$organisms)) {
-        conf <- pipeline$organisms[[organism]]$conf
-        if (!step_is_next_not_done(config, "aligned", conf["exp"])) next
-        index <- pipeline$organisms[[organism]]$index
-        runs <- study[ScientificName == organism]
-        trimmed_dir <- fs::path(conf["bam"], "trim")
-        output_dir <- conf["bam"]
-        did_collapse <- "collapsed" %in% names(config$flag)
-        keep.contaminants <- config$keep_contaminants
-        keep.unaligned.genome <- config$keep.unaligned.genome
-        if (any(runs$LibraryLayout == "SINGLE")) {
-          input_dir <- ifelse(did_collapse,
-                              fs::path(trimmed_dir, "SINGLE"),
-                              trimmed_dir)
-            ORFik::STAR.align.folder(
-                input.dir = input_dir,
-                output.dir = output_dir, keep.contaminants = keep.contaminants,
-                keep.unaligned.genome = keep.unaligned.genome,
-                index.dir = index, steps = "co-ge", paired.end = FALSE
-            )
-            for (stage in c("contaminants_depletion", "aligned")) {
-                fs::file_move(
-                    fs::path(output_dir, stage, "LOGS"),
-                    fs::path(output_dir, stage, "LOGS_SINGLE")
-                )
-            }
-            for (filename in c("full_process.csv", "runCommand.log")) {
-                fs::file_move(
-                    fs::path(output_dir, filename),
-                    fs::path(output_dir, paste0(
-                        fs::path_ext_remove(filename), "_SINGLE.",
-                        fs::path_ext(filename)
-                    ))
-                )
-            }
-            if (config$delete_collapsed_files)
-              fs::dir_delete(input_dir)
-        }
-        if (any(runs$LibraryLayout == "PAIRED")) {
-          input_dir <- ifelse(did_collapse,
-                              fs::path(trimmed_dir, "PAIRED"),
-                              trimmed_dir)
-            # message("Paired end ignored for now, running collapsed pair mode only!")
-            collapsed_paired_end_mode <- TRUE
-            ORFik::STAR.align.folder(
-                input.dir = input_dir,
-                output.dir = output_dir,
-                index.dir = index, steps = "tr-co-ge",
-                resume = "co", keep.contaminants = keep.contaminants,
-                keep.unaligned.genome = keep.unaligned.genome,
-                paired.end = collapsed_paired_end_mode
-            )
-            # for (stage in c("contaminants_depletion", "aligned")) {
-            #     fs::file_move(
-            #         fs::path(output_dir, stage, "LOGS"),
-            #         fs::path(output_dir, stage, "LOGS_PAIRED")
-            #     )
-            # }
-            # for (filename in c("full_process.csv", "runCommand.log")) {
-            #     fs::file_move(
-            #         fs::path(output_dir, filename),
-            #         fs::path(output_dir, paste0(
-            #             fs::path_ext_remove(filename), "_PAIRED.",
-            #             fs::path_ext(filename)
-            #         ))
-            #     )
-            # }
-            if (config$delete_collapsed_files)
-              fs::dir_delete(input_dir)
-        }
-        set_flag(config, "aligned", conf["exp"])
+  study <- pipeline$study
+  did_contamint_removal <- "contam" %in% names(config$flag)
+  steps <- ifelse(did_contamint_removal, "co-ge", "ge")
+  for (organism in names(pipeline$organisms)) {
+    conf <- pipeline$organisms[[organism]]$conf
+    if (!step_is_next_not_done(config, "aligned", conf["exp"])) next
+    index <- pipeline$organisms[[organism]]$index
+    runs <- study[ScientificName == organism]
+    trimmed_dir <- fs::path(conf["bam"], "trim")
+    output_dir <- conf["bam"]
+    did_collapse <- "collapsed" %in% names(config$flag)
+    keep.unaligned.genome <- config$keep.unaligned.genome
+    if (any(runs$LibraryLayout == "SINGLE")) {
+      input_dir <- ifelse(did_collapse,
+                          fs::path(trimmed_dir, "SINGLE"),
+                          trimmed_dir)
+      ORFik::STAR.align.folder(
+        input.dir = input_dir,
+        output.dir = output_dir,
+        keep.unaligned.genome = keep.unaligned.genome,
+        index.dir = index, steps = steps, resume = "ge", paired.end = FALSE
+      )
+      for (stage in c("aligned")) {
+        fs::file_move(
+          fs::path(output_dir, stage, "LOGS"),
+          fs::path(output_dir, stage, "LOGS_SINGLE")
+        )
+      }
+      for (filename in c("full_process.csv", "runCommand.log")) {
+        fs::file_move(
+          fs::path(output_dir, filename),
+          fs::path(output_dir, paste0(
+            fs::path_ext_remove(filename), "_SINGLE.",
+            fs::path_ext(filename)
+          ))
+        )
+      }
     }
+    if (any(runs$LibraryLayout == "PAIRED")) {
+      input_dir <- ifelse(did_collapse,
+                          fs::path(trimmed_dir, "PAIRED"),
+                          trimmed_dir)
+      # message("Paired end ignored for now, running collapsed pair mode only!")
+      collapsed_paired_end_mode <- TRUE
+      ORFik::STAR.align.folder(
+        input.dir = input_dir,
+        output.dir = output_dir,
+        index.dir = index, steps = steps,
+        resume = "ge",
+        keep.unaligned.genome = keep.unaligned.genome,
+        paired.end = collapsed_paired_end_mode
+      )
+      # for (stage in c("contaminants_depletion", "aligned")) {
+      #     fs::file_move(
+      #         fs::path(output_dir, stage, "LOGS"),
+      #         fs::path(output_dir, stage, "LOGS_PAIRED")
+      #     )
+      # }
+      # for (filename in c("full_process.csv", "runCommand.log")) {
+      #     fs::file_move(
+      #         fs::path(output_dir, filename),
+      #         fs::path(output_dir, paste0(
+      #             fs::path_ext_remove(filename), "_PAIRED.",
+      #             fs::path_ext(filename)
+      #         ))
+      #     )
+      # }
+    }
+    if (config$delete_collapsed_files)
+      fs::dir_delete(input_dir)
+    set_flag(config, "aligned", conf["exp"])
+  }
+}
+
+#' Remove contaminants and align the reads to genome. Single and paired end
+#' reads are handled separately, so the resulting logs are renamed with a
+#' "_SINGLE" and/or "_PAIRED" suffix.
+#' @param pipeline a pipeline object
+#' @param config the mNGSp config object
+pipeline_align_contaminants <- function(pipeline, config) {
+  study <- pipeline$study
+  for (organism in names(pipeline$organisms)) {
+    conf <- pipeline$organisms[[organism]]$conf
+    if (!step_is_next_not_done(config, "contam", conf["exp"])) next
+    index <- pipeline$organisms[[organism]]$index
+    runs <- study[ScientificName == organism]
+    trimmed_dir <- fs::path(conf["bam"], "trim")
+    output_dir <- conf["bam"]
+    did_collapse <- "collapsed" %in% names(config$flag)
+    keep.contaminants <- config$keep_contaminants
+    if (any(runs$LibraryLayout == "SINGLE")) {
+      input_dir <- ifelse(did_collapse,
+                          fs::path(trimmed_dir, "SINGLE"),
+                          trimmed_dir)
+      ORFik::STAR.align.folder(
+        input.dir = input_dir,
+        output.dir = output_dir, keep.contaminants = keep.contaminants,
+        index.dir = index, steps = "co", paired.end = FALSE
+      )
+      for (stage in c("contaminants_depletion")) {
+        fs::file_move(
+          fs::path(output_dir, stage, "LOGS"),
+          fs::path(output_dir, stage, "LOGS_SINGLE")
+        )
+      }
+      for (filename in c("full_process.csv", "runCommand.log")) {
+        fs::file_move(
+          fs::path(output_dir, filename),
+          fs::path(output_dir, paste0(
+            fs::path_ext_remove(filename), "_SINGLE.",
+            fs::path_ext(filename)
+          ))
+        )
+      }
+
+    }
+    if (any(runs$LibraryLayout == "PAIRED")) {
+      input_dir <- ifelse(did_collapse,
+                          fs::path(trimmed_dir, "PAIRED"),
+                          trimmed_dir)
+      # message("Paired end ignored for now, running collapsed pair mode only!")
+      collapsed_paired_end_mode <- TRUE
+      ORFik::STAR.align.folder(
+        input.dir = input_dir,
+        output.dir = output_dir,
+        index.dir = index, steps = "co",
+        keep.contaminants = keep.contaminants,
+        paired.end = collapsed_paired_end_mode
+      )
+    }
+    set_flag(config, "contam", conf["exp"])
+  }
 }
 
 #' Remove all files apart from logs and final aligned BAMs.

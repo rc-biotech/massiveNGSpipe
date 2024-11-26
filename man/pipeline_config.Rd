@@ -12,22 +12,25 @@ pipeline_config(
   temp_metadata = file.path(project_dir, "next_round_manual.csv"),
   google_url = default_sheets(project_dir),
   preset = "Ribo-seq",
-  flags = pipeline_flags(project_dir, mode, preset),
+  flags = pipeline_flags(project_dir, mode, preset, contam),
   flag_steps = flag_grouping(flags),
   pipeline_steps = lapply(names(flag_steps), function(x) get(x, mode = "function")),
   mode = c("online", "local")[1],
+  contam = FALSE,
   delete_raw_files = mode == "online",
   delete_trimmed_files = mode == "online",
   delete_collapsed_files = mode == "online",
   keep_contaminants = FALSE,
-  keep.unaligned.genome = FALSE,
+  keep_unaligned_genome = FALSE,
   parallel_conf = bpoptions(log = TRUE, stop.on.error = TRUE),
   logdir = file.path(project_dir, "log_pipeline"),
   BPPARAM = bpparam()
 )
 }
 \arguments{
-\item{project_dir}{where will specific pipeline outputs be put}
+\item{project_dir}{where will specific pipeline outputs be put. Default:
+file.path(dirname(config)\link{1}, "NGS_pipeline").
+If you need seperat pipelines, please use different locations.}
 
 \item{config}{path, default \code{ORFik::config()}, where will
 fastq, bam, references and ORFik experiments go}
@@ -67,6 +70,9 @@ must be named equal to names of the 'flag_step' argument.}
 \item{mode}{= \code{c("online", "local")[1]}. "online" will assume project IDs for
 online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.}
 
+\item{contam}{logical, FALSE, do contamint removal, using a seperat made
+STAR index during genome preparation step.}
+
 \item{delete_raw_files}{logical, default: mode == "online". If online do delete
 raw fastq files after trim step is done, for local samples do not delete.
 Set only to TRUE for mode local, if you have backups!}
@@ -78,9 +84,9 @@ If TRUE deletes the trimmed fasta files.}
 If TRUE deletes the collapsed fasta files.}
 
 \item{keep_contaminants}{logical, default FALSE. Do not keep contaminant aligned reads,
-else saved in contamination dir.}
+if TRUE they are saved in contamination dir. Ignored if "contam" is not in flags to use.}
 
-\item{keep.unaligned.genome}{logical, default FALSE. Do not keep contaminant aligned reads,
+\item{keep_unaligned_genome}{logical, default FALSE. Do not keep contaminant aligned reads,
 else saved in contamination dir.}
 
 \item{parallel_conf}{a bpoptions object, default:

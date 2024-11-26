@@ -12,6 +12,7 @@
 #' @return invisible(NULL)
 #' @export
 run_pipeline <- function(pipelines, config, wait = 100, BPPARAM = config$BPPARAM) {
+  stopifnot(length(pipelines) > 0 & is(pipelines, "list"))
   message("---- Starting pipline:")
   message("Number of workers: ", BPPARAM$workers)
   substeps <- config$flag_steps
