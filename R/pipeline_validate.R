@@ -98,7 +98,9 @@ progress_report <- function(pipelines, config, show_stats = FALSE,
     organism_report(all_organism, config, progress_index)
   }
   cat("Number of studies completed\n")
-  cat(done, " / ", n_bioprojects, "\n")
+  percentage_done <- round(100*(done / n_bioprojects), 2)
+  percentage_done <- paste0(" (", percentage_done, "%)")
+  cat(done, " / ", n_bioprojects, percentage_done, "\n")
   print(current_step_table(progress_index, steps))
   cat("Last update:")
   cat("(", round(last_update_diff(config, units = "hours"), 1), " hours ago): ",
@@ -126,29 +128,15 @@ save_report <- function(dt, dt.trim, done, total, report_dir) {
   cat(round(sum(dt.trim$trim_reads) / 1e9, 2), "\n")
   cat("-- Total mapped reads (in Billions):", "\n")
   cat(round(sum(dt$`total mapped reads #-genome`) / 1e9, 2), "\n")
-  #print(dt.trim)
-  #print(nrow(dt.trim))
   read.dist <- table(dt.trim$trim_mean_length)
-  #read.dist <- read.dist[read.dist > 50]
   cat("-- Total read length usage (in percentages (bottom))", "\n")
   suppressWarnings(print(round((read.dist / sum(read.dist)) * 100, 1)))
-  #print(dt)
+
   # Save
   fwrite(dt.trim, file.path(report_dir, "raw_trimmed_reads_stats.csv"))
-  library(ggplot2); library(scales)
-  plot <- ggplot(dt, aes(x = dt$`total mapped reads %-genome`)) +
-    geom_histogram(bins = 20,
-                   aes(y = after_stat(width*density))) +
-    geom_boxplot(alpha = 0.1, color = "darkblue") +
-    ylab("% of libraries") + xlab("% mapped reads") +
-    scale_y_continuous(labels = percent_format()) +
-    scale_x_continuous(n.breaks = 10) +
-    ggtitle("Ribo-seq mapped read % (all libraries)",
-            "With flipped box-plot for quantiles") +
-    coord_cartesian(ylim = c(0, 0.5)) + theme_classic()
-  plot(plot)
-  ggsave(filename = file.path(report_dir, "genome_alignment_rate.png"),
-         plot, width = 5, height = 5)
+
+  mapping_rate_plot(dt, report_dir)
+
   return(invisible(NULL))
 }
 
@@ -160,6 +148,35 @@ current_step_table <- function(progress_index, steps) {
   message("Current steps active: name(flag_index):")
   names(tab) <- paste0(all_flag_steps[as.numeric(old_index) + 1], "(", old_index, ")")
   return(tab)
+}
+
+#' Mapping rate plot
+#'
+#' @param dt a data.table
+#' @param report_dir character path to directory
+#' @return invisible(NULL)
+#' @noRd
+#' @import ggplot2 scales
+mapping_rate_plot <- function(dt, report_dir) {
+  mapping_rates_all <- dt$`total mapped reads %-genome`
+  if (is.null(mapping_rates_all)) mapping_rates_all <- dt$`total mapped reads %`
+  if (!is.null(mapping_rates_all)) {
+    dt[, mapping_rates := mapping_rates_all]
+    plot <- ggplot(dt, aes(x = mapping_rates)) +
+      geom_histogram(bins = 20,
+                     aes(y = after_stat(width*density))) +
+      geom_boxplot(alpha = 0.1, color = "darkblue") +
+      ylab("% of libraries") + xlab("% mapped reads") +
+      scale_y_continuous(labels = percent_format()) +
+      scale_x_continuous(n.breaks = 10) +
+      ggtitle("Genome alignment rate % (all libraries)",
+              "With flipped box-plot for quantiles") +
+      coord_cartesian(ylim = c(0, 0.5)) + theme_classic()
+    plot(plot)
+    ggsave(filename = file.path(report_dir, "genome_alignment_rate.png"),
+           plot, width = 5, height = 5)
+  }
+  return(invisible(NULL))
 }
 
 #' Status plot of pipeline

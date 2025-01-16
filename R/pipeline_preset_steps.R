@@ -170,27 +170,40 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
 pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, only_complete_genomes = TRUE,
                                                                      gene_symbols = FALSE),
                                done_experiments = step_is_done_pipelines(config, "merged_lib", pipelines),
-                               done_organisms = unique(names(done_experiments))) {
+                               done_organisms = unique(names(done_experiments)),
+                               libtype_to_merge = libtype_long_to_short(config$preset),
+                               out_dir_base = config$config["bam"]) {
   message("- Merge all samples per organism")
-
+  done_organisms <- unique(done_organisms)
+  stopifnot(length(names(done_experiments)) > 0)
   for (org in done_organisms) {
     message("-- Organism: ", org)
     df_list <- lapply(done_experiments[names(done_experiments) == org], function(e)
       read.experiment(e, validate = F)[1,])
+    stopifnot(length(df_list) > 0)
     df <- do.call(rbind, df_list)
-    df_ref <- df[1,]
+    df <- df[df$libtype == libtype_to_merge]
+
     # Overwrite default paths to merged
     libtype_df <- libraryTypes(df)
-    df <- update_path_per_sample(df, libtype)
+
+    df <- update_path_per_sample(df, libtype, libtype_to_merge = libtype_to_merge)
 
     exp_name <- organism_merged_exp_name(org)
     if (libtype_df != "RFP") exp_name <- paste0(exp_name, "_", libtype_df)
-    out_dir <- file.path(config$config["bam"], exp_name)
+    out_dir <- file.path(out_dir_base, exp_name)
     ORFik::mergeLibs(df, out_dir, "all", "default", FALSE)
 
     make_additional_formats(df[1,], exp_name, out_dir)
   }
   return(invisible(NULL))
+}
+
+libtype_long_to_short <- function(long) {
+  short <- long
+  short[long == "Ribo-seq"] <- "RFP"
+  short[long == "RNA-seq"] <- "RNA"
+  return(short)
 }
 
 #' Make additional formats for an experiment
@@ -261,11 +274,48 @@ pipeline_merge_org_modalities <- function(all_exp = list.experiments(validate = 
     libtype_df <- unique(df$libtype)
     if (length(libtype_df) == 1) stop("Minimum 2 libtypes required for merge")
     if (any(libtype_df == "")) stop("Libtype of experiment must be defined!")
-    exp_name <- paste0(organism_merged_exp_name(org), "_modalities")
+    exp_name <- organism_merged_modalities_exp_name(org)
     create.experiment(NULL, exper = exp_name,
                       txdb = df@txdb,
                       libtype = libtype_df, fa = df@fafile,
                       organism = org, files = df$filepath)
+    df <- read.experiment(exp_name, output.env = new.env())
+  }
+  return(invisible(NULL))
+}
+
+pipeline_merge_exp_modalities <- function(all_exp = list.experiments(validate = FALSE)) {
+  message("- All modalities per organism")
+  exp_name <- sub("-.*", "", all_exp$name)
+  candidates <- !grepl("^all_|_modalities$", all_exp$name)
+
+  all_done <- all_exp[candidates,]
+  exp_name <- exp_name[candidates]
+  all_done[, exp_short := exp_name]
+  libtypes_per_exp <- all_done[, table(exp_short, organism)]
+  libtypes_per_exp <- rowSums(libtypes_per_exp > 1)
+  libtypes_per_exp <- libtypes_per_exp[libtypes_per_exp > 0]
+
+  multi_modals <- names(libtypes_per_exp)
+  all_done <- all_done[exp_short %in% multi_modals]
+  for (exp in multi_modals) {
+    message("-- Experiment: ", exp)
+    all_modalities <- all_done[exp_short == exp,]
+    df_list <- lapply(all_modalities$name, function(e)
+      read.experiment(e, validate = F))
+    df <- do.call(rbind, df_list)
+    # Overwrite default paths to merged
+    libtype_df <- unique(df$libtype)
+    if (length(libtype_df) == 1) stop("Minimum 2 libtypes required for merge")
+    if (any(libtype_df == "")) stop("Libtype of experiment must be defined!")
+    author <- ifelse(is.null(df$author), "", df$author)
+    org <- organism(df)
+    exp_name <- paste0(exp, "_", gsub(" ", "_", tolower(org)), "_modalities")
+    create.experiment("", exper = exp_name, author = author,
+                      txdb = df@txdb, libtype = df$libtype, rep = df$rep,
+                      condition = df$condition, stage = df$stage,
+                      fraction = df$fraction, runIDs = runIDs(df),
+                      fa = df@fafile, organism = org, files = df$filepath)
     df <- read.experiment(exp_name, output.env = new.env())
   }
   return(invisible(NULL))

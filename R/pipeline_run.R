@@ -15,6 +15,8 @@ run_pipeline <- function(pipelines, config, wait = 100, BPPARAM = config$BPPARAM
   stopifnot(length(pipelines) > 0 & is(pipelines, "list"))
   message("---- Starting pipline:")
   message("Number of workers: ", BPPARAM$workers)
+  message("Number of studies to run: ", length(pipelines))
+  message("Steps to run: ", paste(names(config$flag), collapse = ", "))
   substeps <- config$flag_steps
   pipeline_steps <- config$pipeline_steps
   # Run pipeline

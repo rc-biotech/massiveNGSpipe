@@ -56,7 +56,7 @@ pipeline_collapse <- function(pipeline, config) {
         )
       }, BPPARAM = BiocParallel::MulticoreParam(16))
     }
-    if (config$delete_trimmed_files) file.remove(all_files)
+    if (config$delete_trimmed_files) file.remove(unlist(all_files))
     set_flag(config, "collapsed", conf["exp"])
   }
 }

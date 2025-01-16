@@ -9,7 +9,9 @@ pipeline_merge_org(
   pipelines = pipeline_init_all(config, only_complete_genomes = TRUE, gene_symbols =
     FALSE),
   done_experiments = step_is_done_pipelines(config, "merged_lib", pipelines),
-  done_organisms = unique(names(done_experiments))
+  done_organisms = unique(names(done_experiments)),
+  libtype_to_merge = libtype_long_to_short(config$preset),
+  out_dir_base = config$config["bam"]
 )
 }
 \arguments{

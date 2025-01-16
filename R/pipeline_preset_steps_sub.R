@@ -73,9 +73,15 @@ pipeline_trim <- function(pipeline, config) {
 #' @param pipeline a pipeline object
 #' @param config the mNGSp config object
 pipeline_align <- function(pipeline, config) {
+  # TODO: fix multiqc error for trimmed
   study <- pipeline$study
   did_contamint_removal <- "contam" %in% names(config$flag)
-  steps <- ifelse(did_contamint_removal, "co-ge", "ge")
+  did_collapse <- "collapsed" %in% names(config$flag)
+  did_trim <- "trim" %in% names(config$flag)
+  can_use_raw <- did_trim & !did_collapse & !config$delete_raw_files
+  steps <- if(can_use_raw) {"tr"} else NULL
+  steps <- c(steps, if(did_contamint_removal) {"co"} else NULL)
+  steps <- paste(c(steps, "ge"), collapse = "-")
   for (organism in names(pipeline$organisms)) {
     conf <- pipeline$organisms[[organism]]$conf
     if (!step_is_next_not_done(config, "aligned", conf["exp"])) next
@@ -83,7 +89,7 @@ pipeline_align <- function(pipeline, config) {
     runs <- study[ScientificName == organism]
     trimmed_dir <- fs::path(conf["bam"], "trim")
     output_dir <- conf["bam"]
-    did_collapse <- "collapsed" %in% names(config$flag)
+
     keep.unaligned.genome <- config$keep.unaligned.genome
     if (any(runs$LibraryLayout == "SINGLE")) {
       input_dir <- ifelse(did_collapse,
@@ -91,10 +97,11 @@ pipeline_align <- function(pipeline, config) {
                           trimmed_dir)
       ORFik::STAR.align.folder(
         input.dir = input_dir,
-        output.dir = output_dir,
+        output.dir = output_dir, multiQC = FALSE,
         keep.unaligned.genome = keep.unaligned.genome,
-        index.dir = index, steps = steps, resume = "ge", paired.end = FALSE
+        index.dir = index, steps = "ge", paired.end = FALSE
       )
+      STAR.allsteps.multiQC(output_dir, steps = steps)
       for (stage in c("aligned")) {
         fs::file_move(
           fs::path(output_dir, stage, "LOGS"),
@@ -114,7 +121,7 @@ pipeline_align <- function(pipeline, config) {
     if (any(runs$LibraryLayout == "PAIRED")) {
       input_dir <- ifelse(did_collapse,
                           fs::path(trimmed_dir, "PAIRED"),
-                          trimmed_dir)
+                          ifelse(can_use_raw, conf["fastq"], trimmed_dir))
       # message("Paired end ignored for now, running collapsed pair mode only!")
       collapsed_paired_end_mode <- TRUE
       ORFik::STAR.align.folder(
@@ -213,16 +220,19 @@ pipeline_align_contaminants <- function(pipeline, config) {
 pipeline_cleanup <- function(pipeline, config) {
     accession <- pipeline$accession
     study <- pipeline$study
+    did_contamint_removal <- "contam" %in% names(config$flag)
     for (organism in names(pipeline$organisms)) {
         conf <- pipeline$organisms[[organism]]$conf
         if (!step_is_next_not_done(config, "cleanbam", conf["exp"])) next
         study_org <- study[ScientificName == organism,]
         bam_dir <- fs::path(conf["bam"], "aligned")
-
-        fs::file_delete(fs::dir_ls(
+        if (did_contamint_removal) {
+          fs::file_delete(fs::dir_ls(
             fs::path(conf["bam"], "contaminants_depletion"),
             glob = "**/*.out.*"
-        ))
+          ))
+        }
+
         old_file_names <- match_bam_to_metadata(bam_dir, study_org, FALSE)
         new_file_names <- fs::path(bam_dir, study_org$Run, ext = "bam")
         stopifnot(length(old_file_names) == length(new_file_names))

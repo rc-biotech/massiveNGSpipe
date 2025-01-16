@@ -198,26 +198,8 @@ get_symbols <- function(txdb, path = file.path(dirname(ORFik:::getGtfPathFromTxd
   return(invisible(NULL))
 }
 
-organism_merged_exp_name <- function(organisms) {
-  paste0("all_merged-", gsub(" ", "_", organisms))
-}
-organism_merged_exp_name <- function(organisms) {
-  paste0(organism_merged_exp_name(organisms), "_modalities")
-}
-
-organism_collection_exp_name <- function(organisms) {
-  paste0("all_samples-", gsub(" ", "_", organisms))
-}
-
-
-reference_folder_name <- function(organism, full = FALSE,
-                                  full_path = ORFik::config()["ref"]) {
-  res <- gsub(" ", "_", trimws(tolower(organism)))
-  if (full) res <- file.path(full_path, res)
-  return(res)
-}
-
-update_path_per_sample <- function(df, libtype_df, rel_dir = "pshifted_merged", ext = ".ofst") {
+update_path_per_sample <- function(df, libtype_df, rel_dir = "pshifted_merged", ext = ".ofst", libtype_to_merge) {
+  if (length(libtype_df) == 0) stop("No libs of libtype: '", libtype_to_merge, "' in experiments given")
   if (length(libtype_df) != 1) stop("Only single libtype experiments supported for merging")
   if (libtype_df == "") stop("Libtype of experiment must be defined!")
   df@listData$filepath <- file.path(dirname(filepath(df, "default")),

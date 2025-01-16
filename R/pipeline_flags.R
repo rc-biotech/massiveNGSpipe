@@ -69,7 +69,8 @@ all_substeps_done_all <- function(config, steps, exps) {
 #'
 #' @param project_dir pipeline directory
 #' @inheritParams pipeline_config
-#' @param flag_names character vector of names of flag steps to include
+#' @param flag_names named character vector of names of flag steps to include.
+#' Names are the grouping inside functions and values are individual steps.
 #' @param create_dirs logical, default TRUE. For test purpose you can turn of
 #' dir creation if needed.
 #' @return a named character vector of directories in 'project_dir'
@@ -77,11 +78,13 @@ all_substeps_done_all <- function(config, steps, exps) {
 #' @export
 pipeline_flags <- function(project_dir, mode = c("online", "local")[1],
                            preset,
-                           flag_names = libtype_flags(preset, mode, contam),
                            contam = FALSE,
-                           create_dirs = TRUE
+                           create_dirs = TRUE,
+                           flag_names = libtype_flags(preset, mode, contam)
                            ) {
   if (preset == "empty") return(character())
+  stopifnot(is(flag_names, "character"))
+
   flag_dir <- file.path(project_dir, "flags")
   flags <- file.path(flag_dir, flag_names)
   stopifnot(length(flags) > 0)
@@ -208,17 +211,17 @@ remove_flag_all <- function(config, steps = names(config$flag), pipelines) {
 #' @return invisible(NULL)
 #' @export
 remove_flag_all_exp <- function(config, steps = names(config$flag), exps) {
-  if (length(steps) == 1) {
-    if (steps == "all") {
-      steps <- names(config$flag)
-    }
+  if (length(steps) == 1 && steps == "all") {
+    steps <- names(config$flag)
   }
-  if (!all(steps %in% names(config$flag))) stop("Some steps given are not valid steps!")
+  steps_given_are_not_valid <- !all(steps %in% names(config$flag))
+  if (steps_given_are_not_valid) stop("Some steps given are not valid steps!")
 
   for (e in exps) {
     for (step in steps) remove_flag(config, step, e)
   }
   message("Removed flags for pipeline subset:")
+  message(paste(exps, collapse = ", "))
   return(invisible(NULL))
 }
 

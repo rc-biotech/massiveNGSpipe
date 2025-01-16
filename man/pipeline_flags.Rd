@@ -8,9 +8,9 @@ pipeline_flags(
   project_dir,
   mode = c("online", "local")[1],
   preset,
-  flag_names = libtype_flags(preset, mode, contam),
   contam = FALSE,
-  create_dirs = TRUE
+  create_dirs = TRUE,
+  flag_names = libtype_flags(preset, mode, contam)
 )
 }
 \arguments{
@@ -22,13 +22,14 @@ online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.}
 \item{preset}{character, default "Ribo-seq".
 Alternatives: c("Ribo-seq", "RNA-seq", "disome", "empty")}
 
-\item{flag_names}{character vector of names of flag steps to include}
-
 \item{contam}{logical, FALSE, do contamint removal, using a seperat made
 STAR index during genome preparation step.}
 
 \item{create_dirs}{logical, default TRUE. For test purpose you can turn of
 dir creation if needed.}
+
+\item{flag_names}{named character vector of names of flag steps to include.
+Names are the grouping inside functions and values are individual steps.}
 }
 \value{
 a named character vector of directories in 'project_dir'

@@ -18,7 +18,7 @@ discord_connection_default_cached(
 \item{verbose}{logical, FALSE. If TRUE, will display discordr info.}
 }
 \value{
-list of size 4, a webhook object
+list of size 4, a webhook connection object
 }
 \description{
 Get discord default webhook

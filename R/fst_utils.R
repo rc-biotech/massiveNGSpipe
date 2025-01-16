@@ -9,7 +9,7 @@ generateSingleMatrix <- function(grl, trx_id = names(grl), reads,libnames, outpu
   tx_coverage <- rbindlist(tx_coverage, idcol = "library")[,c("library","count")][, library := as.factor(library)]
 
   output_path <- collection_path_from_exp(NULL, trx_id, must_exists = FALSE,
-                                          output_dir = output_dir)
+                                          collection_dir = output_dir)
   fst::write.fst(tx_coverage, output_path)
   rm(tx_coverage)
   gc()

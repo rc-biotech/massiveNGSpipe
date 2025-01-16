@@ -121,14 +121,16 @@ plot_all_versions <- function(plot, file_prefix, formats = c("jpg", "svg"), send
 #' @param channel_id numeric, id of channel to use.
 #' @param connection_file character, file path to cached webhooks
 #' @param verbose logical, FALSE. If TRUE, will display discordr info.
-#' @return list of size 4, a webhook object
+#' @return list of size 4, a webhook connection object
 #' @import discordr
 discord_connection_default_cached <- function(channel_id = 1,
                                               connection_file = "~/livemount/.cache/discordr/r_to_discord_config",
                                               verbose = FALSE) {
   if (is.null(getOption("default_discordr_connection"))) {
-    discordr::set_default_discord_connection(discordr::import_discord_connections(connection_file)[[channel_id]])}
-  else {getOption("default_discordr_connection")}
+    conn <- discordr::import_discord_connections(connection_file)[[channel_id]]
+    discordr::set_default_discord_connection(conn)
+    return(conn)
+  } else {getOption("default_discordr_connection")}
 }
 
 google_drive_dir_links <- function(id = 1, id_file = "~/livemount/.cache/gargle/drive_folder_links") {

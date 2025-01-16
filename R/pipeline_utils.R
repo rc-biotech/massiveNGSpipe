@@ -84,8 +84,12 @@ docker_copy_done_experiments <- function(config, pipelines = pipeline_init_all(c
   return(all(res == 0))
 }
 
+#' Copy done experiment csvs to new directory
+#' @examples
+#' csvs <- list.files(ORFik::config()["exp"], pattern = "modalities\\.csv$")
+#' copy_experiments_to(csvs)
 copy_experiments_to <- function(csv_names, old_exp_dir = ORFik::config()["exp"],
-                                new_exp_dir = "~/livemount/Bio_data/ORFik_experiments/",
+                                new_exp_dir = sub("_local$", "", old_exp_dir),
                                 docker_conversion = "'s/livemount\\///g'") {
   done_exp_old_path <- file.path(old_exp_dir, csv_names)
   done_exp_new_path <- file.path(new_exp_dir, csv_names)

@@ -78,7 +78,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
             is.logical(delete_collapsed_files) & is.logical(keep_contaminants) &
             is.logical(keep_unaligned_genome))
   stopifnot(is(pipeline_steps, "list"))
-  if (preset == "empty") message("Using empty preset, now add your steps: using add_step_to_pipeline()")
+  if (preset == "empty") message("Using empty preset, nowflags add your steps: using add_step_to_pipeline()")
   if (preset != "empty") stopifnot(is(pipeline_steps[[1]], "function"))
   stopifnot(length(pipeline_steps) == length(flag_steps))
 
