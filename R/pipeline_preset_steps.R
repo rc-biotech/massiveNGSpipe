@@ -187,7 +187,7 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
     # Overwrite default paths to merged
     libtype_df <- libraryTypes(df)
 
-    df <- update_path_per_sample(df, libtype, libtype_to_merge = libtype_to_merge)
+    df <- update_path_per_sample(df, libtype_df, libtype_to_merge = libtype_to_merge)
 
     exp_name <- organism_merged_exp_name(org)
     if (libtype_df != "RFP") exp_name <- paste0(exp_name, "_", libtype_df)
@@ -274,6 +274,12 @@ pipeline_merge_org_modalities <- function(all_exp = list.experiments(validate = 
     libtype_df <- unique(df$libtype)
     if (length(libtype_df) == 1) stop("Minimum 2 libtypes required for merge")
     if (any(libtype_df == "")) stop("Libtype of experiment must be defined!")
+    if (length(libtype_df) != length(df$libtype)) {
+      message("Here are the duplicates:")
+      tab <- table(df$libtype)
+      print(tab[tab > 1])
+      stop("Organism have > 1 all_merged track of the same type")
+    }
     exp_name <- organism_merged_modalities_exp_name(org)
     create.experiment(NULL, exper = exp_name,
                       txdb = df@txdb,

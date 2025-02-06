@@ -10,6 +10,7 @@ pipeline_config(
   complete_metadata = file.path(project_dir, "FINAL_LIST.csv"),
   backup_metadata = file.path(project_dir, "BACKUP_LIST.csv"),
   temp_metadata = file.path(project_dir, "next_round_manual.csv"),
+  blacklist = file.path(project_dir, "BLACKLIST.csv"),
   google_url = default_sheets(project_dir),
   preset = "Ribo-seq",
   flags = pipeline_flags(project_dir, mode, preset, contam),
@@ -24,6 +25,7 @@ pipeline_config(
   keep_unaligned_genome = FALSE,
   parallel_conf = bpoptions(log = TRUE, stop.on.error = TRUE),
   logdir = file.path(project_dir, "log_pipeline"),
+  verbose = TRUE,
   BPPARAM = bpparam()
 )
 }
@@ -44,8 +46,12 @@ even ones deleted earlier. Useful for check of what has been done before.}
 
 \item{temp_metadata}{path, default: file.path(project_dir, "next_round_manual.csv").
 The intermediate file used after curation, but before it is validated. This is
-the where you update the current new metadata annotations for final aproval into the
-complete_metadat. This syncs automatically to the google_url sheet.}
+the where you update the current new metadata annotations for final approval into the
+complete_metadata. This syncs automatically to the google_url sheet if included.}
+
+\item{blacklist}{path, Which studies to ignore for this config,
+default: file.path(project_dir, "BLACKLIST.csv")\cr
+A csv with 1 column id, which gives BioProject IDs}
 
 \item{google_url}{url or sheet object for google sheet to use. Set to NULL to
 not use google sheet.}
@@ -94,6 +100,8 @@ else saved in contamination dir.}
 Specific pipeline config for parallel settings and log directory}
 
 \item{logdir}{= file.path(project_dir, "log_pipeline"),}
+
+\item{verbose}{logical, default TRUE, give start up message}
 
 \item{BPPARAM}{= bpparam()}
 }

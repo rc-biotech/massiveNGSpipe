@@ -49,6 +49,18 @@ last_update_diff <- function(config, units = "days") {
   return(difftime(now, last_update, units = units))
 }
 
+#' Get last update time message
+#' @param config a list, the pipeline config
+#' @param units = "hours"
+#' @return invisible(NULL), only cat prints the message
+#' @export
+last_update_message <- function(config, units = "hours") {
+  cat("Last update:")
+  cat("(", round(last_update_diff(config, units = "hours"), 1), " hours ago): ",
+      format(last_update(config), usetz=TRUE), "\n", sep = "")
+  return(invisible(NULL))
+}
+
 #' Check if anything happened since given time
 #'
 #' @inheritParams last_update

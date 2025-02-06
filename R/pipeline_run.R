@@ -50,6 +50,15 @@ parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100) {
   message("Done for step pipeline:\n", steps_merged)
 }
 
+#' Pipeline experiment names
+#'
+#' Get all pipeline experiment names from pipeline
+#' Remember all species per pipeline object is combined, so this
+#' function unlists the whole when recursive is TRUE
+#' @param pipelines a list, the pipelines object
+#' @param recursive logical, default TRUE, If false return as list
+#' @return character vector of experiment names, recursive TRUE gives list.
+#' @export
 pipelines_names <- function(pipelines, recursive = TRUE) {
   unlist(lapply(pipelines,
                 function(x) lapply(x$organisms,

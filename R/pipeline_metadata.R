@@ -158,11 +158,16 @@ pipeline_metadata <- function(accessions, config, force = FALSE, max_attempts = 
     print(accessions[lengths(all_SRA_metadata) == 0])
     stop("Unstable connection / SRA server is haltig queries, try again later!")
   }
+  rbind_fill <- FALSE
+  if (any(length(table(lengths(all_SRA_metadata))) != 1)) {
+    if (all(length(table(lengths(all_SRA_metadata))) == 2)) {
+      rbind_fill <- TRUE
+    } else
+      stop("Malformed data columns, debug or use 'force' = TRUE to redownload all")
+  }
 
-  if (any(length(table(lengths(all_SRA_metadata))) != 1))
-    stop("Malformed data columns, use 'force' = TRUE")
   message("-- Metadata ", do, " done")
-  return(rbindlist(all_SRA_metadata))
+  return(rbindlist(all_SRA_metadata, fill = rbind_fill))
 }
 
 pipeline_metadata_filter <- function(all_SRA_metadata, organisms = "all",
@@ -380,6 +385,13 @@ add_new_data <- function(accessions, config, organisms = "all",
                          LibraryLayouts = c("SINGLE", "PAIRED"), Platforms = "ILLUMINA",
                          open_google_sheet = interactive(),
                          open_editor = interactive()) {
+  if (file.exists(config$blacklist)) {
+    blacklist <- fread(config$blacklist)
+    if (any(blacklist$id %in% accessions)) {
+      print(blacklist$id[blacklist$id %in% accessions])
+      stop("You tried to add an id in blacklist, see above for which!")
+    }
+  }
   # Step1: Get all metadata
   all_SRA_metadata <- pipeline_metadata(accessions, config)
   # Step2: Filter out what you do not want
@@ -581,7 +593,7 @@ fill_with_random <- function(table_in, config, libtypes_keep = "all", checked_by
   if (libtypes_keep == "all") libtypes_keep <- unique(table_in$LIBRARYTYPE)
   table <- copy(table_in)
   message("Samples that will be auto-named: ", nrow(table[LIBRARYTYPE %in% libtypes_keep & is.na(KEEP),]))
-  table[LIBRARYTYPE %in% libtypes_keep & is.na(KEEP), CHECKED := "auto"]
+  table[LIBRARYTYPE %in% libtypes_keep & is.na(KEEP), CHECKED := checked_by]
   table[LIBRARYTYPE %in% libtypes_keep & is.na(KEEP), KEEP := TRUE]
 
 

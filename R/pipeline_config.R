@@ -15,8 +15,11 @@
 #'  even ones deleted earlier. Useful for check of what has been done before.
 #' @param temp_metadata  path, default: file.path(project_dir, "next_round_manual.csv").
 #' The intermediate file used after curation, but before it is validated. This is
-#' the where you update the current new metadata annotations for final aproval into the
-#' complete_metadat. This syncs automatically to the google_url sheet.
+#' the where you update the current new metadata annotations for final approval into the
+#' complete_metadata. This syncs automatically to the google_url sheet if included.
+#' @param blacklist path, Which studies to ignore for this config,
+#' default: file.path(project_dir, "BLACKLIST.csv")\cr
+#' A csv with 1 column id, which gives BioProject IDs
 #' @param google_url url or sheet object for google sheet to use. Set to NULL to
 #' not use google sheet.
 #' @param flags named character vector, with cut points, where can
@@ -46,6 +49,7 @@
 #' @param parallel_conf a bpoptions object, default:
 #' \code{bpoptions(log =TRUE, stop.on.error = TRUE)}
 #' Specific pipeline config for parallel settings and log directory
+#' @param verbose logical, default TRUE, give start up message
 #' @param logdir = file.path(project_dir, "log_pipeline"),
 #' @param BPPARAM = bpparam()
 #' @return a list with a defined config
@@ -55,6 +59,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             complete_metadata = file.path(project_dir, "FINAL_LIST.csv"),
                             backup_metadata = file.path(project_dir, "BACKUP_LIST.csv"),
                             temp_metadata = file.path(project_dir, "next_round_manual.csv"),
+                            blacklist = file.path(project_dir, "BLACKLIST.csv"),
                             google_url = default_sheets(project_dir),
                             preset = "Ribo-seq",
                             flags = pipeline_flags(project_dir, mode, preset, contam),
@@ -71,14 +76,23 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             parallel_conf = bpoptions(log =TRUE,
                                                       stop.on.error = TRUE),
                             logdir = file.path(project_dir, "log_pipeline"),
+                            verbose = TRUE,
                             BPPARAM = bpparam()) {
+  if (verbose) {
+    message("Setting up mNGSp config..")
+    message("- Preset (mode): ", preset, " (", mode, ")")
+    message("- Workers (threads): ", BPPARAM$workers)
+    message("- Sync to google: ", !is.null(google_url))
+    message("- Metadata dir: ", project_dir)
+    message("- Output data dir: ", config["bam"])
+  }
 
   stopifnot(mode %in% c("online", "local"))
   stopifnot(is.logical(delete_raw_files) & is.logical(delete_trimmed_files) &
             is.logical(delete_collapsed_files) & is.logical(keep_contaminants) &
             is.logical(keep_unaligned_genome))
   stopifnot(is(pipeline_steps, "list"))
-  if (preset == "empty") message("Using empty preset, nowflags add your steps: using add_step_to_pipeline()")
+  if (preset == "empty") message("Using empty preset, now add your steps: using add_step_to_pipeline()")
   if (preset != "empty") stopifnot(is(pipeline_steps[[1]], "function"))
   stopifnot(length(pipeline_steps) == length(flag_steps))
 
@@ -100,6 +114,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               complete_metadata = complete_metadata,
               backup_metadata = backup_metadata,
               temp_metadata = temp_metadata,
+              blacklist = blacklist,
               google_url = google_url, mode = mode,
               delete_raw_files = delete_raw_files,
               delete_trimmed_files = delete_trimmed_files,

@@ -19,7 +19,8 @@
 #' Should the all modalities tracks be exported per organism.
 #' @return logical, TRUE if sucessful for all.
 #' @export
-docker_copy_done_experiments <- function(config, pipelines = pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE),
+docker_copy_done_experiments <- function(config,
+                                         pipelines = pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE),
                                          new_exp_dir = "~/livemount/Bio_data/ORFik_experiments/",
                                          docker_conversion = "'s/livemount\\///g'",
                                          individual_studies = TRUE,
@@ -73,7 +74,7 @@ docker_copy_done_experiments <- function(config, pipelines = pipeline_init_all(c
 
     if (all_modalities_by_org) {
       message("- All modalities by organism")
-      csv_names <- paste0(organism_merged_exp_name(done_organisms), "_modalities", ".csv")
+      csv_names <- paste0(organism_merged_modalities_exp_name(done_organisms), ".csv")
       existing_exps <- list.files(config$config["exp"])
       merged_is_made <- csv_names %in% existing_exps
       csv_names <- csv_names[merged_is_made]
@@ -109,3 +110,37 @@ copy_experiments_to <- function(csv_names, old_exp_dir = ORFik::config()["exp"],
 #' @return character, name of function
 #' @export
 name_of_function <- function(...) unlist(purrr:::map(rlang::ensyms(...) , as.character), use.names = FALSE)
+
+#' System usage for Linux
+#' @export
+get_system_usage <- function(drive = "/dev/mapper/raid-home") {
+  # Get CPU usage
+  cpu_usage <- as.numeric(system("top -bn1 | grep 'Cpu(s)' | awk '{print $2 + $4}'", intern = TRUE))
+
+  # Get Memory usage (in GB)
+  mem_info <- system("free -g | awk 'NR==2{print $3, $2}'", intern = TRUE)
+  mem_vals <- as.numeric(strsplit(mem_info, " ")[[1]])
+  mem_usage <- mem_vals[1]
+  mem_total <- mem_vals[2]
+  mem_percent <- round((mem_usage / mem_total) * 100, 2)
+
+  # Get Hard drive usage
+  drive_info <- system("df -h | grep '", drive, "'", intern = TRUE)
+  drive_vals <- strsplit(drive_info, " +")[[1]]
+  drive_total <- drive_vals[2]  # Total size
+  drive_used <- drive_vals[3]   # Used space
+  drive_free <- drive_vals[4]   # Available space
+  drive_percent <- drive_vals[5]  # Percentage used
+
+  # Return as a named list
+  return(list(
+    CPU_Usage_Percent = cpu_usage,
+    Memory_Usage_GB = mem_usage,
+    Memory_Total_GB = mem_total,
+    Memory_Usage_Percent = mem_percent,
+    Drive_Total = drive_total,
+    Drive_Used = drive_used,
+    Drive_Free = drive_free,
+    Drive_Usage_Percent = drive_percent
+  ))
+}

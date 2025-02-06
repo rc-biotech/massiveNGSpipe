@@ -9,7 +9,8 @@ pipeline_init_all(
   complete_metadata = config$complete_metadata,
   simple_progress_report = TRUE,
   gene_symbols = TRUE,
-  only_complete_genomes = FALSE
+  only_complete_genomes = FALSE,
+  dbs = c("ensembl", "refseq")
 )
 }
 \arguments{
@@ -23,6 +24,10 @@ The list of final candidates that are checked and have unique rows per bioprojec
 
 \item{only_complete_genomes}{logical, default FALSE. If TRUE, will only init the subset
 with complete genome/annotation directories. Will fail if 0 species are done.}
+
+\item{dbs}{character, prioritized order of genome databases to search, default:
+c("ensembl", "refseq"). Options are c("ensembl", "refseq", "genbank") in any wanted
+priority order.}
 }
 \value{
 a list of pipelines
