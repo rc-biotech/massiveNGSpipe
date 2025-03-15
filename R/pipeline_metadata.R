@@ -37,6 +37,8 @@
 #' the end that runs until your metadata is valid. If you
 #' only want to updata csv / google docs with new data and not try to complete
 #' now, set this to FALSE.
+#' @param open_editor logical default TRUE. If google URL is defined, open the
+#' sheet. If not, open the DataEditR bord.
 #' @param only_curated logical FALSE, if TRUE. Only validate (or fail) based on
 #' inserted accessions (not the full list). Ignored if accessions is NULL.
 #' @param update_google_sheet logical TRUE, Ignored if google_url is NULL.
@@ -48,10 +50,10 @@ curate_metadata <- function(accessions, config, organisms = "all",
                             google_url = config$google_url,
                             complete_metadata = config$complete_metadata,
                             LibraryLayouts = c("SINGLE", "PAIRED"),
-                            LibraryStrategy = c("RNA-Seq", "miRNA-Seq", "OTHER"),
+                            LibraryStrategy = c("Ribo-seq","RNA-Seq", "miRNA-Seq", "OTHER"),
                             libtypes = "RFP",
                             Platforms = "ILLUMINA",
-                            step_mode = FALSE, open_google_sheet = interactive(),
+                            step_mode = FALSE, open_editor = interactive(),
                             fix_loop = TRUE, only_curated = FALSE,
                             update_google_sheet = TRUE) {
   if (!interactive() & step_mode)
@@ -67,7 +69,7 @@ curate_metadata <- function(accessions, config, organisms = "all",
                  google_url, complete_metadata,
                  LibraryStrategy,
                  LibraryLayouts, Platforms,
-                 open_google_sheet)
+                 open_editor)
   }
 
   # Step6: Now, Check if it is valid (if not repeat step with new csv)
@@ -101,7 +103,8 @@ curate_metadata <- function(accessions, config, organisms = "all",
 #' failing? This call flood SRA with calls, so set it higher if you use a lot
 #' of studies. Will use a random increasing wait time between study attempts. See log files for more error info.
 #' @return a data.table of all metadata for all accessions
-pipeline_metadata <- function(accessions, config, force = FALSE, max_attempts = 7, max_attempts_loop = 1) {
+pipeline_metadata <- function(accessions, config, force = FALSE, max_attempts = 7, max_attempts_loop = 1,
+                              BPPARAM = if (length(accessions) > 5) {bpparam()} else SerialParam()) {
   do <- ifelse(config$mode == "online", "downloading", "processing")
   message("- Metadata ", do, "...")
   accessions <- gsub(" $|^ ", "", accessions)
@@ -148,7 +151,7 @@ pipeline_metadata <- function(accessions, config, force = FALSE, max_attempts = 
         res <- cbind(res, check_add[, ..are_there])
       }
       return(res)
-    }, config = config, force = force)
+    }, config = config, force = force, BPPARAM = BPPARAM)
     loop_attempts <- loop_attempts + 1
   }
 
@@ -373,7 +376,7 @@ metadata_is_valid <- function(files) {
                           CONDITION, FRACTION, INHIBITOR, sep = "_")]
   }
 
-  files[, not_unique := duplicated(name), by = BioProject]
+  files[, not_unique := duplicated(name), by = .(BioProject, ScientificName)]
   return(files)
 }
 
@@ -383,8 +386,9 @@ add_new_data <- function(accessions, config, organisms = "all",
                          complete_metadata = config$complete_metadata,
                          LibraryStrategy = c("RNA-Seq", "miRNA-Seq", "OTHER"),
                          LibraryLayouts = c("SINGLE", "PAIRED"), Platforms = "ILLUMINA",
+                         open_editor = interactive(),
                          open_google_sheet = interactive(),
-                         open_editor = interactive()) {
+                         organism_name_cleanup = TRUE) {
   if (file.exists(config$blacklist)) {
     blacklist <- fread(config$blacklist)
     if (any(blacklist$id %in% accessions)) {
@@ -396,16 +400,20 @@ add_new_data <- function(accessions, config, organisms = "all",
   all_SRA_metadata <- pipeline_metadata(accessions, config)
   # Step2: Filter out what you do not want
   filtered_SRA_metadata <- pipeline_metadata_filter(all_SRA_metadata, organisms,
-                                                     LibraryLayouts, LibraryStrategy,
-                                                     Platforms)
+                                                    LibraryLayouts, LibraryStrategy,
+                                                    Platforms)
   # Step3: Try to auto annotate
   all_SRA_metadata_RFP <- pipeline_metadata_annotate(filtered_SRA_metadata)
-  # Step4: Merge with existing finished metadata
+  # Step4: Fix organism names
+  if (organism_name_cleanup) {
+    all_SRA_metadata_RFP[, ScientificName := organism_name_cleanup(ScientificName)]
+  }
+  # Step5: Merge with existing finished metadata
   complete_metadata_dt <- data.table()
   new_studies_count <- nrow(all_SRA_metadata_RFP)
   if (!is.null(google_url)) {
     complete_metadata_dt <- read_sheet_safe(google_url)
-  } else if (file.exists(complete_metadata)) complete_metadata_dt <- fread(complete_metadata)
+  } else if (file.exists(complete_metadata)) complete_metadata_dt <- fread(config$temp_metadata)
   if (nrow(complete_metadata_dt) > 0) { # IF you have started before
     new_studies <- !(paste0(all_SRA_metadata_RFP$study_accession, "___",
                           all_SRA_metadata_RFP$ScientificName) %in%
@@ -417,12 +425,14 @@ add_new_data <- function(accessions, config, organisms = "all",
     all_SRA_metadata_RFP <- suppressWarnings(rbindlist(list(complete_metadata_dt,
                               all_SRA_metadata_RFP[new_studies,]), fill = TRUE))
   }
+  message("Total samples before saving: ", nrow(all_SRA_metadata_RFP))
   message("New samples to annotate: ", new_studies_count)
   fwrite(all_SRA_metadata_RFP, config$temp_metadata)
-  # Step5: Store as csv and open in google sheet and fix
+  # Step6: Store as csv and open in google sheet and fix
   # Create a new sheet or use existing one
   #google_url <- gs4_create(name = "RFP_next_round_manual2.csv")
-  if (!is.null(google_url)) {
+  google_url_defined <- !is.null(google_url)
+  if (google_url_defined) {
     if (sum(new_studies) > 0) {
       local_google_copy <- file.path(config$project, "temp_google_local.csv")
       fwrite(all_SRA_metadata_RFP, local_google_copy)
@@ -430,23 +440,16 @@ add_new_data <- function(accessions, config, organisms = "all",
                   ss = google_url,
                   sheet = 1)
     }
+  }
 
-    if (open_editor & interactive()) {
-      if (open_google_sheet) {
-        browseURL(google_url)
-      } else if (config$mode == "local") {
-        message("Update data for unique rows and press syncronize,",
-                " then press 'done'!")
-        DataEditR::data_edit(config$temp_metadata, read_fun = "fread") %>%
-          fwrite(config$temp_metadata)
-      }
-    }
-  } else {
-    if (open_editor & interactive()) {
-        message("Update data for unique rows and press syncronize,",
-                " then press 'done'!")
-        DataEditR::data_edit(config$temp_metadata, read_fun = "fread") %>%
-          fwrite(config$temp_metadata)
+  if(open_editor & interactive()) {
+    if (google_url_defined & open_google_sheet & config$mode == "online") {
+      browseURL(google_url)
+    } else {
+      message("Update data for unique rows and press syncronize,",
+              " then press 'done'!")
+      DataEditR::data_edit(config$temp_metadata, read_fun = "fread") %>%
+        fwrite(config$temp_metadata)
     }
   }
   return(invisible(NULL))
@@ -589,7 +592,9 @@ export_sucessful_metadata <- function(files, libtypes, output_file,
 
 fill_with_random <- function(table_in, config, libtypes_keep = "all", checked_by = "auto",
                              start_auto_at_frac = max(suppressWarnings(max(as.integer(gsub("^auto_", "", grep("^auto_", table$FRACTION, value = TRUE)))) + 1), 1),
-                             start_auto_at_time = max(suppressWarnings(max(as.integer(gsub("^auto_", "", grep("^auto_", table$TIMEPOINT, value = TRUE)))) + 1), 1)) {
+                             start_auto_at_time = max(suppressWarnings(max(as.integer(gsub("^auto_", "", grep("^auto_", table$TIMEPOINT, value = TRUE)))) + 1), 1),
+                             upload_to_google = !is.null(config$google_url)) {
+  stopifnot(("KEEP" %in% colnames(table_in)) && is(table_in$KEEP, "logical"))
   if (libtypes_keep == "all") libtypes_keep <- unique(table_in$LIBRARYTYPE)
   table <- copy(table_in)
   message("Samples that will be auto-named: ", nrow(table[LIBRARYTYPE %in% libtypes_keep & is.na(KEEP),]))
@@ -605,18 +610,19 @@ fill_with_random <- function(table_in, config, libtypes_keep = "all", checked_by
   table <- metadata_is_valid(table)
   non_unique <- nrow(table[KEEP == TRUE & not_unique,]); non_unique
   if (non_unique > 0)
-    suppressWarnings(table[LIBRARYTYPE == "RFP" & CHECKED == "auto" & not_unique & (is.na(TIMEPOINT) || TIMEPOINT == ""), TIMEPOINT := paste0("auto_", seq(.N) + start_auto_at_time)])
+    suppressWarnings(table[LIBRARYTYPE %in% libtypes_keep & CHECKED == "auto" & not_unique & (is.na(TIMEPOINT) || TIMEPOINT == ""), TIMEPOINT := paste0("auto_", seq(.N) + start_auto_at_time)])
 
   table <- metadata_is_valid(table)
   non_unique <- nrow(table[KEEP == TRUE & not_unique,]); non_unique
   if (non_unique > 0) warning("Some samples could not be auto named, check output and fix manually!")
 
   if (!is.null(config)) {
-    message("Saving results and uploading")
+    message("Saving results to disc")
     local_google_copy <- file.path(config$project, "temp_google_local.csv")
     fwrite(table, config$temp_metadata)
     fwrite(table, local_google_copy)
-    if (!is.null(config$google_url)) {
+    if (upload_to_google && !is.null(config$google_url)) {
+      message("Saving results to google drive sheet")
       googlesheets4::write_sheet(read.csv(local_google_copy),
                                  ss = config$google_url,
                                  sheet = 1)
@@ -624,6 +630,17 @@ fill_with_random <- function(table_in, config, libtypes_keep = "all", checked_by
   }
 
   return(table)
+}
+
+organism_name_cleanup <- function(organisms) {
+  organisms[grepl("coronavirus 2|sars cov 2", organisms, ignore.case = TRUE)] <- "Sars cov2"
+
+  organisms <- sub(" substr\\..*", "", organisms)
+  organisms <- sub(" (K.12|BY4741|H37Rv|PAO1|Go1)", "", organisms, ignore.case = TRUE)
+  organisms <- sub(" str\\..*", "", organisms)
+  organisms <- sub(" subsp\\..*", "", organisms)
+  # unique(organisms[sapply(gregexpr("\\s", organisms), function(x) sum(x > 0)) >= 2])
+  return(organisms)
 }
 
 

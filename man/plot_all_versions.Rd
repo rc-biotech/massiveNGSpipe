@@ -14,7 +14,11 @@ plot_all_versions(
   height = 6,
   dpi = 600,
   discord_connection = discord_connection_default_cached(),
-  google_drive_dir = google_drive_dir_links()
+  google_drive_dir = google_drive_dir_links(1),
+  formats_discord = formats[!(formats \%in\% "svg")],
+  formats_google = formats[!(formats \%in\% c("jpg", "png"))],
+  preview_image = FALSE,
+  discord_message = NULL
 )
 }
 \arguments{
@@ -35,6 +39,17 @@ plot_all_versions(
 \item{dpi}{= 600}
 
 \item{discord_connection}{= discord_connection_default_cached()}
+
+\item{google_drive_dir}{= google_drive_dir_links(1)}
+
+\item{formats_discord}{= formats\link{!(formats \%in\% "svg")}}
+
+\item{formats_google}{= formats\link{!(formats \%in\% c("jpg", "png"))}}
+
+\item{preview_image}{= FALSE, if TRUE, will open browser and display image, then wait for you to press enter,
+then you can cancel if ratios are wrong etc.}
+
+\item{discord_message}{= NULL, if character, sends the message to discord after images are sent.}
 }
 \value{
 invisible(NULL)

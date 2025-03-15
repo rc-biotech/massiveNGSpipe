@@ -9,6 +9,8 @@ pipeline_cleanup(pipeline, config)
 }
 \arguments{
 \item{pipeline}{a pipeline object}
+
+\item{config}{the mNGSp config object from \link{pipeline_config}}
 }
 \description{
 Remove all files apart from logs and final aligned BAMs.

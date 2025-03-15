@@ -23,7 +23,8 @@ progress_report <- function(pipelines, config, show_stats = FALSE,
                             return_progress_vector = FALSE,
                             check_merged_org = FALSE,
                             named_progress_vector = FALSE,
-                            system_usage_stats = TRUE) {
+                            system_usage_stats = TRUE,
+                            show_status_per_exp = TRUE) {
   n_bioprojects <- sum(unlist(lapply(pipelines, function(p) length(p$organisms))))
   steps <- names(config[["flag"]])
   negative_message <- steps; names(negative_message) <- steps
@@ -45,7 +46,7 @@ progress_report <- function(pipelines, config, show_stats = FALSE,
       progress_index_this <- 0
       for (step in steps) {
         if (!step_is_done(config, step, project)) {
-          message(bio.index, project, negative_message[step])
+          if (show_status_per_exp) message(bio.index, project, negative_message[step])
           go_to_next <- TRUE
           break
         }
@@ -53,7 +54,7 @@ progress_report <- function(pipelines, config, show_stats = FALSE,
       }
       progress_index <- c(progress_index, progress_index_this)
       if (go_to_next) next
-      if (show_done) message(bio.index, project, " - Done")
+      if (show_done & show_status_per_exp) message(bio.index, project, " - Done")
       if (show_stats) {
         out.aligned <- conf["bam"] #TODO, fix when it works to subset by name!
         trimmed.out <- file.path(out.aligned, "trim")
@@ -78,10 +79,7 @@ progress_report <- function(pipelines, config, show_stats = FALSE,
     organism_report(all_organism, config, progress_index)
   }
   if (system_usage_stats) {
-    usage <- get_system_usage()
-    message("CPU (", usage$CPU_Usage_Percent, "%), ",
-            "Memory (", usage$Memory_Usage_Percent, "%), ",
-            "Drive (", usage$Drive_Usage_Percent, "%)")
+    usage <- get_system_usage(one_liner = TRUE)
   }
   cat("Number of studies completed\n")
   percentage_done <- round(100*(done / n_bioprojects), 2)

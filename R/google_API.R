@@ -90,12 +90,21 @@ download_fastq_google_drive <- function(drive_url = "https://drive.google.com/dr
 #' @param height = 6
 #' @param dpi = 600
 #' @param discord_connection = discord_connection_default_cached()
+#' @param google_drive_dir = google_drive_dir_links(1)
+#' @param formats_discord = formats[!(formats %in% "svg")]
+#' @param formats_google = formats[!(formats %in% c("jpg", "png"))]
+#' @param preview_image = FALSE, if TRUE, will open browser and display image, then wait for you to press enter,
+#' then you can cancel if ratios are wrong etc.
+#' @param discord_message = NULL, if character, sends the message to discord after images are sent.
 #' @return invisible(NULL)
 #' @export
 plot_all_versions <- function(plot, file_prefix, formats = c("jpg", "svg"), send_to_google_drive = FALSE,
                               send_to_discord = FALSE, width = 8, height = 6, dpi = 600,
                               discord_connection = discord_connection_default_cached(),
-                              google_drive_dir = google_drive_dir_links()) {
+                              google_drive_dir = google_drive_dir_links(1),
+                              formats_discord = formats[!(formats %in% "svg")],
+                              formats_google = formats[!(formats %in% c("jpg", "png"))],
+                              preview_image = FALSE, discord_message = NULL) {
   if (send_to_discord){
     if (is.null(discord_connection[[1]])) stop("Must have discord connection set!")
   }
@@ -107,12 +116,21 @@ plot_all_versions <- function(plot, file_prefix, formats = c("jpg", "svg"), send
     file <- paste0(file_prefix, ".", f)
     ggsave(file, plot = plot,
            dpi = dpi, height = height, width = width)
-    if (send_to_google_drive) {
+    if (preview_image && f == formats[1]) {
+      browseURL(file)
+      readline(prompt="Press [enter] to continue if you are happy with image ratios")
+    }
+
+    if (send_to_google_drive & (f %in% formats_google)) {
       googledrive::drive_upload(file, google_drive_dir, name = basename(file))
     }
-    if (send_to_discord) {
+    if (send_to_discord & (f %in% formats_discord)) {
       discordr::send_webhook_file(file, conn = discord_connection)
     }
+  }
+
+  if (!is.null(discord_message) & is(discord_connection, "character")) {
+    discordr::send_webhook_message(discord_message)
   }
   return(invisible(NULL))
 }
@@ -134,11 +152,15 @@ discord_connection_default_cached <- function(channel_id = 1,
 }
 
 google_drive_dir_links <- function(id = 1, id_file = "~/livemount/.cache/gargle/drive_folder_links") {
+  stopifnot(length(id) > 0)
+
   dt <- fread(id_file)
   ids <- id
   if (is.numeric(id)) {
     if (!(id %in% seq_along(dt$id))) stop("numeric id > max ids")
-    return(dt[ids,]$link)
+    res <- dt[ids,]$link
+    names(res) <- dt[ids,]$id
+    return(res)
   }
   if (is.character(id)) {
     if (!(id %in% dt$id)) {

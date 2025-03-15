@@ -12,22 +12,18 @@
 #' @return invisible(NULL)
 #' @export
 run_pipeline <- function(pipelines, config, wait = 100, BPPARAM = config$BPPARAM) {
-  stopifnot(length(pipelines) > 0 & is(pipelines, "list"))
-  message("---- Starting pipline:")
-  message("Number of workers: ", BPPARAM$workers)
-  message("Number of studies to run: ", length(pipelines))
-  message("Steps to run: ", paste(names(config$flag), collapse = ", "))
-  substeps <- config$flag_steps
-  pipeline_steps <- config$pipeline_steps
+
+  config <- run_pipeline_set_up_session(pipelines, config, BPPARAM)
+
   # Run pipeline
-  BiocParallel::bplapply(seq_along(pipeline_steps),
-                         function(i, substeps, pipelines, pipeline_steps, wait)
-    parallel_wrap(pipeline_steps[[i]], pipelines, config, substeps[[i]], wait),
-    substeps = substeps, pipelines = pipelines, wait = wait,
-    pipeline_steps = pipeline_steps, BPOPTIONS = config$parallel_conf, BPPARAM = BPPARAM)
-  # Done
-  message("Pipeline is done, creating report")
-  progress_report(pipelines, config, show_stats = TRUE)
+  BiocParallel::bplapply(seq_along(config$pipeline_steps),
+                         function(i, config, pipelines, wait)
+      parallel_wrap(config$pipeline_steps[[i]], pipelines, config,
+                    config$flag_steps[[i]], wait),
+    pipelines = pipelines, wait = wait, config = config,
+    BPOPTIONS = config$parallel_conf, BPPARAM = BPPARAM)
+
+  return(run_pipeline_end_session(pipelines, config))
 }
 
 parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100) {
@@ -39,7 +35,6 @@ parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100) {
   while(!all(steps_done)) {
     function_call(pipelines, config)
     steps_done <- all_substeps_done_all(config, steps, exps)
-
     if (!all(steps_done)) {
       message("Sleep (", steps_merged,")")
       Sys.sleep(wait)
@@ -48,6 +43,35 @@ parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100) {
     }
   }
   message("Done for step pipeline:\n", steps_merged)
+}
+
+run_pipeline_set_up_session <- function(pipelines, config, BPPARAM = config$BPPARAM) {
+  stopifnot(length(pipelines) > 0 & is(pipelines, "list"))
+  message("---- Starting pipline:")
+  message("Number of workers: ", BPPARAM$workers)
+  message("Number of studies to run: ", length(pipelines))
+  message("Steps to run: ", paste(names(config$flag), collapse = ", "))
+  init_time <- Sys.time()
+  init_time_char <- as.character.Date(init_time)
+  config$init_time <- init_time
+  config$error_dir <- file.path(config$project, "error_logs", init_time_char)
+  config$session_dir <- file.path(config$project, "session_logs", init_time_char)
+  dir.create(config$session_dir, recursive = TRUE, showWarnings = FALSE)
+  return(config)
+}
+
+run_pipeline_end_session <- function(pipelines, config) {
+  # Done
+  no_errors <- length(list.files(config$error_dir)) == 0
+  if (no_errors) {
+    message("Pipeline is done, creating report")
+    progress_report(pipelines, config, show_stats = TRUE)
+  } else {
+    message("Pipeline is done, but had errors, skipping report.",
+            "See the directory: ", config$error_dir, "for more information!")
+  }
+  cat("Total run time: "); print(round(Sys.time() - config$init_time, 2))
+  return(no_errors)
 }
 
 #' Pipeline experiment names

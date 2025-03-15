@@ -46,12 +46,15 @@
 #'  if TRUE they are saved in contamination dir. Ignored if "contam" is not in flags to use.
 #' @param keep_unaligned_genome logical, default FALSE. Do not keep contaminant aligned reads,
 #'  else saved in contamination dir.
+#' @param compress_raw_data logical, default FALSE. If TRUE, will compress raw fastq files.
 #' @param parallel_conf a bpoptions object, default:
 #' \code{bpoptions(log =TRUE, stop.on.error = TRUE)}
 #' Specific pipeline config for parallel settings and log directory
 #' @param verbose logical, default TRUE, give start up message
 #' @param logdir = file.path(project_dir, "log_pipeline"),
-#' @param BPPARAM = bpparam()
+#' @param BPPARAM_TRIM BiocParallel::MulticoreParam(8),
+#' number of cores/threads to use for trimming. Optimal is 8 for most data.
+#' @param BPPARAM = bpparam(), number of cores/threads to use.
 #' @return a list with a defined config
 #' @export
 pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pipeline"),
@@ -73,10 +76,12 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             delete_collapsed_files = mode == "online",
                             keep_contaminants = FALSE,
                             keep_unaligned_genome = FALSE,
+                            compress_raw_data = FALSE,
                             parallel_conf = bpoptions(log =TRUE,
                                                       stop.on.error = TRUE),
                             logdir = file.path(project_dir, "log_pipeline"),
                             verbose = TRUE,
+                            BPPARAM_TRIM = BiocParallel::MulticoreParam(8),
                             BPPARAM = bpparam()) {
   if (verbose) {
     message("Setting up mNGSp config..")
@@ -90,7 +95,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
   stopifnot(mode %in% c("online", "local"))
   stopifnot(is.logical(delete_raw_files) & is.logical(delete_trimmed_files) &
             is.logical(delete_collapsed_files) & is.logical(keep_contaminants) &
-            is.logical(keep_unaligned_genome))
+            is.logical(keep_unaligned_genome) & is.logical(compress_raw_data))
   stopifnot(is(pipeline_steps, "list"))
   if (preset == "empty") message("Using empty preset, now add your steps: using add_step_to_pipeline()")
   if (preset != "empty") stopifnot(is(pipeline_steps[[1]], "function"))
@@ -121,8 +126,9 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               delete_collapsed_files = delete_collapsed_files,
               keep_contaminants = keep_contaminants,
               keep.unaligned.genome = keep_unaligned_genome,
-              preset = preset,
-              parallel_conf = parallel_conf, BPPARAM = BPPARAM))
+              compress_raw_data = compress_raw_data,
+              preset = preset, parallel_conf = parallel_conf,
+              BPPARAM_TRIM = BPPARAM_TRIM, BPPARAM = BPPARAM))
 }
 
 #' Define which flags are done in each function

@@ -13,7 +13,8 @@ progress_report(
   return_progress_vector = FALSE,
   check_merged_org = FALSE,
   named_progress_vector = FALSE,
-  system_usage_stats = TRUE
+  system_usage_stats = TRUE,
+  show_status_per_exp = TRUE
 )
 }
 \arguments{

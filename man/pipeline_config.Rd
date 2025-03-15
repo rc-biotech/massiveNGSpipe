@@ -23,9 +23,11 @@ pipeline_config(
   delete_collapsed_files = mode == "online",
   keep_contaminants = FALSE,
   keep_unaligned_genome = FALSE,
+  compress_raw_data = FALSE,
   parallel_conf = bpoptions(log = TRUE, stop.on.error = TRUE),
   logdir = file.path(project_dir, "log_pipeline"),
   verbose = TRUE,
+  BPPARAM_TRIM = BiocParallel::MulticoreParam(8),
   BPPARAM = bpparam()
 )
 }
@@ -95,6 +97,8 @@ if TRUE they are saved in contamination dir. Ignored if "contam" is not in flags
 \item{keep_unaligned_genome}{logical, default FALSE. Do not keep contaminant aligned reads,
 else saved in contamination dir.}
 
+\item{compress_raw_data}{logical, default FALSE. If TRUE, will compress raw fastq files.}
+
 \item{parallel_conf}{a bpoptions object, default:
 \code{bpoptions(log =TRUE, stop.on.error = TRUE)}
 Specific pipeline config for parallel settings and log directory}
@@ -103,7 +107,10 @@ Specific pipeline config for parallel settings and log directory}
 
 \item{verbose}{logical, default TRUE, give start up message}
 
-\item{BPPARAM}{= bpparam()}
+\item{BPPARAM_TRIM}{BiocParallel::MulticoreParam(8),
+number of cores/threads to use for trimming. Optimal is 8 for most data.}
+
+\item{BPPARAM}{= bpparam(), number of cores/threads to use.}
 }
 \value{
 a list with a defined config

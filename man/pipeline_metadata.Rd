@@ -9,7 +9,10 @@ pipeline_metadata(
   config,
   force = FALSE,
   max_attempts = 7,
-  max_attempts_loop = 1
+  max_attempts_loop = 1,
+  BPPARAM = if (length(accessions) > 5) {
+     bpparam()
+ } else SerialParam()
 )
 }
 \arguments{

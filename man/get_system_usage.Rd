@@ -4,7 +4,7 @@
 \alias{get_system_usage}
 \title{System usage for Linux}
 \usage{
-get_system_usage(drive = "/dev/mapper/raid-home")
+get_system_usage(drive = "/dev/mapper/raid-home", one_liner = FALSE)
 }
 \description{
 System usage for Linux

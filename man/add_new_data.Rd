@@ -13,8 +13,9 @@ add_new_data(
   LibraryStrategy = c("RNA-Seq", "miRNA-Seq", "OTHER"),
   LibraryLayouts = c("SINGLE", "PAIRED"),
   Platforms = "ILLUMINA",
+  open_editor = interactive(),
   open_google_sheet = interactive(),
-  open_editor = interactive()
+  organism_name_cleanup = TRUE
 )
 }
 \description{

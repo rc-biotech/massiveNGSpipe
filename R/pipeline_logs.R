@@ -55,7 +55,7 @@ last_update_diff <- function(config, units = "days") {
 #' @return invisible(NULL), only cat prints the message
 #' @export
 last_update_message <- function(config, units = "hours") {
-  cat("Last update:")
+  cat("Last update: ")
   cat("(", round(last_update_diff(config, units = "hours"), 1), " hours ago): ",
       format(last_update(config), usetz=TRUE), "\n", sep = "")
   return(invisible(NULL))
@@ -70,4 +70,35 @@ last_update_message <- function(config, units = "hours") {
 #' @export
 is_progressing <- function(config, max_time_since_update = 1) {
   last_update_diff(config) < max_time_since_update
+}
+
+report_failed_pipe <- function(try, config, step, exp) {
+
+  if (is(try, "try-error")) {
+    warning("Failed at step, ", step, "for exp: ", exp)
+    warning(as.character(try))
+    if (!is.null(config$error_dir)) {
+      error_call <- paste(exp, "(", step, ")", as.character(try), paste(Sys.time()))
+      error_path <- report_failed_pipe_path(config, exp)
+      dir.create(config$error_dir, showWarnings = FALSE, recursive = TRUE)
+      saveRDS(error_call, error_path)
+    }
+    return(FALSE)
+  }
+  return(TRUE)
+}
+
+report_failed_pipe_path <- function(config, exp) {
+  if (is.null(config$error_dir)) {
+    warning("error_dir not defined in config, returning nonsense directory!")
+    return(tempfile())
+  }
+  file.path(config$error_dir, paste0(exp, ".rds"))
+}
+
+#' @export
+last_session_errors <- function(config) {
+  errors <- sapply(list.files(sort(list.dirs(file.path(config$project, "error_logs")), decreasing = TRUE)[1], full.names = TRUE), readRDS)
+  names(errors) <- gsub(".*error_logs|\\.rds$", "", names(errors))
+  return(errors)
 }

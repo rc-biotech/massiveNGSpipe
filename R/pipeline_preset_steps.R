@@ -1,11 +1,12 @@
 # Pipeline 1: Download
 pipe_fetch <- function(pipelines, config) {
   for (pipeline in pipelines) {
+    exp <- pipeline$accession
+    if (file.exists(report_failed_pipe_path(config, exp))) next
     try <- try(
       pipeline_download(pipeline, config)
     )
-    if (is(try, "try-error"))
-      warning("Failed at step, fetch, study: ", pipeline$accession)
+    report_failed_pipe(try, config, "fetch", exp)
   }
 }
 
@@ -13,14 +14,20 @@ pipe_trim_collapse <- function(pipelines, config) {
   do_trim <- "trim" %in% names(config$flag)
   do_collapse <- "collapsed" %in% names(config$flag)
   for (pipeline in pipelines) {
+    exp <- pipeline$accession
+    if (file.exists(report_failed_pipe_path(config, exp))) next
     try <- try({
       if (do_trim)
         pipeline_trim(pipeline,     config)
-      if (do_collapse)
-        pipeline_collapse(pipeline, config)
     })
-    if (is(try, "try-error"))
-      warning("Failed at step, trim_collapse, study: ", pipeline$accession)
+    status <- report_failed_pipe(try, config, "trim", pipeline$accession)
+    if (status) {
+      try <- try({
+        if (do_collapse)
+          pipeline_collapse(pipeline, config)
+      })
+      report_failed_pipe(try, config, "collapse", pipeline$accession)
+    }
   }
 }
 
@@ -28,28 +35,36 @@ pipe_trim_collapse <- function(pipelines, config) {
 pipe_align_clean <- function(pipelines, config) {
   do_contamint_removal <- "contam" %in% names(config$flag)
   for (pipeline in pipelines) {
+    exp <- pipeline$accession
+    if (file.exists(report_failed_pipe_path(config, exp))) next
     try <- try({
       if (do_contamint_removal)
         pipeline_align_contaminants(pipeline, config)
 
       pipeline_align(pipeline,    config)
-      pipeline_cleanup(pipeline,  config)
+
     })
-    if (is(try, "try-error"))
-      warning("Failed at step, align, study: ", pipeline$accession)
+    status <- report_failed_pipe(try, config, "align", pipeline$accession)
+    if (status) {
+      try <- try({
+        pipeline_cleanup(pipeline,  config)
+      })
+      report_failed_pipe(try, config, "clean", pipeline$accession)
+    }
   }
 }
 
 # Pipeline: exp -> ofst
 pipe_exp_ofst <- function(pipelines, config) {
   for (pipeline in pipelines) {
+    exp <- pipeline$accession
+    if (file.exists(report_failed_pipe_path(config, exp))) next
     try <- try({
       df_list <- pipeline_create_experiment(pipeline, config)
       if (is.null(df_list)) next
       pipeline_create_ofst(df_list,                   config)
     })
-    if (is(try, "try-error"))
-      warning("Failed at step, exp_ofst, study: ", pipeline$accession)
+    report_failed_pipe(try, config, "exp/ofst", pipeline$accession)
   }
 }
 
@@ -61,15 +76,15 @@ pipe_pshift_and_validate <- function(pipelines, config) {
       step_is_next_not_done(config, "valid_pshift", e)))
 
   for (experiments in exp[done_exp]) {
+    if (file.exists(report_failed_pipe_path(config, experiments[1]))) next
+
     try <- try({
       df_list <- lapply(experiments, function(e)
         read.experiment(e, validate = FALSE, output.env = new.env()))
       pipeline_pshift(df_list, accepted.length = c(20, 21, 25:33), config)
       pipeline_validate_shifts(df_list,               config)
     })
-    if (is(try, "try-error"))
-      warning("Failed at step, pshift_validate, study: ",
-              experiments)
+    report_failed_pipe(try, config, "pshift_and_validate", experiments[1])
   }
 }
 #TODO: Add possibility to fix wrong pshifting
@@ -81,38 +96,110 @@ pipe_convert <- function(pipelines, config) {
   done_exp <- unlist(lapply(exp, function(e) step_is_next_not_done(config, "covrle", e)))
 
   for (experiments in exp[done_exp]) {
+    if (file.exists(report_failed_pipe_path(config, experiments[1]))) next
     try <- try({
       df_list <- lapply(experiments, function(e) read.experiment(e, validate = F))
       pipeline_convert_covRLE(df_list, config)
       pipeline_convert_bigwig(df_list, config)
     })
-    if (is(try, "try-error")) {
-      warning("Failed at step, pshift_convert, study: ", experiments[1])
-      print(try)
-    }
+    report_failed_pipe(try, config, "bigwig_covRLE", experiments[1])
   }
 }
 
-#' Create the superset collection of all samples per organism
-#' @inheritParams run_pipeline
+pipe_counts <- function(pipelines, config) {
+  exp <- get_experiment_names(pipelines)
+  done_exp <- unlist(lapply(exp, function(e) step_is_next_not_done(config, "pcounts", e)))
+
+  for (experiments in exp[done_exp]) {
+    if (file.exists(report_failed_pipe_path(config, experiments[1]))) next
+    try <- try({
+      df_list <- lapply(experiments, function(e) read.experiment(e, validate = F))
+      pipeline_count_table_psites(df_list, config)
+    })
+    report_failed_pipe(try, config, "counts", experiments[1])
+  }
+  return(invisible(NULL))
+}
+
+#' Create the superset collection of all samples of all organisms
+#' Also saves a file in pipeline dir called ./metadata_done_samples.csv.
+#' @inheritParams pipeline_merge_org
 #' @param path_suffix character, default "". Add suffix to saved collection name, like a date to seperate version.
 #' @return invisible(NULL)
 #' @export
-pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE),
-                                    path_suffix = "") {
+#' @examples
+#' pipeline_collection_org(config, done_organisms = "Homo sapiens", path_suffix = "10_02_2025")
+pipeline_collection_master <- function(config, pipelines = pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE),
+                                    done_experiments = step_is_done_pipelines(config, "pcounts", pipelines),
+                                    done_organisms = unique(names(done_experiments)),
+                                    path_suffix = "", BPPARAM = MulticoreParam(workers = bpparam()$workers,
+                                                                               exportglobals = FALSE,
+                                                                               log = FALSE, force.GC = FALSE, fallback = T)) {
   message("- Collection of all samples per organism")
-  names(pipelines) <- NULL
-  exp <- get_experiment_names(pipelines)
-  done_exp <- unlist(lapply(exp, function(e) step_is_done(config, "pcounts", e)))
+  done_organisms <- unique(done_organisms)
+  stopifnot(length(names(done_experiments)) > 0)
 
-  # Merge all per organism
-  done_exp_list <- exp[done_exp]
-  done_organisms <- unique(names(done_exp_list))
+  exps_species <- done_experiments
+  message("-- Organism: ", org, " (", length(exps_species), " studies)")
+  df_list <- bplapply(exps_species, function(e)
+    read.experiment(e, validate = FALSE), BPPARAM = BPPARAM)
+  df <- do.call(rbind, df_list)
 
+  libtype_df <- libraryTypes(df)
+  if (length(libtype_df) != 1) stop("Only single libtype experiments supported for merging")
+  if (libtype_df == "") stop("Libtype of experiment must be defined!")
+  exp_name <- "all_samples-all_species"
+  if (libtype_df != "RFP") exp_name <- paste0(exp_name, "_", libtype_df)
+
+  out_dir <- file.path(config$config["bam"], exp_name)
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  fraction <- df$fraction
+  #fraction <- gsub("auto_.*", "", df$fraction)
+  study_size <- unlist(lapply(df_list, function(e) nrow(e)))
+  studies <- rep(unlist(exps_species, use.names = FALSE), study_size)
+  studies <- gsub("-.*", "", studies)
+  fraction <- paste(fraction, studies, sep = "_")
+  fraction <- gsub("^_", "",fraction)
+  fraction <- gsub("^NA_", "",fraction)
+  fraction <- paste0(fraction, "_", seq(length(fraction)))
+
+  create.experiment(out_dir, exper = exp_name,
+                    txdb = df@txdb, fa = df@fafile, organism = "all_species",
+                    libtype = df$libtype,
+                    condition = df$condition, rep = df$rep,
+                    stage = df$stage, fraction = fraction,
+                    files = df$filepath, result_folder = out_dir)
+  message("--- Trying to load created collection")
+  df <- read.experiment(exp_name, output.env = new.env())
+  files <- filepath(df, "pshifted", base_folders = libFolder(df, mode = "all"))
+  dt <- fread(config$complete_metadata)
+  dt_complete <- dt[Run %in% runIDs(df),]
+  dt_complete <- dt_complete[chmatch(Run, runIDs(df))]
+  dt_complete[, is_pshifted := grepl("_pshifted\\.ofst$", files)]
+  fwrite(dt_complete, file.path(config$project, "metadata_done_samples.csv"))
+}
+
+#' Create the superset collection of all samples per organism
+#' @inheritParams pipeline_merge_org
+#' @param path_suffix character, default "". Add suffix to saved collection name, like a date to seperate version.
+#' @return invisible(NULL)
+#' @export
+#' @examples
+#' pipeline_collection_org(config, done_organisms = "Homo sapiens", path_suffix = "10_02_2025")
+pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE),
+                                    done_experiments = step_is_done_pipelines(config, "pcounts", pipelines),
+                                    done_organisms = unique(names(done_experiments)),
+                                    path_suffix = "", BPPARAM = MulticoreParam(workers = bpparam()$workers,
+                                                                               exportglobals = FALSE,
+                                                                               log = FALSE, force.GC = FALSE, fallback = T)) {
+  message("- Collection of all samples per organism")
+  done_organisms <- unique(done_organisms)
+  stopifnot(length(names(done_experiments)) > 0)
   for (org in done_organisms) {
-    message("-- Organism: ", org)
-    df_list <- lapply(done_exp_list[names(done_exp_list) == org], function(e)
-      read.experiment(e, validate = F))
+    exps_species <- done_experiments[names(done_experiments) == org]
+    message("-- Organism: ", org, " (", length(exps_species), " studies)")
+    df_list <- bplapply(exps_species, function(e)
+      read.experiment(e, validate = FALSE), BPPARAM = BPPARAM)
     df <- do.call(rbind, df_list)
 
     libtype_df <- libraryTypes(df)
@@ -126,7 +213,7 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
     fraction <- df$fraction
     #fraction <- gsub("auto_.*", "", df$fraction)
     study_size <- unlist(lapply(df_list, function(e) nrow(e)))
-    studies <- rep(unlist(done_exp_list[names(done_exp_list) == org], use.names = F), study_size)
+    studies <- rep(unlist(exps_species, use.names = FALSE), study_size)
     studies <- gsub("-.*", "", studies)
     fraction <- paste(fraction, studies, sep = "_")
     fraction <- gsub("^_", "",fraction)
@@ -137,16 +224,16 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
                       condition = df$condition, rep = df$rep,
                       stage = df$stage, fraction = fraction,
                       files = df$filepath, result_folder = out_dir)
-
+    message("--- Trying to load created collection")
     df <- read.experiment(exp_name, output.env = new.env())
     count_folder <- QCfolder(df)
     dir.create(count_folder, recursive = TRUE, showWarnings = FALSE)
     for (region in c("mrna", "cds", "leaders", "trailers")) {
-      message("--- ", region)
+      message("---- ", region)
       count_lists <- bplapply(df_list,
                              function(e, region) suppressMessages(countTable(e, region,
                                                            type = "summarized")),
-                             region = region)
+                             region = region, BPPARAM = BPPARAM)
       count_list <- do.call(BiocGenerics::cbind, count_lists)
       saveName <- file.path(count_folder, paste0("countTable_", region, ".rds"))
       saveRDS(count_list, file = saveName)
@@ -163,7 +250,7 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
 #' @param done_experiments named character vector, default:
 #' step_is_done_pipelines(config, "merged_lib", pipelines). Set of experiments to merge
 #' per species.
-#' @param done_organisms which organisms to run merging for, default
+#' @param done_organisms Scientific name (e.g. Homo sapiens), which organisms to run merging for, default
 #' unique(names(done_experiments))
 #' @return invisible(NULL)
 #' @export
@@ -182,7 +269,7 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
       read.experiment(e, validate = F)[1,])
     stopifnot(length(df_list) > 0)
     df <- do.call(rbind, df_list)
-    df <- df[df$libtype == libtype_to_merge]
+    df <- df[df$libtype == libtype_to_merge,]
 
     # Overwrite default paths to merged
     libtype_df <- libraryTypes(df)
@@ -323,23 +410,6 @@ pipeline_merge_exp_modalities <- function(all_exp = list.experiments(validate = 
                       fraction = df$fraction, runIDs = runIDs(df),
                       fa = df@fafile, organism = org, files = df$filepath)
     df <- read.experiment(exp_name, output.env = new.env())
-  }
-  return(invisible(NULL))
-}
-
-pipe_counts <- function(pipelines, config) {
-  exp <- get_experiment_names(pipelines)
-  done_exp <- unlist(lapply(exp, function(e) step_is_next_not_done(config, "pcounts", e)))
-
-  for (experiments in exp[done_exp]) {
-    try <- try({
-      df_list <- lapply(experiments, function(e) read.experiment(e, validate = F))
-      pipeline_count_table_psites(df_list, config)
-    })
-    if (is(try, "try-error")) {
-      warning("Failed at step, count tables psites, study: ", experiments[1])
-      print(try)
-    }
   }
   return(invisible(NULL))
 }

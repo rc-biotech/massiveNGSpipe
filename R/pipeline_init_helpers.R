@@ -83,7 +83,16 @@ get_annotation_and_index <- function(organism,
 
   index <- NULL
   if (!is.null(annotation)) {
-    index <- ORFik::STAR.index(annotation, notify_load_existing = FALSE)
+    get_file_size_gb <- function(file_path) {
+      file_size_bytes <- file.info(file_path)$size
+      file_size_gb <- file_size_bytes / (1024^3)  # Convert bytes to GB
+      return(as.numeric(file_size_gb))  # Ensure it's numeric
+    }
+
+    # Try to estimate safe ram size
+    max_ram <- get_file_size_gb(annotation["genome"])*15
+    index <- ORFik::STAR.index(annotation, notify_load_existing = FALSE,
+                               max.ram = max_ram)
   }
   return(list(annotation = annotation, index = index))
 }
@@ -113,6 +122,20 @@ get_annotation <- function(organism,
       pseudo_5UTRS_if_needed = 100, notify_load_existing = FALSE
     )
   )
+
+  if (is(db_result, "try-error") & db == "refseq") {
+    message("--- GTF failed, trying gff3 format")
+    db_result <- try(
+      annotation <- getGenomeAndAnnotation(
+        organism = organism, db = db,
+        genome = genome, GTF = GTF,
+        phix = TRUE, ncRNA = TRUE, tRNA = TRUE, rRNA = TRUE,
+        output.dir = output.dir, optimize = TRUE,
+        pseudo_5UTRS_if_needed = 100, notify_load_existing = FALSE,
+        refseq_genbank_format = "gff3"
+      )
+    )
+  }
   if (is(db_result, "try-error")) {
     message(db_result)
     warning("Failed download of organism by db = '", db, "' of: ", organism)
@@ -214,6 +237,36 @@ pipeline_init <- function(study, study_accession, config, reference_list) {
   return(list(
     accession = study_accession, study = study, organisms = organisms
   ))
+}
+
+get_kingdoms <- function(file) {
+  stopifnot(file.exists(file))
+  d <- fread(file, header = TRUE, select = c("organism_name", "group"))[!duplicated(organism_name),]
+  d[, subgroup := gsub(".*_", "", group)]
+  d[, group := gsub("( |_).*", "", group)]
+  return(d)
+}
+
+get_kingdom_for_species <- function(species, db = "ensembl",
+                                    file = file.path(readRDS("~/.biomartr_cache_dir.rds"), "AssemblyFilesAllKingdoms_refseq.txt"),
+                                    regex = FALSE) {
+  if (db == "ensembl") {
+    kingdoms_temp <- sapply(species, function(x) {
+      res <- biomartr:::ensembl_assembly_hits(x)
+      if (is.logical(res)) return(as.character(NA))
+      return(res$division[1])
+    })
+
+    kingdoms <- gsub("Ensembl", "", kingdoms_temp)
+    kingdoms[species %in% c("Aedes aegypti", "Saccharomyces cerevisiae")] <- c("Vertebrates", "Fungi")
+    kingdoms[kingdoms %in% "Vertebrates"] <- "v/Animalia"
+    return(kingdoms)
+  }
+
+  if (regex) {
+    return(get_kingdoms(file)[grep(paste(species, collapse = "|"), organism_name)])
+  } else return(get_kingdoms(file)[organism_name %in% species][chmatch(species, organism_name)]
+                [is.na(organism_name), organism_name := species[which(is.na(organism_name))]])
 }
 
 path_config <- function(experiment, assembly_name, config, type = ifelse(config$preset == "Ribo-seq", "", config$preset)) {

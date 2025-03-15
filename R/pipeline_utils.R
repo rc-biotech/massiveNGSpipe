@@ -113,7 +113,7 @@ name_of_function <- function(...) unlist(purrr:::map(rlang::ensyms(...) , as.cha
 
 #' System usage for Linux
 #' @export
-get_system_usage <- function(drive = "/dev/mapper/raid-home") {
+get_system_usage <- function(drive = "/dev/mapper/raid-home", one_liner = FALSE) {
   # Get CPU usage
   cpu_usage <- as.numeric(system("top -bn1 | grep 'Cpu(s)' | awk '{print $2 + $4}'", intern = TRUE))
 
@@ -125,7 +125,7 @@ get_system_usage <- function(drive = "/dev/mapper/raid-home") {
   mem_percent <- round((mem_usage / mem_total) * 100, 2)
 
   # Get Hard drive usage
-  drive_info <- system("df -h | grep '", drive, "'", intern = TRUE)
+  drive_info <- system(paste0("df -h | grep '", drive, "'"), intern = TRUE)
   drive_vals <- strsplit(drive_info, " +")[[1]]
   drive_total <- drive_vals[2]  # Total size
   drive_used <- drive_vals[3]   # Used space
@@ -133,7 +133,7 @@ get_system_usage <- function(drive = "/dev/mapper/raid-home") {
   drive_percent <- drive_vals[5]  # Percentage used
 
   # Return as a named list
-  return(list(
+  usage <- list(
     CPU_Usage_Percent = cpu_usage,
     Memory_Usage_GB = mem_usage,
     Memory_Total_GB = mem_total,
@@ -142,5 +142,11 @@ get_system_usage <- function(drive = "/dev/mapper/raid-home") {
     Drive_Used = drive_used,
     Drive_Free = drive_free,
     Drive_Usage_Percent = drive_percent
-  ))
+  )
+  if (one_liner) {
+    usage <- cat(paste0("CPU (", usage$CPU_Usage_Percent, "%),",
+                        " Memory (", usage$Memory_Usage_Percent, "%),",
+                        " Drive (", usage$Drive_Usage_Percent, "%)\n"))
+  }
+  return(usage)
 }

@@ -11,7 +11,7 @@ pipeline_align_contaminants(pipeline, config)
 \arguments{
 \item{pipeline}{a pipeline object}
 
-\item{config}{the mNGSp config object}
+\item{config}{the mNGSp config object from \link{pipeline_config}}
 }
 \description{
 Remove contaminants and align the reads to genome. Single and paired end

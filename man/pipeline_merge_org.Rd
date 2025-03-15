@@ -24,7 +24,7 @@ NGS pipeline}
 step_is_done_pipelines(config, "merged_lib", pipelines). Set of experiments to merge
 per species.}
 
-\item{done_organisms}{which organisms to run merging for, default
+\item{done_organisms}{Scientific name (e.g. Homo sapiens), which organisms to run merging for, default
 unique(names(done_experiments))}
 }
 \value{

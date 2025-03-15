@@ -13,7 +13,8 @@ download_raw_srr <- function(run_accession, outdir, compress = TRUE,
 
 download_sra <- function(info, outdir, compress = TRUE,
                          sratoolkit_path =
-                             fs::path_dir(ORFik::install.sratoolkit())) {
+                             fs::path_dir(ORFik::install.sratoolkit()),
+                         delete_srr_preformat = TRUE) {
     fs::dir_create(outdir)
     outdir <- fs::path_real(outdir)
 
@@ -28,23 +29,28 @@ download_sra <- function(info, outdir, compress = TRUE,
       download_raw_srr(accession, outdir, compress, sratoolkit_path, PAIRED_END)
     }
 
-    fs::file_delete(
-      fs::path(outdir, info$Run)
-    )
+    preformat_files <- fs::path(outdir, info$Run)
+    delete_srr_preformat <- delete_srr_preformat & any(file.exists(preformat_files))
+    if(delete_srr_preformat) {
+      fs::file_delete(preformat_files[file.exists(preformat_files)])
+    }
 
     message("Extracting SRA runs:")
 }
 
-download_sra_aws <- function(run_accession, outdir) {
-  ret <- system2("aws", c(
+download_sra_aws <- function(run_accession, outdir, aws_bin = "aws",
+                             aws_mirror = "s3://sra-pub-run-odp/sra") {
+
+  file_aws_url <- file.path(aws_mirror, run_accession)
+  ret <- system2(aws_bin, c(
     "--no-sign-request", "s3", "ls",
-    paste0("s3://sra-pub-run-odp/sra/", run_accession, "/")
+    file_aws_url
   ), stdout = FALSE)
 
   if (ret == 0) {
-    ret <- system2("aws", c(
+    ret <- system2(aws_bin, c(
       "--no-sign-request", "s3", "sync",
-      paste("s3://sra-pub-run-odp/sra", run_accession, sep = "/"),
+      file_aws_url,
       outdir
     ))
     stopifnot("Run found on aws, but awscli exited with non-zero exit code" = ret == 0)
@@ -53,78 +59,74 @@ download_sra_aws <- function(run_accession, outdir) {
   return(ret == 0)
 }
 
-download_sra_ascp <- function(run_accession, outdir) {
-  # If not, fall back to EBI servers via Aspera.
-  # Note: accessions longer than 6 digits are grouped into another layer
-  # of directories.
-  vol1_path <-
-    if (nchar(run_accession) == 9) {
-      paste("vol1/srr",
-            stringr::str_sub(run_accession, 1, 6),
-            run_accession,
-            sep = "/"
-      )
-    } else {
-      paste("vol1/srr",
-            stringr::str_sub(run_accession, 1, 6),
-            paste0("00", stringr::str_sub(run_accession, -1)),
-            run_accession,
-            sep = "/"
-      )
-    }
-  srr_path <- fs::path_join(c(outdir, run_accession))
-  ret <- system2(fs::path_home(".aspera/connect/bin/ascp"), c(
-    "-k1", "-QT", "-l", "300m", "-P33001",
-    "-i", "~/.aspera/connect/etc/asperaweb_id_dsa.openssh",
-    paste0("era-fasp@fasp.sra.ebi.ac.uk:", vol1_path),
-    srr_path
+download_sra_ascp <- function(run_accession, outdir,
+                              ascp_bin = fs::path_home(".aspera/connect/bin/ascp"),
+                              ascp_private_key = "~/.aspera/connect/etc/asperaweb_id_dsa.openssh",
+                              resume_level = 1,
+                              ssh_port = 33001,
+                              max_transfer_rate = "300m",
+                              ebi_server_run_path = find_ascp_srr_url(run_accession)) {
+  # EBI servers via Aspera.
+  message("Falling back to ascp")
+  out_path <- fs::path_join(c(outdir, run_accession))
+  ret <- system2(ascp_bin, c(
+    "-T",
+    "-k", resume_level,
+    "-l", max_transfer_rate,
+    "-P", ssh_port,
+    "-i", ascp_private_key,
+    ebi_server_run_path, out_path
   ))
   stopifnot("ascp exited with non-zero exit code" = ret == 0)
 }
 
+find_ascp_srr_url <- function(run_accession) {
+  ORFik::find_url_ebi(run_accession, ebi_file_format = "sra_ftp",
+                      convert_to_ascp = TRUE)
+}
+
 extract_srr_preformat <- function(accession, outdir, compress = TRUE,
-                                  sratoolkit_path =
-                                    fs::path_dir(ORFik::install.sratoolkit()),
-                                  PAIRED_END) {
+                                  sratoolkit_path = fs::path_dir(ORFik::install.sratoolkit()),
+                                  PAIRED_END, progress_bar = TRUE,
+                                  fasterq_temp_dir = tempdir()) {
 
   message(accession)
-  srr_path <- fs::path_join(c(outdir, accession))
-  ret <- system2(fs::path_join(c(sratoolkit_path, "fasterq-dump")), c(
-    "-f", "-p", "--split-files", "--skip-technical",
-    "--outdir", outdir, srr_path
-  ))
-  stopifnot("fasterq-dump exited with non-zero exit code" = ret == 0)
+  binary <- "fasterq-dump"
+  already_compressed <- FALSE
+  sratoolkit_binary <- fs::path_join(c(sratoolkit_path, binary))
+  stopifnot(file.exists(sratoolkit_binary))
 
-  # Check if fastq-dump returned either a single <accession>.fastq file or
-  # two <accession>_{1,2}.fastq files and whether it matches LibraryLayout
-  # TODO: figure out what to do otherwise
+  srr_path <- fs::path_join(c(outdir, accession))
+  progress_bar <- ifelse(progress_bar, "-p", "")
+  ret <- system2(sratoolkit_binary, c(
+    "-f", progress_bar, "-t", fasterq_temp_dir,
+    "--split-files", "--skip-technical",
+    "--outdir", outdir,
+    srr_path
+  ))
+  fasterq_dump_failed <- ret != 0
+  if (fasterq_dump_failed) {
+    message("Using ebi fallback")
+    res <- try(ORFik::download.SRA(accession, outdir, rename = FALSE))
+    already_compressed <- TRUE
+    if (is(res, "try-error")) {
+      message("Using fastq-dump fallback")
+      res <- ORFik::download.SRA(accession, outdir, use.ebi.ftp = FALSE,
+                                 rename = FALSE, compress = compress)
+    } else {
+      if (!compress) {
+        lapply(res, function(fastq) R.utils::gunzip(fastq, overwrite = TRUE))
+      }
+    }
+  }
+
   filenames <- fs::path_file(fs::dir_ls(outdir,
                                         glob = paste0("**/", accession, "*.fastq")
   ))
-  if (setequal(filenames, paste0(accession, ".fastq"))) {
-    stopifnot(
-      "extracted one fastq, but LibraryLayout is not SINGLE" =
-        !PAIRED_END
-    )
-  } else if (setequal(filenames, sapply(
-    c("_1.fastq", "_2.fastq"), function(ext) paste0(accession, ext)
-  ))) {
-    stopifnot(
-      "extracted two fastqs, but LibraryLayout is not PAIRED" =
-        PAIRED_END
-    )
-  } else {
-    fs::file_delete(fs::dir_ls(outdir,
-                               glob = paste0("**/", accession, "*.fastq")
-    ))
-    stop(
-      "invalid filenames returned from fasterq-dump: ",
-      paste(filenames, collapse = " ")
-    )
-  }
-
+  validate_fastq_download(filenames, accession, PAIRED_END, already_compressed,
+                          outdir)
   # Compress the output if needed
-  if (compress) {
+  if (compress & !already_compressed) {
     for (filename in filenames) {
       ret <- system2("pigz", c("-f", "--best",
                                fs::path_join(c(outdir, filename))
@@ -132,6 +134,40 @@ extract_srr_preformat <- function(accession, outdir, compress = TRUE,
       stopifnot("pigz exited with non-zero exit code" = ret == 0)
     }
   }
+
+  return(filenames)
+}
+
+#' Check if fastq-dump returned either a single accession.fastq file or
+#' two accession_(1,2).fastq files and whether it matches LibraryLayout
+#' TODO: figure out what to do otherwise
+#' @noRd
+validate_fastq_download <- function(filenames, accession, PAIRED_END, is_compressed = FALSE,
+                                    outdir) {
+  suffix <- ".fastq"
+  if (is_compressed) suffix <- paste0(suffix, ".gz")
+  if (setequal(filenames, paste0(accession, suffix))) {
+    stopifnot(
+      "extracted one fastq, but LibraryLayout is not SINGLE" =
+        !PAIRED_END
+    )
+  } else if (setequal(filenames, sapply(
+    paste0(c("_1", "_2"), suffix), function(ext) paste0(accession, ext)
+  ))) {
+    stopifnot(
+      "extracted two fastqs, but LibraryLayout is not PAIRED" =
+        PAIRED_END
+    )
+  } else {
+    fs::file_delete(fs::dir_ls(outdir,
+                               glob = paste0("**/", accession, paste0("*", suffix))
+    ))
+    stop(
+      "invalid filenames returned from fasterq-dump: ",
+      paste(filenames, collapse = " ")
+    )
+  }
+  return(invisible(NULL))
 }
 
 install_ascp <- function(path = ".aspera/connect/bin/ascp") {

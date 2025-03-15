@@ -5,6 +5,7 @@
 #' Extract them into '<'accession'>'.fastq.gz or '<'accession'>'_{1,2}.fastq.gz
 #' for SE/PE reads respectively.
 #' @param pipeline a pipeline object
+#' @param config the mNGSp config object from [pipeline_config]
 pipeline_download <- function(pipeline, config) {
     study <- pipeline$study
     for (organism in names(pipeline$organisms)) {
@@ -14,7 +15,7 @@ pipeline_download <- function(pipeline, config) {
         download_sra(
             study[ScientificName == organism],
             conf["fastq"],
-            compress = FALSE
+            compress = config$compress_raw_data
         )
         set_flag(config, "fetch", conf["exp"])
     }
@@ -26,39 +27,73 @@ pipeline_download <- function(pipeline, config) {
 #' @param pipeline a pipeline object
 pipeline_trim <- function(pipeline, config) {
     study <- pipeline$study
+    config$BPPARAM_TRIM <- SerialParam()
     for (organism in names(pipeline$organisms)) {
         conf <- pipeline$organisms[[organism]]$conf
         if (!step_is_next_not_done(config, "trim", conf["exp"])) next
         index <- pipeline$organisms[[organism]]$index
         source_dir <- conf["fastq"]
-        target_dir <- conf["bam"]
+        process_dir <- target_dir <- conf["bam"]
+        trimmed_dir <- fs::path(process_dir, "trim")
+
         runs <- study[ScientificName == organism]
         # Files to run (Single end / Paired end)
         all_files <- run_files_organizer(runs, source_dir)
         # Trim
+        barcodes_dt <-
         BiocParallel::bplapply(seq_len(nrow(runs)), function(i, all_files, runs) {
-            message(runs[i]$Run)
-            filenames <- all_files[[i]]
-            file <- filenames[1]
-            file2 <- if(is.na(filenames[2])) {NULL} else filenames[2]
+          run <- runs[i]$Run
+          message(run)
+          filenames <- all_files[[i]]
+          file <- filenames[1]
+          single_end <- is.na(filenames[2])
+          file2 <- if(single_end) {NULL} else filenames[2]
 
-            if (!grepl("\\.fasta$|\\.fasta\\.gz$", file)) {
-              adapter <- try(fastqc_adapters_info(file))
-              if (is(adapter, "try-error")) {
-                message("This is a fasta file, fastqc adapter detection disabled")
-                adapter <- "disable"
-              }
-            } else adapter <- "disable"
+          if (!grepl("\\.fasta$|\\.fasta\\.gz$", file)) {
+            adapter <- try(fastqc_adapters_info(file))
+            if (is(adapter, "try-error")) {
+              message("This is a fasta file, fastqc adapter detection disabled")
+              adapter <- "disable"
+            }
+          } else adapter <- "disable"
 
-            ORFik::STAR.align.single(
-              file, file2,
-              output.dir = target_dir,
-              adapter.sequence = adapter,
-              index.dir = index, steps = "tr"
-            )
+          ORFik::STAR.align.single(
+            file, file2,
+            output.dir = target_dir,
+            adapter.sequence = adapter,
+            index.dir = index, steps = "tr"
+          )
+          barcode_dt <- data.table()
+          if (single_end && runs[i]$LIBRARYTYPE == "RFP") {
+            barcode_dt <- barcode_detector_single(runs[i], source_dir, target_dir, trimmed_dir,
+                                                  redownload_raw_if_needed = TRUE)
+            if (barcode_dt$barcode_detected)  {
+              barcode_dir <- file.path(trimmed_dir, "before_barcode_removal")
+              dir.create(barcode_dir, showWarnings = FALSE, recursive = TRUE)
+              file_trim <- massiveNGSpipe:::run_files_organizer(runs[i], trimmed_dir)[[1]]
+              json_file <- grep(run, dir(trimmed_dir, "\\.json$", full.names = TRUE), value = TRUE)
+              html_file <- grep(run, dir(trimmed_dir, "\\.html$", full.names = TRUE), value = TRUE)
+              all_3_old_files <- c(file_trim, json_file, html_file)
+              all_3_new_files <- gsub("/trimmed_|/trimmed2_", "/", file.path(barcode_dir, basename(all_3_old_files)))
+              fs::file_move(all_3_old_files, all_3_new_files)
+              file <- all_3_new_files[1]
+              ORFik::STAR.align.single(
+                file,
+                output.dir = target_dir,
+                adapter.sequence = adapter,
+                index.dir = index, steps = "tr",
+                trim.front = barcode_dt$barcode5p_size,
+                trim.tail = barcode_dt$barcode3p_size
+              )
+              fs::file_delete(file)
+            }
+          }
 
+          return(barcode_dt)
         }, all_files = all_files, runs = runs,
-        BPPARAM = BiocParallel::MulticoreParam(8))
+        BPPARAM = config$BPPARAM_TRIM)
+        barcodes_dt <- rbindlist(barcodes_dt)
+        fwrite(barcodes_dt, file.path(trimmed_dir, "adapter_barcode_table.csv"))
 
         set_flag(config, "trim", conf["exp"])
         if (config$delete_raw_files) fs::file_delete(unlist(all_files))
@@ -70,8 +105,7 @@ pipeline_trim <- function(pipeline, config) {
 #' Remove contaminants and align the reads to genome. Single and paired end
 #' reads are handled separately, so the resulting logs are renamed with a
 #' "_SINGLE" and/or "_PAIRED" suffix.
-#' @param pipeline a pipeline object
-#' @param config the mNGSp config object
+#' @inheritParams pipeline_download
 pipeline_align <- function(pipeline, config) {
   # TODO: fix multiqc error for trimmed
   study <- pipeline$study
@@ -95,6 +129,8 @@ pipeline_align <- function(pipeline, config) {
       input_dir <- ifelse(did_collapse,
                           fs::path(trimmed_dir, "SINGLE"),
                           trimmed_dir)
+      stopifnot(dir.exists(input_dir))
+
       ORFik::STAR.align.folder(
         input.dir = input_dir,
         output.dir = output_dir, multiQC = FALSE,
@@ -103,6 +139,10 @@ pipeline_align <- function(pipeline, config) {
       )
       STAR.allsteps.multiQC(output_dir, steps = steps)
       for (stage in c("aligned")) {
+        new_dir <- fs::path(output_dir, stage, "LOGS_SINGLE")
+        if (dir.exists(new_dir)) {
+          fs::dir_delete(new_dir)
+        }
         fs::file_move(
           fs::path(output_dir, stage, "LOGS"),
           fs::path(output_dir, stage, "LOGS_SINGLE")
@@ -122,6 +162,7 @@ pipeline_align <- function(pipeline, config) {
       input_dir <- ifelse(did_collapse,
                           fs::path(trimmed_dir, "PAIRED"),
                           ifelse(can_use_raw, conf["fastq"], trimmed_dir))
+      stopifnot(dir.exists(input_dir))
       # message("Paired end ignored for now, running collapsed pair mode only!")
       collapsed_paired_end_mode <- TRUE
       ORFik::STAR.align.folder(
@@ -157,8 +198,7 @@ pipeline_align <- function(pipeline, config) {
 #' Remove contaminants and align the reads to genome. Single and paired end
 #' reads are handled separately, so the resulting logs are renamed with a
 #' "_SINGLE" and/or "_PAIRED" suffix.
-#' @param pipeline a pipeline object
-#' @param config the mNGSp config object
+#' @inheritParams pipeline_download
 pipeline_align_contaminants <- function(pipeline, config) {
   study <- pipeline$study
   for (organism in names(pipeline$organisms)) {
@@ -216,7 +256,7 @@ pipeline_align_contaminants <- function(pipeline, config) {
 
 #' Remove all files apart from logs and final aligned BAMs.
 #' Rename the BAMs into <run_accession>.bam format.
-#' @param pipeline a pipeline object
+#' @inheritParams pipeline_download
 pipeline_cleanup <- function(pipeline, config) {
     accession <- pipeline$accession
     study <- pipeline$study
@@ -232,9 +272,10 @@ pipeline_cleanup <- function(pipeline, config) {
             glob = "**/*.out.*"
           ))
         }
-
-        old_file_names <- match_bam_to_metadata(bam_dir, study_org, FALSE)
         new_file_names <- fs::path(bam_dir, study_org$Run, ext = "bam")
+        old_file_names <- match_bam_to_metadata(bam_dir, study_org, FALSE)
+
+        try(file.remove(new_file_names[new_file_names != old_file_names]), silent = TRUE)
         stopifnot(length(old_file_names) == length(new_file_names))
         for (i in seq_along(old_file_names)) {
           fs::file_move(old_file_names[i], new_file_names[i])
@@ -311,6 +352,7 @@ pipeline_pshift <- function(df_list, accepted.length = c(20, 21, 25:33),
       set_flag(config, "pshifted", name(df))
     } else {
       bad_pshifting_report(df)
+      stop("Pshifting failed for exp: ", name(df))
     }
   }
 }

@@ -184,3 +184,182 @@ run_files_organizer <- function(runs, source_dir, exclude = c("json", "html")) {
   stopifnot(no_duplicates)
   return(all_files)
 }
+
+#' NGS barcode detector
+#' Detects both 5' and 3' barcodes
+#'
+#' @param pipeline a pipeline object
+#' @param redownload_raw_if_needed logical, default TRUE.
+#' For additional stats redownload fastq if removed.
+#' @return data.table with stats for all runs in experiment
+#' @examples
+#' config <- pipeline_config()
+#' pipelines <- pipeline_init_all(config, only_complete_genomes = TRUE, gene_symbols = FALSE, simple_progress_report = FALSE)
+#' pipeline <- pipelines[["PRJNA634994"]]
+#' barcode_detector(pipeline, FALSE)
+barcode_detector_pipeline <- function(pipeline, redownload_raw_if_needed = TRUE) {
+  message("Barcode detection for study (", pipeline$accession, ")")
+  dt_stats <- data.table()
+  study_all <- pipeline$study
+
+  organism <- names(pipeline$organisms)[1]
+  for (organism in names(pipeline$organisms)) {
+    message("- ", organism)
+    study <- study[ScientificName == organism]
+    if (!all(study$LibraryLayout == "SINGLE")) {
+      message("Paired end data, can only detect barcode for single end, next experiment..")
+      next
+    }
+    index <- pipeline$organisms[[organism]]$index
+    conf <- pipeline$organisms[[organism]]$conf
+    fastq_dir <- conf["fastq"]
+    process_dir <- conf["bam"]
+    trimmed_dir <- fs::path(process_dir, "trim")
+
+    i <- 1
+    dt_stats_org <- data.table()
+
+    dt_stats_org <- rbindlist(lapply(seq(nrow(study)), function(i)
+      barcode_detector_single(study[i], fastq_dir, process_dir, trimmed_dir,
+                              redownload_raw_if_needed)))
+
+    dt_stats <- rbindlist(list(dt_stats, dt_stats_org))
+  }
+  return(dt_stats)
+}
+
+barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimmed_dir,
+                                    redownload_raw_if_needed = TRUE, check_at_mean_size = 35,
+                                    minimum_size = 27) {
+  sample <- study_sample$Run
+  message("-- ", sample)
+  stopifnot(is(study_sample, "data.table") && nrow(study_sample) == 1)
+  barcode5p_size <- barcode3p_size <- cut_left_rel_pos <- cut_right_rel_pos <- 0
+  consensus_string_5p <- consensus_string_3p <- ""
+
+  json_file <- grep(sample, dir(trimmed_dir, "\\.json$", full.names = TRUE), value = TRUE)
+  if (length(json_file) == 1) {
+    trim_stats <- ORFik::trimming.table(trimmed_dir, json_file, TRUE)
+    if (trim_stats$trim_mean_length <= check_at_mean_size) {
+      return(data.table(id = sample, adapter = trim_stats$adapter,
+                        barcode_detected = FALSE,
+                        max_length_raw = trim_stats$raw_mean_length,
+                        mean_length_raw = trim_stats$raw_mean_length,
+                        mean_length_adapter_filtered = trim_stats$trim_mean_length,
+                        mean_length_adapter_barcode_filtered = NA,
+                        barcode5p_size, barcode3p_size,
+                        `reads_no_adapter_removed fastp(%)` = NA,
+                        `reads_no_adapter_removed ORFik(%)` = NA,
+                        consensus_string_5p, consensus_string_3p))
+    }
+  }
+
+
+
+  file_trim <- try(massiveNGSpipe:::run_files_organizer(study_sample, trimmed_dir)[[1]], silent = TRUE)
+  trimmed_file_exists <- !is(file_trim, "try-error")
+  file <- file.path(fastq_dir, paste0(sample, ".fastq"))
+  raw_file_exists <- file.exists(file)
+  # Download
+  if (!raw_file_exists & redownload_raw_if_needed) {
+    massiveNGSpipe:::download_sra(study_sample, fastq_dir, compress = FALSE)
+  }
+  # Trim
+  if (!trimmed_file_exists) {
+    adapter <- massiveNGSpipe:::fastqc_adapters_info(file)
+
+    ORFik::STAR.align.single(
+      file, NULL,
+      output.dir = process_dir,
+      adapter.sequence = adapter,
+      index.dir = "", steps = "tr"
+    )
+  }
+
+  file_trim <- massiveNGSpipe:::run_files_organizer(study_sample, trimmed_dir)[[1]]
+
+  a <- jsonlite::fromJSON(sub("/trimmed_", "/report_", sub("\\.fastq$", ".json", file_trim)))
+  adapter <- a$adapter_cutting$read1_adapter_sequence
+  if (is.null(adapter)) adapter <- "passed"
+  adapter_trimmed_reads <- a$adapter_cutting$adapter_trimmed_reads
+  reads_no_adapter_removed <- round(100 - (100* (adapter_trimmed_reads / a$summary$before_filtering$total_reads)), 1)
+  reads_no_adapter_removed_ORFik <- NA
+  max_size_before <- a$read1_before_filtering$total_cycles
+  mean_size_before <- a$summary$before_filtering$read1_mean_length
+  max_size_after <- a$summary$after_filtering$read1_mean_length
+  max_size_after_all <- max_size_after
+  fastq_cut <- NULL
+  if (max_size_after > check_at_mean_size) {
+
+    curves <- a$read1_after_filtering[c("quality_curves", "content_curves")]
+    list <- lapply(curves, function(curve_type) {
+      lapply(curve_type, function(curve_vec) {
+        data.table(changepoint::cpt.mean(curve_vec, Q = 3)@cpts)
+      })
+    })
+
+    set <- unlist(list)
+    tab <- table(set)
+    tab<- tab[-length(tab)]
+    pos <- as.numeric(names(tab))
+
+    cut_left <- as.numeric(names(which.max(tab[pos < 12])))
+    pos_high <- as.numeric(names(which.max(tab[pos > max_size_before-12])))
+
+    #max(pos[pos > cut_left*2])
+
+    barcode5p_size <- cut_left
+    barcode3p_size <- max(0, max_size_before - pos_high - 2, na.rm = TRUE)
+    if ((max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size ) {
+      amount_too_big <- minimum_size - (max_size_after - (barcode5p_size + barcode3p_size))
+      barcode3p_size <- max(barcode3p_size - amount_too_big, 0)
+      if ((max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size ) {
+        amount_too_big <- minimum_size - (max_size_after - (barcode5p_size + barcode3p_size))
+        barcode5p_size <- max(barcode5p_size - amount_too_big, 0)
+      }
+    }
+
+    cut_right_rel_pos <- barcode3p_size + 1
+    cut_left_rel_pos <- barcode5p_size + 1
+
+
+    # a$summary$after_filtering$read1_mean_length
+    # x <- rbindlist(list[[1]], fill = TRUE)
+    if (raw_file_exists & adapter != "passed") {
+      fastq_raw <- readDNAStringSet(file, format = "fastq", nrec = 100000)
+      adapter_ext <- paste0(adapter, paste0(rep("N", max_size_before - nchar(adapter)), collapse = ""))
+      fastq_raw_trimmed <- trimLRPatterns(Lpattern = "", Rpattern = adapter_ext, subject = fastq_raw, max.Rmismatch = 3)
+      fastq_raw_trimmed_len <- fastq_raw_trimmed[width(fastq_raw_trimmed) > 20]
+      untrimmed_reads_raw_ORFik <- sum(width(fastq_raw_trimmed_len) == max(width(fastq_raw_trimmed_len)))
+      reads_no_adapter_removed_ORFik <- round(100 - (100* ( untrimmed_reads_raw_ORFik / length(fastq_raw_trimmed_len))), 1)
+    }
+
+
+
+    fastq <- readDNAStringSet(file_trim, format = "fastq", nrec = 100000)
+    fastq_cut <- subseq(fastq, cut_left_rel_pos, width(fastq) - cut_right_rel_pos)
+    max_size_after_all <- mean(width(fastq_cut))
+    if (cut_left_rel_pos > 1) {
+      consensus_string_5p <- consensusString(subseq(fastq, 1, cut_left_rel_pos - 1))
+    }
+    if (cut_right_rel_pos > 1) {
+      consensus_string_3p <- consensusString(subseq(fastq, width(fastq) - cut_right_rel_pos, width(fastq)))
+    }
+  }
+  # subseq(dna, cut_left_rel_pos, width(dna) - cut_right_rel_pos)
+  dt_stats_this <- data.table(id = sample, adapter = adapter,
+                              barcode_detected = (cut_left_rel_pos > 1) | (cut_right_rel_pos > 1),
+                              max_length_raw = max_size_before,
+                              mean_length_raw = mean_size_before,
+                              mean_length_adapter_filtered = max_size_after,
+                              mean_length_adapter_barcode_filtered = round(max_size_after_all, 0),
+                              barcode5p_size, barcode3p_size,
+                              `reads_no_adapter_removed fastp(%)` = reads_no_adapter_removed,
+                              `reads_no_adapter_removed ORFik(%)` = reads_no_adapter_removed_ORFik,
+                              consensus_string_5p, consensus_string_3p)
+  if (is.na(dt_stats_this$barcode_detected)) dt_stats_this[, barcode_detected := FALSE]
+
+  print(dt_stats_this)
+
+  return(dt_stats_this)
+}

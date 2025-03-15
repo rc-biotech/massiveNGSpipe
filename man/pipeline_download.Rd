@@ -8,6 +8,8 @@ pipeline_download(pipeline, config)
 }
 \arguments{
 \item{pipeline}{a pipeline object}
+
+\item{config}{the mNGSp config object from \link{pipeline_config}}
 }
 \description{
 Extract them into '<'accession'>'.fastq.gz or '<'accession'>'_{1,2}.fastq.gz
