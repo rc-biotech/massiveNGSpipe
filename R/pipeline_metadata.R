@@ -45,6 +45,7 @@
 #' If FALSE, will not update sheet after check. This
 #' @return logical, TRUE if you had unique rows per accession per organism
 #' @import googlesheets4 data.table ORFik BiocParallel fs stringr DataEditR
+#' @importFrom googledrive drive_download
 #' @export
 curate_metadata <- function(accessions, config, organisms = "all",
                             google_url = config$google_url,
@@ -56,9 +57,14 @@ curate_metadata <- function(accessions, config, organisms = "all",
                             step_mode = FALSE, open_editor = interactive(),
                             fix_loop = TRUE, only_curated = FALSE,
                             update_google_sheet = TRUE) {
+  stopifnot(length(fix_loop) == 1); stopifnot(is(fix_loop, "logical"))
+  stopifnot(length(update_google_sheet) == 1); stopifnot(is(update_google_sheet, "logical"))
+  stopifnot(length(only_curated) == 1); stopifnot(is(only_curated, "logical"))
+  stopifnot(length(step_mode) == 1); stopifnot(is(step_mode, "logical"))
+
   if (!interactive() & step_mode)
     stop("In non interactive mode you can not run step_mode = TRUE!")
-  stopifnot(length(fix_loop) == 1); stopifnot(is(fix_loop, "logical"))
+
   add_new_accessions <- !is.null(accessions)
   if (!update_google_sheet & add_new_accessions)
     message("update_google_sheet is FALSE and add_new_accessions is TRUE, is this intentional?")
@@ -71,7 +77,16 @@ curate_metadata <- function(accessions, config, organisms = "all",
                  LibraryLayouts, Platforms,
                  open_editor)
   }
+  curation_loop_until_valid(fix_loop, config, google_url,
+                            accessions, only_curated,
+                            libtypes, update_google_sheet)
 
+  return(fix_loop)
+}
+
+curation_loop_until_valid <- function(fix_loop, config, google_url,
+                                      accessions, only_curated,
+                                      libtypes, update_google_sheet) {
   # Step6: Now, Check if it is valid (if not repeat step with new csv)
   while(fix_loop) {
     readline(prompt = "You think metadata is ready?\n Press enter when ready: ")
@@ -83,14 +98,10 @@ curate_metadata <- function(accessions, config, organisms = "all",
                                            only_curated = only_curated,
                                            libtypes = libtypes)
     if (!is.null(google_url) & update_google_sheet) {
-      message("Uploading updated version to google sheet:")
-      write_sheet(read.csv(config$temp_metadata),
-                  ss = google_url,
-                  sheet = 1)
+      write_sheet_safe(config$temp_metadata, google_url)
     } else message("Updated your local csv metadata file")
     if (finished) break
   }
-  return(fix_loop)
 }
 
 #' Download all metadata for all accessions
@@ -303,6 +314,7 @@ pipeline_metadata_annotate <- function(filtered_RFP) {
 #' @param output_file a path to store final Ribo csv, default config$complete_metadata
 #' @param backup_file a path to store backup csv, default: config$backup_metadata,
 #' store all runs, even non Ribo-seq, such that it can be used if wanted.
+#' @return logical, TRUE if valid.
 pipeline_validate_metadata <- function(dt, config,
                                        accessions = NULL,
                                        only_curated = FALSE,

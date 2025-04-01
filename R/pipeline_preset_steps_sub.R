@@ -189,6 +189,8 @@ pipeline_align <- function(pipeline, config) {
       #     )
       # }
     }
+
+    if (nrow(runs))
     if (config$delete_collapsed_files)
       fs::dir_delete(input_dir)
     set_flag(config, "aligned", conf["exp"])
@@ -275,7 +277,9 @@ pipeline_cleanup <- function(pipeline, config) {
         new_file_names <- fs::path(bam_dir, study_org$Run, ext = "bam")
         old_file_names <- match_bam_to_metadata(bam_dir, study_org, FALSE)
 
-        try(file.remove(new_file_names[new_file_names != old_file_names]), silent = TRUE)
+        file_names_to_delete <- new_file_names[new_file_names != old_file_names]
+        file_names_to_delete <- file_names_to_delete[file.exists(file_names_to_delete)]
+        if (length(file_names_to_delete) > 0) try(file.remove(file_names_to_delete), silent = TRUE)
         stopifnot(length(old_file_names) == length(new_file_names))
         for (i in seq_along(old_file_names)) {
           fs::file_move(old_file_names[i], new_file_names[i])
@@ -336,24 +340,57 @@ pipeline_create_ofst <- function(df_list, config) {
   }
 }
 
-pipeline_pshift <- function(df_list, accepted.length = c(20, 21, 25:33),
-                            config) {
+
+pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_lengths_rpf) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "pshifted", name(df))) next
     res <- tryCatch(shiftFootprintsByExperiment(df, output_format = "ofst",
-                                                accepted.lengths = accepted.length),
+                                                accepted.lengths = accepted_lengths),
                     error = function(e) {
                       message(e)
+                      message(name(df))
                       message("Fix manually (skipping to next project!)")
+                      bad_pshifting_report(df)
                       return(e)
                     })
     if(!inherits(res, "error")) {
       dir.create(QCfolder(df))
       set_flag(config, "pshifted", name(df))
-    } else {
-      bad_pshifting_report(df)
-      stop("Pshifting failed for exp: ", name(df))
     }
+  }
+}
+
+#' Validate pshifting
+#'
+#' It will do these two things: Plot all TIS regions and
+#' make a frame distribution table for all libs.
+#' It then save a rds file called either 'warning.rds' or 'good.rds'.
+#' Depending on the results was accepted or not:
+#' \code{any(zero_frame$percent_length < 25)}
+#' @param df_list a list of ORFik experiments
+#' @param config a pipeline config
+#' @return invisible(NULL)
+pipeline_validate_shifts <- function(df_list, config) {
+  #
+  # TODO: This function can be improved, especially how we detect bad shifts!
+  for (df in df_list) {
+    if (!step_is_next_not_done(config, "valid_pshift", name(df))) next
+    # Plot max 39 libraries!
+    subset <- if (nrow(df) >= 40) {seq(39)} else {seq(nrow(df))}
+    invisible(shiftPlots(df[subset,], output = "auto", plot.ext = ".png"))
+    # Check frame usage
+    frameQC <- orfFrameDistributions(df)
+    remove.experiments(df)
+    zero_frame <- frameQC[frame == 0 & best_frame == FALSE,]
+    # Store a flag that says good / bad shifting
+    QCFolder <- QCfolder(df)
+    data.table::fwrite(frameQC, file = file.path(QCFolder, "Ribo_frames_all.csv"))
+    data.table::fwrite(zero_frame, file = file.path(QCFolder, "Ribo_frames_badzero.csv"))
+    if (any(zero_frame$percent_length < 25)) {
+      warning("Some libraries contain shift that is < 25% of CDS coverage")
+      saveRDS(FALSE, file.path(QCFolder, "warning.rds"))
+    } else saveRDS(TRUE, file.path(QCFolder, "good.rds"))
+    set_flag(config, "valid_pshift", name(df))
   }
 }
 

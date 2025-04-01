@@ -61,10 +61,15 @@ pipe_exp_ofst <- function(pipelines, config) {
     if (file.exists(report_failed_pipe_path(config, exp))) next
     try <- try({
       df_list <- pipeline_create_experiment(pipeline, config)
-      if (is.null(df_list)) next
-      pipeline_create_ofst(df_list,                   config)
     })
-    report_failed_pipe(try, config, "exp/ofst", pipeline$accession)
+    status <- report_failed_pipe(try, config, "exp", pipeline$accession)
+    if (is.null(df_list)) next
+    if (status) {
+      try <- try({
+        pipeline_create_ofst(df_list,                   config)
+      })
+      report_failed_pipe(try, config, "ofst", pipeline$accession)
+    }
   }
 }
 
@@ -81,10 +86,16 @@ pipe_pshift_and_validate <- function(pipelines, config) {
     try <- try({
       df_list <- lapply(experiments, function(e)
         read.experiment(e, validate = FALSE, output.env = new.env()))
-      pipeline_pshift(df_list, accepted.length = c(20, 21, 25:33), config)
-      pipeline_validate_shifts(df_list,               config)
+      pipeline_pshift(df_list,          config)
     })
-    report_failed_pipe(try, config, "pshift_and_validate", experiments[1])
+    status <- report_failed_pipe(try, config, "pshift", experiments[1])
+    if (status) {
+      try <- try({
+        pipeline_validate_shifts(df_list, config)
+      })
+      report_failed_pipe(try, config, "validate", experiments[1])
+    }
+
   }
 }
 #TODO: Add possibility to fix wrong pshifting
@@ -135,12 +146,12 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
                                     path_suffix = "", BPPARAM = MulticoreParam(workers = bpparam()$workers,
                                                                                exportglobals = FALSE,
                                                                                log = FALSE, force.GC = FALSE, fallback = T)) {
-  message("- Collection of all samples per organism")
+  message("- Collection of all samples of all organism")
   done_organisms <- unique(done_organisms)
   stopifnot(length(names(done_experiments)) > 0)
 
-  exps_species <- done_experiments
-  message("-- Organism: ", org, " (", length(exps_species), " studies)")
+  exps_species <- done_experiments[names(done_experiments) %in% done_organisms]
+  message("-- Organism: ", length(done_organisms), " (", length(exps_species), " studies)")
   df_list <- bplapply(exps_species, function(e)
     read.experiment(e, validate = FALSE), BPPARAM = BPPARAM)
   df <- do.call(rbind, df_list)
@@ -150,6 +161,7 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
   if (libtype_df == "") stop("Libtype of experiment must be defined!")
   exp_name <- "all_samples-all_species"
   if (libtype_df != "RFP") exp_name <- paste0(exp_name, "_", libtype_df)
+  message("Total samples done: ", nrow(df))
 
   out_dir <- file.path(config$config["bam"], exp_name)
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
@@ -169,14 +181,25 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
                     condition = df$condition, rep = df$rep,
                     stage = df$stage, fraction = fraction,
                     files = df$filepath, result_folder = out_dir)
+  message("Saved collection as: ", exp_name)
   message("--- Trying to load created collection")
   df <- read.experiment(exp_name, output.env = new.env())
-  files <- filepath(df, "pshifted", base_folders = libFolder(df, mode = "all"))
+
   dt <- fread(config$complete_metadata)
   dt_complete <- dt[Run %in% runIDs(df),]
   dt_complete <- dt_complete[chmatch(Run, runIDs(df))]
-  dt_complete[, is_pshifted := grepl("_pshifted\\.ofst$", files)]
+  if (libtype_df == "RFP") {
+    files <- filepath(df, "pshifted", base_folders = libFolder(df, mode = "all"))
+    dt_complete[, is_pshifted := grepl("_pshifted\\.ofst$", files)]
+    if (any(!dt_complete$is_pshifted)) {
+      warning("Some samples are not pshifted even though they are flagged as 'complete', they are listed below:")
+      print(dt_complete[is_pshifted == FALSE,])
+    }
+  }
   fwrite(dt_complete, file.path(config$project, "metadata_done_samples.csv"))
+  message("Saved all complete studies metadata to: ", file.path(config$project, "metadata_done_samples.csv"))
+
+  return(dt_complete)
 }
 
 #' Create the superset collection of all samples per organism

@@ -1,5 +1,7 @@
 read_sheet_safe <- function(google_url) {
-  sheet <- as.data.table(googlesheets4::read_sheet(google_url))
+  file <- tempfile(fileext = ".csv")
+  drive_download(google_url, path = file, type = "csv", overwrite = TRUE)
+  sheet <- fread(file)
   col_classes <- sapply(sheet, class)
   if (any(col_classes == "list")) warning("You have columns that were returned as list,
                                           check your google doc!")
@@ -7,6 +9,26 @@ read_sheet_safe <- function(google_url) {
   sheet$TIMEPOINT <- as.character(sheet$TIMEPOINT); sheet[TIMEPOINT == "NULL",]$TIMEPOINT <- ""
   sheet$CELL_LINE <- as.character(sheet$CELL_LINE); sheet[CELL_LINE == "NULL",]$CELL_LINE <- ""
   return(sheet)
+}
+
+#' Sync your local temp to google sheet
+#' @param config a mNGSp config with defined google_url and existing
+#'  temp_metadata file
+#' @return invisible(NULL)
+#' @export
+sync_sheet_safe <- function(config) {
+  stopifnot(!is.null(config$google_url))
+  stopifnot(!is.null(config$temp_metadata) & file.exists(config$temp_metadata))
+  sheet <- read_sheet_safe(config$google_url)
+  fwrite(sheet, config$temp_metadata)
+  message("Google sheet synced to file: \n", config$temp_metadata)
+  return(invisible(NULL))
+}
+
+write_sheet_safe <- function(file, google_url, sheet = 1) {
+  message("Uploading updated version to google sheet:")
+  # TODO: update to range_write with comparison to local
+  write_sheet(read.csv(file), ss = google_url, sheet = sheet)
 }
 
 #' Get pre-existing or create a new google sheet for metadata

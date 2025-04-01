@@ -15,16 +15,19 @@
 #' @param named_progress_vector logical, default FALSE. Add experiment names as names
 #' to progress_vector if returned, ignored otherwise.
 #' @param system_usage_stats logical, default TRUE. Show system usage stats.
+#' @param show_status_per_exp logical, default TRUE.
+#'  Show a message per experiment with progression status.
 #' @return invisible(NULL) / or progress vector
 #' @importFrom plotly plot_ly layout
 #' @export
-progress_report <- function(pipelines, config, show_stats = FALSE,
+progress_report <- function(pipelines, config,
+                            show_status_per_exp = TRUE,
                             show_done = TRUE, status_plot = FALSE,
+                            show_stats = FALSE,
                             return_progress_vector = FALSE,
                             check_merged_org = FALSE,
                             named_progress_vector = FALSE,
-                            system_usage_stats = TRUE,
-                            show_status_per_exp = TRUE) {
+                            system_usage_stats = TRUE) {
   n_bioprojects <- sum(unlist(lapply(pipelines, function(p) length(p$organisms))))
   steps <- names(config[["flag"]])
   negative_message <- steps; names(negative_message) <- steps

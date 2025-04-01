@@ -47,6 +47,8 @@
 #' @param keep_unaligned_genome logical, default FALSE. Do not keep contaminant aligned reads,
 #'  else saved in contamination dir.
 #' @param compress_raw_data logical, default FALSE. If TRUE, will compress raw fastq files.
+#' @param accepted_lengths_rpf default c(20, 21, 25:33), which read lengths to pshift.
+#' Default is the standard fractions of normal 80S ~28 and the smaller size of ~21.
 #' @param parallel_conf a bpoptions object, default:
 #' \code{bpoptions(log =TRUE, stop.on.error = TRUE)}
 #' Specific pipeline config for parallel settings and log directory
@@ -77,6 +79,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             keep_contaminants = FALSE,
                             keep_unaligned_genome = FALSE,
                             compress_raw_data = FALSE,
+                            accepted_lengths_rpf = c(20, 21, 25:33),
                             parallel_conf = bpoptions(log =TRUE,
                                                       stop.on.error = TRUE),
                             logdir = file.path(project_dir, "log_pipeline"),
@@ -127,6 +130,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               keep_contaminants = keep_contaminants,
               keep.unaligned.genome = keep_unaligned_genome,
               compress_raw_data = compress_raw_data,
+              accepted_lengths_rpf = accepted_lengths_rpf,
               preset = preset, parallel_conf = parallel_conf,
               BPPARAM_TRIM = BPPARAM_TRIM, BPPARAM = BPPARAM))
 }

@@ -7,14 +7,14 @@
 progress_report(
   pipelines,
   config,
-  show_stats = FALSE,
+  show_status_per_exp = TRUE,
   show_done = TRUE,
   status_plot = FALSE,
+  show_stats = FALSE,
   return_progress_vector = FALSE,
   check_merged_org = FALSE,
   named_progress_vector = FALSE,
-  system_usage_stats = TRUE,
-  show_status_per_exp = TRUE
+  system_usage_stats = TRUE
 )
 }
 \arguments{
@@ -23,15 +23,18 @@ progress_report(
 \item{config}{list, output from pipeline_config(), the global config for your
 NGS pipeline}
 
-\item{show_stats}{logical, default TRUE, output trim/alignment stats
-\itemize{
-\item plots, set to FALSE if you only want progress report.
-}}
+\item{show_status_per_exp}{logical, default TRUE.
+Show a message per experiment with progression status.}
 
 \item{show_done}{logical, default TRUE. If FALSE, display only status
 of projects that are not done. Stats will still show for all.}
 
 \item{status_plot}{plot an  interactive plot of total status}
+
+\item{show_stats}{logical, default TRUE, output trim/alignment stats
+\itemize{
+\item plots, set to FALSE if you only want progress report.
+}}
 
 \item{return_progress_vector}{logical, default FALSE. If true,
 return integer of current flag step per experiment, set

@@ -122,7 +122,10 @@ adapter_list <- function(candidates_file = fs::path(tempdir(), "adapter_candidat
   return(candidates)
 }
 
-run_files_organizer <- function(runs, source_dir, exclude = c("json", "html")) {
+#' Fastq/fastq file organizer
+run_files_organizer <- function(runs, source_dir, exclude = c("json", "html"),
+                                format = c(".fastq", ".fq", ".fa", ".fasta"),
+                                compressions = c("", ".gz")) {
   all_files <-
     lapply(seq_len(nrow(runs)), function(i) {
       # browser()
@@ -132,8 +135,8 @@ run_files_organizer <- function(runs, source_dir, exclude = c("json", "html")) {
         } else {
           paste0(runs[i]$Run)
         }
-      format <- c(".fastq", ".fq", ".fa", ".fasta")
-      compressions <- c("", ".gz")
+
+
       prefix1 <- c("", "trimmed_")
       prefix2 <- c("", "trimmed2_")
 
@@ -148,7 +151,7 @@ run_files_organizer <- function(runs, source_dir, exclude = c("json", "html")) {
       if (length(file) != 1) {
         if (length(file) == 0) {
           stop("File does not exist to trim (both .gz and unzipped): ",
-               file)
+               runs[i]$Run)
         } else {
           read_1_search <- paste0(filenames[1], format,
                                   rep(compressions, each = length(format)))
@@ -156,6 +159,9 @@ run_files_organizer <- function(runs, source_dir, exclude = c("json", "html")) {
 
           temp_file <- file[basename(file) %in% read_1_search]
           if (length(temp_file) != 1) {
+            if (length(temp_file) == 0) {
+              file <- runs[i]$Run
+            }
             stop("File format could not be detected",
                  file[1])
           } else file <- temp_file
@@ -166,13 +172,16 @@ run_files_organizer <- function(runs, source_dir, exclude = c("json", "html")) {
 
         if (length(file2) == 0) {
           stop("File does not exist to trim (both .gz and unzipped): ",
-               file2)
+               runs[i]$Run)
         } else {
           read_2_search <- paste0(filenames[1], format,
                                   rep(compressions, each = length(format)))
           read_2_search <- paste0(rep(prefix2, each = length(read_2_search)), read_2_search)
           temp_file <- file2[basename(file2) %in% read_2_search]
           if (length(temp_file) != 1) {
+            if (length(temp_file) == 0) {
+              file <- rep(runs[i]$Run, 2)
+            }
             stop("File format could not be detected",
                  file[2])
           } else file2 <- temp_file
@@ -180,7 +189,9 @@ run_files_organizer <- function(runs, source_dir, exclude = c("json", "html")) {
       }
       return(c(file, file2))
     })
-  no_duplicates <- length(unique(unlist(all_files, use.names = F))) == length(unlist(all_files, use.names = F))
+
+  file_vec <- unlist(all_files, use.names = FALSE)
+  no_duplicates <- length(unique(file_vec)) == length(file_vec)
   stopifnot(no_duplicates)
   return(all_files)
 }
@@ -229,7 +240,7 @@ barcode_detector_pipeline <- function(pipeline, redownload_raw_if_needed = TRUE)
 }
 
 barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimmed_dir,
-                                    redownload_raw_if_needed = TRUE, check_at_mean_size = 35,
+                                    redownload_raw_if_needed = TRUE, check_at_mean_size = 34,
                                     minimum_size = 27) {
   sample <- study_sample$Run
   message("-- ", sample)
@@ -282,6 +293,7 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
   adapter <- a$adapter_cutting$read1_adapter_sequence
   if (is.null(adapter)) adapter <- "passed"
   adapter_trimmed_reads <- a$adapter_cutting$adapter_trimmed_reads
+  if (is.null(adapter_trimmed_reads)) adapter_trimmed_reads <- NA
   reads_no_adapter_removed <- round(100 - (100* (adapter_trimmed_reads / a$summary$before_filtering$total_reads)), 1)
   reads_no_adapter_removed_ORFik <- NA
   max_size_before <- a$read1_before_filtering$total_cycles
@@ -308,7 +320,7 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
 
     #max(pos[pos > cut_left*2])
 
-    barcode5p_size <- cut_left
+    barcode5p_size <- max(0, cut_left, na.rm = TRUE)
     barcode3p_size <- max(0, max_size_before - pos_high - 2, na.rm = TRUE)
     if ((max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size ) {
       amount_too_big <- minimum_size - (max_size_after - (barcode5p_size + barcode3p_size))
@@ -335,7 +347,6 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
     }
 
 
-
     fastq <- readDNAStringSet(file_trim, format = "fastq", nrec = 100000)
     fastq_cut <- subseq(fastq, cut_left_rel_pos, width(fastq) - cut_right_rel_pos)
     max_size_after_all <- mean(width(fastq_cut))
@@ -357,6 +368,7 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
                               `reads_no_adapter_removed fastp(%)` = reads_no_adapter_removed,
                               `reads_no_adapter_removed ORFik(%)` = reads_no_adapter_removed_ORFik,
                               consensus_string_5p, consensus_string_3p)
+  if (nrow(dt_stats_this) == 0) stop("Malformed values for barcode table, some are NULL")
   if (is.na(dt_stats_this$barcode_detected)) dt_stats_this[, barcode_detected := FALSE]
 
   print(dt_stats_this)

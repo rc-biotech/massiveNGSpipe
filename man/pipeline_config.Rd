@@ -24,6 +24,7 @@ pipeline_config(
   keep_contaminants = FALSE,
   keep_unaligned_genome = FALSE,
   compress_raw_data = FALSE,
+  accepted_lengths_rpf = c(20, 21, 25:33),
   parallel_conf = bpoptions(log = TRUE, stop.on.error = TRUE),
   logdir = file.path(project_dir, "log_pipeline"),
   verbose = TRUE,
@@ -98,6 +99,9 @@ if TRUE they are saved in contamination dir. Ignored if "contam" is not in flags
 else saved in contamination dir.}
 
 \item{compress_raw_data}{logical, default FALSE. If TRUE, will compress raw fastq files.}
+
+\item{accepted_lengths_rpf}{default c(20, 21, 25:33), which read lengths to pshift.
+Default is the standard fractions of normal 80S ~28 and the smaller size of ~21.}
 
 \item{parallel_conf}{a bpoptions object, default:
 \code{bpoptions(log =TRUE, stop.on.error = TRUE)}

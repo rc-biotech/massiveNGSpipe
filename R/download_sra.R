@@ -123,6 +123,15 @@ extract_srr_preformat <- function(accession, outdir, compress = TRUE,
   filenames <- fs::path_file(fs::dir_ls(outdir,
                                         glob = paste0("**/", accession, "*.fastq")
   ))
+  # TODO: Check this is correct, If special format .lite fastq, remove the larger file
+  lite_file_format <- paste0(accession, c("", "_1"), ".fastq")
+  if (setequal(filenames, lite_file_format)) {
+    lite_file <- list.files(outdir, paste0(accession, "_1.fastq$"), full.names = TRUE)
+    file.remove(lite_file)
+    filenames <- filenames[grep("_1\\.fastq", filenames, invert = TRUE)]
+    stopifnot(length(filenames) == 1)
+  }
+
   validate_fastq_download(filenames, accession, PAIRED_END, already_compressed,
                           outdir)
   # Compress the output if needed

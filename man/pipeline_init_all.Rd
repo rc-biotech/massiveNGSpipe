@@ -7,10 +7,11 @@
 pipeline_init_all(
   config,
   complete_metadata = config$complete_metadata,
-  simple_progress_report = TRUE,
+  progress_report = TRUE,
   gene_symbols = TRUE,
   only_complete_genomes = FALSE,
-  dbs = c("ensembl", "refseq")
+  dbs = c("ensembl", "refseq"),
+  show_status_per_exp = TRUE
 )
 }
 \arguments{
@@ -20,14 +21,14 @@ fastq, bam, references and ORFik experiments go}
 \item{complete_metadata}{path, default file.path(project_dir, "RFP_FINAL_LIST.csv").
 The list of final candidates that are checked and have unique rows per bioproject}
 
-\item{simple_progress_report}{logical, default TRUE. Display current progress.}
-
 \item{only_complete_genomes}{logical, default FALSE. If TRUE, will only init the subset
 with complete genome/annotation directories. Will fail if 0 species are done.}
 
 \item{dbs}{character, prioritized order of genome databases to search, default:
 c("ensembl", "refseq"). Options are c("ensembl", "refseq", "genbank") in any wanted
 priority order.}
+
+\item{simple_progress_report}{logical, default TRUE. Display current progress.}
 }
 \value{
 a list of pipelines

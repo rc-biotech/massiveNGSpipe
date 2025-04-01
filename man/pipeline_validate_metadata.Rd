@@ -45,6 +45,9 @@ keep from all LIBRARYLAYOUT values. These names are made by mNGSp
 automatically. If you made "disome" as a LIBRARYLAYOUT category, then
 c("RFP", "disome") will keep both, but exclude any other.}
 }
+\value{
+logical, TRUE if valid.
+}
 \description{
 Only checks validity of columns that are set to KEEP = TRUE.
 Validity is check by seeing that for each study, per organism,

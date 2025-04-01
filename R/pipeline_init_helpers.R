@@ -9,8 +9,25 @@
 #' @return a list of pipelines
 #' @export
 pipeline_init_all <- function(config, complete_metadata = config$complete_metadata,
-                              simple_progress_report = TRUE, gene_symbols = TRUE,
-                              only_complete_genomes = FALSE, dbs = c("ensembl", "refseq")) {
+                              progress_report = TRUE, gene_symbols = TRUE,
+                              only_complete_genomes = FALSE, dbs = c("ensembl", "refseq"),
+                              show_status_per_exp = TRUE) {
+  # Load all valid metadata
+  final_list <- init_and_load_complete_metadata(config, complete_metadata,
+                                                only_complete_genomes)
+  # Fetch all organism references ++
+  reference_list <- get_all_annotation_and_index(final_list, config,
+                                                 gene_symbols, dbs)
+  # For each accession run pipeline_init
+  pipelines <- finalize_pipeline_objects(final_list, config, reference_list)
+
+  if (progress_report) progress_report(pipelines, config,
+                                       show_status_per_exp = show_status_per_exp)
+  return(pipelines)
+}
+
+init_and_load_complete_metadata <- function(config, complete_metadata = config$complete_metadata,
+                                            only_complete_genomes = FALSE) {
   if (!file.exists(complete_metadata)) stop("You have not create a successful metadata table yet!")
   final_list <- fread(complete_metadata)[KEEP == TRUE,]
 
@@ -29,28 +46,7 @@ pipeline_init_all <- function(config, complete_metadata = config$complete_metada
                                   " 'config$temp_metadata'?")
   if (is.null(final_list$ScientificName))
     stop("Complete metadata must contain organism information in column 'ScientificName'")
-
-  # Fetch all organism references ++
-  reference_list <- get_all_annotation_and_index(final_list, config,
-                                                 gene_symbols, dbs)
-
-  # For each accession run init
-  accessions <- unique(final_list$study_accession)
-  pipelines <- lapply(accessions, function(accession)
-    tryCatch(
-      pipeline_init(final_list[final_list$study_accession == accession,],
-                    accession,  config, reference_list),
-      error=function(e) {warning(e); return(NULL)}))
-  names(pipelines) <- accessions
-
-  crashed_studies <- pipelines %in% list(NULL)
-  if (any(crashed_studies)) {
-    pipelines <- pipelines[!crashed_studies]
-  }
-
-
-  if (simple_progress_report) progress_report(pipelines, config, FALSE)
-  return(pipelines)
+  return(final_list)
 }
 
 get_all_annotation_and_index <- function(final_list, config,
@@ -90,7 +86,7 @@ get_annotation_and_index <- function(organism,
     }
 
     # Try to estimate safe ram size
-    max_ram <- get_file_size_gb(annotation["genome"])*15
+    max_ram <- get_file_size_gb(annotation["genome"])*20
     index <- ORFik::STAR.index(annotation, notify_load_existing = FALSE,
                                max.ram = max_ram)
   }
@@ -210,6 +206,25 @@ update_path_per_sample <- function(df, libtype_df, rel_dir = "pshifted_merged", 
                                     rel_dir, paste0(libtype_df, ext))
   df@listData$rep <- seq(nrow(df))
   return(df)
+}
+
+#' For each accession run pipeline_init
+#' @noRd
+finalize_pipeline_objects <- function(final_list, config, reference_list) {
+  accessions <- unique(final_list$study_accession)
+  pipelines <- lapply(accessions, function(accession)
+    tryCatch(
+      pipeline_init(final_list[final_list$study_accession == accession,],
+                    accession,  config, reference_list),
+      error=function(e) {warning(e); return(NULL)}))
+  names(pipelines) <- accessions
+
+  crashed_studies <- pipelines %in% list(NULL)
+  if (any(crashed_studies)) {
+    warning("Some studies aborted on init, will subset to working studies")
+    pipelines <- pipelines[!crashed_studies]
+  }
+  return(pipelines)
 }
 
 #' Create a pipeline for the specified study.
