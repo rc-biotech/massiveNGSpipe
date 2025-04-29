@@ -36,7 +36,7 @@ progress_report <- function(pipelines, config,
   names(negative_message) <- steps
   index <- 1; done <- 0
   progress_index <- projects <- all_organism <- c()
-  dt <- dt.trim <- data.table()
+  alignment.stats.all <- trimmed.out.all <- c()
   for (pipeline in pipelines) {
     for (organism in names(pipeline$organisms)) {
       all_organism <- c(all_organism, organism)
@@ -65,16 +65,9 @@ progress_report <- function(pipelines, config,
 
         if (!file.exists(alignment.stats))
           alignment.stats <- file.path(out.aligned, "full_process.csv")
-
-        alignment.stats.dt <- try(fread(alignment.stats, header = TRUE), silent = TRUE)
-        if (is(alignment.stats.dt, "try-error")) alignment.stats.dt <- data.table()
-        dt.trim.single <- try(ORFik:::trimming.table(trimmed.out), silent = TRUE)
-        if (is(dt.trim.single, "try-error")) dt.trim.single <- data.table()
-
-        dt <- rbindlist(list(dt, alignment.stats.dt), fill = TRUE)
-        dt.trim <- rbindlist(list(dt.trim, dt.trim.single), fill = TRUE)
+        alignment.stats.all <- c(alignment.stats.all, alignment.stats)
+        trimmed.out.all <- c(trimmed.out.all, trimmed.out)
       }
-
       done <- done + 1
     }
   }
@@ -102,11 +95,33 @@ progress_report <- function(pipelines, config,
     ret <- status_plot(steps, progress_index, projects, n_bioprojects, done)
   }
   if (show_stats) {
-    save_report(dt, dt.trim, done, total = n_bioprojects, config$project)
+    save_report(alignment.stats.all, trimmed.out.all, done, total = n_bioprojects, config$project)
   } else return(ret)
 }
 
-save_report <- function(dt, dt.trim, done, total, report_dir) {
+#' Store total trimming and alignment stats for pipeline
+#' @param dt character path, the alignment stats csv paths
+#' @param dt.trim character path, the trim stats paths
+#' @param done numeric, total done studies
+#' @param total numeric, total studies
+#' @param report_dir, directory to store results
+#' @return invisible(NULL)
+#' @noRd
+save_report <- function(alignment.stats.all, trimmed.out.all, done, total, report_dir) {
+
+  mesage("- Loading alignment stats for all studies..")
+  dt <- rbindlist(lapply(alignment.stats.all, function(f) {
+    alignment.stats.dt <- try(fread(f, header = TRUE), silent = TRUE)
+    if (is(alignment.stats.dt, "try-error")) alignment.stats.dt <- data.table()
+    return(alignment.stats.dt)
+  }), fill = TRUE)
+  mesage("- Loading trimming stats for all studies..")
+  dt.trim <- rbindlist(lapply(trimmed.out.all, function(f) {
+    dt.trim.single <- try(ORFik:::trimming.table(f), silent = TRUE)
+    if (is(dt.trim.single, "try-error")) dt.trim.single <- data.table()
+    return(dt.trim.single)
+  }), fill = TRUE)
+
   no_tables_made <- (nrow(dt) == 0 & nrow(dt.trim) == 0)
   if (done == 0) {
     cat("Nothing done, Returning without creating summary")
@@ -133,7 +148,7 @@ save_report <- function(dt, dt.trim, done, total, report_dir) {
 
   # Save
   fwrite(dt.trim, file.path(report_dir, "raw_trimmed_reads_stats.csv"))
-
+  fwrite(dt, file.path(report_dir, "aligned_reads_stats.csv"))
   mapping_rate_plot(dt, report_dir)
 
   return(invisible(NULL))
@@ -151,20 +166,21 @@ current_step_table <- function(progress_index, steps) {
 
 #' Mapping rate plot
 #'
-#' @param dt a data.table
+#' @param dt a data.table of alignment stats
+#' @param dt.trim a data.table of trim stats
 #' @param report_dir character path to directory
 #' @return invisible(NULL)
 #' @noRd
 #' @import ggplot2 scales
-mapping_rate_plot <- function(dt, report_dir) {
+mapping_rate_plot <- function(dt, dt.trim, report_dir) {
   mapping_rates_all <- dt$`total mapped reads %-genome`
   if (is.null(mapping_rates_all)) mapping_rates_all <- dt$`total mapped reads %`
-  if (!is.null(mapping_rates_all)) {
+  if (!is.null(mapping_rates_all) & nrow(dt) > 0) {
     dt[, mapping_rates := mapping_rates_all]
     plot <- ggplot(dt, aes(x = mapping_rates)) +
       geom_histogram(bins = 20,
                      aes(y = after_stat(width*density))) +
-      geom_boxplot(alpha = 0.1, color = "darkblue") +
+      geom_boxplot(alpha = 0.1, color = "darkblue", outliers = FALSE) +
       ylab("% of libraries") + xlab("% mapped reads") +
       scale_y_continuous(labels = percent_format()) +
       scale_x_continuous(n.breaks = 10) +
@@ -172,9 +188,27 @@ mapping_rate_plot <- function(dt, report_dir) {
               "With flipped box-plot for quantiles") +
       coord_cartesian(ylim = c(0, 0.5)) + theme_classic()
     plot(plot)
-    ggsave(filename = file.path(report_dir, "genome_alignment_rate.png"),
-           plot, width = 5, height = 5)
+    ggsave(filename = file.path(report_dir, "genome_alignment_rates.png"),
+           plot, width = 7, height = 5)
   }
+  if (nrow(dt.trim) > 0) {
+    plot <- ggplot(dt.trim, aes(x = `% trimmed`)) +
+      geom_histogram(bins = 20,
+                     aes(y = after_stat(width*density))) +
+      geom_boxplot(alpha = 0.1, color = "darkblue", outliers = FALSE) +
+      ylab("% of libraries") + xlab("% mapped reads") +
+      scale_y_continuous(labels = percent_format()) +
+      scale_x_continuous(n.breaks = 10) +
+      ggtitle("Raw reads trimmed % (all libraries)",
+              "With flipped box-plot for quantiles") +
+      coord_cartesian(ylim = c(0, 0.5)) + theme_classic()
+    plot(plot)
+    ggsave(filename = file.path(report_dir, "trim_rates.png"),
+           plot, width = 7, height = 5)
+  }
+
+
+
   return(invisible(NULL))
 }
 
