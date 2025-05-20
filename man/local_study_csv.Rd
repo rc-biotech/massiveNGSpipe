@@ -19,9 +19,15 @@ local_study_csv(
   avgLength = NA,
   SampleName = c(""),
   sample_source = c(""),
+  BioProject_max_old = 0,
   MONTH = substr(Sys.time(), 6, 7),
   YEAR = substr(Sys.time(), 1, 4),
-  AUTHOR = Sys.info()["user"]
+  AUTHOR = Sys.info()["user"],
+  cell_line = NULL,
+  tissue = NULL,
+  replicate = NULL,
+  condition = NULL,
+  fraction = NULL
 )
 }
 \arguments{
@@ -55,5 +61,5 @@ RUN: The sample name (For paired end, still 1 row, with basename of sample)\cr
 ...
 }
 \description{
-Create template study csv info
+Paired end files must be named _1.fastq, _2.fastq for each pair!
 }

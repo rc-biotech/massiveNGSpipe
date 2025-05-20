@@ -241,7 +241,7 @@ barcode_detector_pipeline <- function(pipeline, redownload_raw_if_needed = TRUE)
 
 barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimmed_dir,
                                     redownload_raw_if_needed = TRUE, check_at_mean_size = 34,
-                                    minimum_size = 27) {
+                                    minimum_size = 28, max_barcode_left_size = 18) {
   sample <- study_sample$Run
   message("-- ", sample)
   stopifnot(is(study_sample, "data.table") && nrow(study_sample) == 1)
@@ -312,20 +312,23 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
 
     set <- unlist(list)
     tab <- table(set)
-    tab<- tab[-length(tab)]
+    tab <- tab[-length(tab)]
+    tab <- tab[as.numeric(names(tab)) <= max_size_after]
     pos <- as.numeric(names(tab))
 
-    cut_left <- as.numeric(names(which.max(tab[pos < 12])))
-    pos_high <- as.numeric(names(which.max(tab[pos > max_size_before-12])))
+    cut_left <- as.numeric(names(which.max(rev(tab[pos < max_barcode_left_size]))))
+    pos_high <- as.numeric(names(which.max(tab[pos > max_size_before-cut_left])))
 
     #max(pos[pos > cut_left*2])
 
     barcode5p_size <- max(0, cut_left, na.rm = TRUE)
     barcode3p_size <- max(0, max_size_before - pos_high - 2, na.rm = TRUE)
-    if ((max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size ) {
+    barcodes_detected_too_big <- (max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size
+    if (barcodes_detected_too_big) { # Reduce 3p barcode size
       amount_too_big <- minimum_size - (max_size_after - (barcode5p_size + barcode3p_size))
       barcode3p_size <- max(barcode3p_size - amount_too_big, 0)
-      if ((max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size ) {
+      barcodes_detected_too_big <- (max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size
+      if (barcodes_detected_too_big) { # Reduce 5p barcode siz
         amount_too_big <- minimum_size - (max_size_after - (barcode5p_size + barcode3p_size))
         barcode5p_size <- max(barcode5p_size - amount_too_big, 0)
       }

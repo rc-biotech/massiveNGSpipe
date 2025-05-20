@@ -12,7 +12,7 @@ curate_metadata(
   complete_metadata = config$complete_metadata,
   LibraryLayouts = c("SINGLE", "PAIRED"),
   LibraryStrategy = c("Ribo-seq", "RNA-Seq", "miRNA-Seq", "OTHER"),
-  libtypes = "RFP",
+  libtypes = libtype_long_to_short(config$preset),
   Platforms = "ILLUMINA",
   step_mode = FALSE,
   open_editor = interactive(),

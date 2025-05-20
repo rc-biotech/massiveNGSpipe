@@ -53,7 +53,8 @@
 #' \code{bpoptions(log =TRUE, stop.on.error = TRUE)}
 #' Specific pipeline config for parallel settings and log directory
 #' @param verbose logical, default TRUE, give start up message
-#' @param logdir = file.path(project_dir, "log_pipeline"),
+#' @param logdir = file.path(project_dir, "log_pipeline")
+#' @param discord_webhook = massiveNGSpipe:::discord_connection_default_cached()
 #' @param BPPARAM_TRIM BiocParallel::MulticoreParam(8),
 #' number of cores/threads to use for trimming. Optimal is 8 for most data.
 #' @param BPPARAM = bpparam(), number of cores/threads to use.
@@ -83,6 +84,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             parallel_conf = bpoptions(log =TRUE,
                                                       stop.on.error = TRUE),
                             logdir = file.path(project_dir, "log_pipeline"),
+                            discord_webhook = massiveNGSpipe:::discord_connection_default_cached(),
                             verbose = TRUE,
                             BPPARAM_TRIM = BiocParallel::MulticoreParam(8),
                             BPPARAM = bpparam()) {
@@ -132,6 +134,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               compress_raw_data = compress_raw_data,
               accepted_lengths_rpf = accepted_lengths_rpf,
               preset = preset, parallel_conf = parallel_conf,
+              discord_webhook = discord_webhook,
               BPPARAM_TRIM = BPPARAM_TRIM, BPPARAM = BPPARAM))
 }
 

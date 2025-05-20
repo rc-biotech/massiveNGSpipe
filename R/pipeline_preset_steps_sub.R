@@ -41,7 +41,7 @@ pipeline_trim <- function(pipeline, config) {
         all_files <- run_files_organizer(runs, source_dir)
         # Trim
         barcodes_dt <-
-        BiocParallel::bplapply(seq_len(nrow(runs)), function(i, all_files, runs) {
+        BiocParallel::bplapply(seq_len(nrow(runs)), function(i, all_files, runs, mode) {
           run <- runs[i]$Run
           message(run)
           filenames <- all_files[[i]]
@@ -66,7 +66,7 @@ pipeline_trim <- function(pipeline, config) {
           barcode_dt <- data.table()
           if (single_end && runs[i]$LIBRARYTYPE == "RFP") {
             barcode_dt <- barcode_detector_single(runs[i], source_dir, target_dir, trimmed_dir,
-                                                  redownload_raw_if_needed = TRUE)
+                                                  redownload_raw_if_needed = mode == "online")
             if (barcode_dt$barcode_detected)  {
               barcode_dir <- file.path(trimmed_dir, "before_barcode_removal")
               dir.create(barcode_dir, showWarnings = FALSE, recursive = TRUE)
@@ -90,9 +90,9 @@ pipeline_trim <- function(pipeline, config) {
           }
 
           return(barcode_dt)
-        }, all_files = all_files, runs = runs,
+        }, all_files = all_files, runs = runs, mode = config$mode,
         BPPARAM = config$BPPARAM_TRIM)
-        barcodes_dt <- rbindlist(barcodes_dt)
+        barcodes_dt <- rbindlist(barcodes_dt, fill = TRUE)
         fwrite(barcodes_dt, file.path(trimmed_dir, "adapter_barcode_table.csv"))
 
         set_flag(config, "trim", conf["exp"])
@@ -280,6 +280,7 @@ pipeline_cleanup <- function(pipeline, config) {
         file_names_to_delete <- new_file_names[new_file_names != old_file_names]
         file_names_to_delete <- file_names_to_delete[file.exists(file_names_to_delete)]
         if (length(file_names_to_delete) > 0) try(file.remove(file_names_to_delete), silent = TRUE)
+        old_file_names <- match_bam_to_metadata(bam_dir, study_org, FALSE)
         stopifnot(length(old_file_names) == length(new_file_names))
         for (i in seq_along(old_file_names)) {
           fs::file_move(old_file_names[i], new_file_names[i])

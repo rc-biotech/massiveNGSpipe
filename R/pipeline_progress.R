@@ -28,6 +28,7 @@ progress_report <- function(pipelines, config,
                             check_merged_org = FALSE,
                             named_progress_vector = FALSE,
                             system_usage_stats = TRUE) {
+  message("- Progress report:")
   n_bioprojects <- sum(unlist(lapply(pipelines, function(p) length(p$organisms))))
   steps <- names(config[["flag"]])
   negative_message <- steps; names(negative_message) <- steps
@@ -109,18 +110,30 @@ progress_report <- function(pipelines, config,
 #' @noRd
 save_report <- function(alignment.stats.all, trimmed.out.all, done, total, report_dir) {
 
-  mesage("- Loading alignment stats for all studies..")
+  message("- Loading alignment stats for all studies..")
   dt <- rbindlist(lapply(alignment.stats.all, function(f) {
     alignment.stats.dt <- try(fread(f, header = TRUE), silent = TRUE)
     if (is(alignment.stats.dt, "try-error")) alignment.stats.dt <- data.table()
     return(alignment.stats.dt)
   }), fill = TRUE)
-  mesage("- Loading trimming stats for all studies..")
+  message("- Loading trimming stats for all studies..")
   dt.trim <- rbindlist(lapply(trimmed.out.all, function(f) {
     dt.trim.single <- try(ORFik:::trimming.table(f), silent = TRUE)
     if (is(dt.trim.single, "try-error")) dt.trim.single <- data.table()
     return(dt.trim.single)
   }), fill = TRUE)
+
+  if (file.exists(file.path(report_dir, "FINAL_LIST.csv"))) {
+    valid_runs <- fread(file.path(report_dir, "FINAL_LIST.csv"))
+    dt_temp <- dt[gsub("collapsed_trimmed_|trimmed_|trimmed2_", "", sample) %in% valid_runs$Run]
+    if (nrow(dt.trim) > 0) {
+      if (nrow(dt_temp) > 0) dt <- dt_temp
+      dt_temp <- dt.trim[raw_library %in% valid_runs$Run]
+      if (nrow(dt_temp) > 0) dt.trim <- dt_temp
+    }
+  }
+  report_dir <- file.path(report_dir, "summary_statistics")
+  dir.create(report_dir, showWarnings = FALSE, recursive = TRUE)
 
   no_tables_made <- (nrow(dt) == 0 & nrow(dt.trim) == 0)
   if (done == 0) {
@@ -138,6 +151,9 @@ save_report <- function(alignment.stats.all, trimmed.out.all, done, total, repor
   cat("-- Total Trimmed reads (in Billions):", "\n")
   cat(round(sum(dt.trim$trim_reads) / 1e9, 2), "\n")
   cat("-- Total mapped reads (in Billions):", "\n")
+  cat("Read length distribution: ")
+  print(summary(dt.trim$trim_mean_length))
+
   total_mapped_reads <- if (!is.null(dt$`total mapped reads #-genome`)) {
     dt$`total mapped reads #-genome`
   } else {dt$`total mapped reads #`}
@@ -149,7 +165,7 @@ save_report <- function(alignment.stats.all, trimmed.out.all, done, total, repor
   # Save
   fwrite(dt.trim, file.path(report_dir, "raw_trimmed_reads_stats.csv"))
   fwrite(dt, file.path(report_dir, "aligned_reads_stats.csv"))
-  mapping_rate_plot(dt, report_dir)
+  mapping_rate_plot(dt, dt.trim, report_dir)
 
   return(invisible(NULL))
 }
@@ -177,39 +193,43 @@ mapping_rate_plot <- function(dt, dt.trim, report_dir) {
   if (is.null(mapping_rates_all)) mapping_rates_all <- dt$`total mapped reads %`
   if (!is.null(mapping_rates_all) & nrow(dt) > 0) {
     dt[, mapping_rates := mapping_rates_all]
-    plot <- ggplot(dt, aes(x = mapping_rates)) +
-      geom_histogram(bins = 20,
-                     aes(y = after_stat(width*density))) +
-      geom_boxplot(alpha = 0.1, color = "darkblue", outliers = FALSE) +
-      ylab("% of libraries") + xlab("% mapped reads") +
-      scale_y_continuous(labels = percent_format()) +
-      scale_x_continuous(n.breaks = 10) +
-      ggtitle("Genome alignment rate % (all libraries)",
-              "With flipped box-plot for quantiles") +
-      coord_cartesian(ylim = c(0, 0.5)) + theme_classic()
-    plot(plot)
-    ggsave(filename = file.path(report_dir, "genome_alignment_rates.png"),
-           plot, width = 7, height = 5)
+
+    stats_all_libraries_plot(ggplot(dt, aes(x = mapping_rates)),
+                             file.path(report_dir, "genome_alignment_rates.png"),
+                             xlab = "% mapped reads",
+                             title = "Genome alignment rate % (all libraries)")
   }
   if (nrow(dt.trim) > 0) {
-    plot <- ggplot(dt.trim, aes(x = `% trimmed`)) +
-      geom_histogram(bins = 20,
-                     aes(y = after_stat(width*density))) +
-      geom_boxplot(alpha = 0.1, color = "darkblue", outliers = FALSE) +
-      ylab("% of libraries") + xlab("% mapped reads") +
-      scale_y_continuous(labels = percent_format()) +
-      scale_x_continuous(n.breaks = 10) +
-      ggtitle("Raw reads trimmed % (all libraries)",
-              "With flipped box-plot for quantiles") +
-      coord_cartesian(ylim = c(0, 0.5)) + theme_classic()
-    plot(plot)
-    ggsave(filename = file.path(report_dir, "trim_rates.png"),
-           plot, width = 7, height = 5)
+    stats_all_libraries_plot(ggplot(dt.trim, aes(x = `% trimmed`)),
+                             file.path(report_dir, "trim_rates.png"))
+    stats_all_libraries_plot(ggplot(dt.trim, aes(x = `trim_mean_length`)),
+                             file.path(report_dir, "read_lengths_processed.png"),
+                             xlab = "Read length",
+                             title = "Processed read lengths (all libraries)")
   }
 
 
 
   return(invisible(NULL))
+}
+
+stats_all_libraries_plot <- function(ggplot, filename, xlab = "% reads removed by trimming",
+                                                     n.breaks = 10, title = "Raw reads trimmed out % (all libraries)",
+                                                     subtitle = "With flipped box-plot for quantiles",
+                                                     ylim = c(0, 0.5), width = 7, height = 5) {
+  plot <- ggplot +
+    geom_histogram(bins = 20,
+                   aes(y = after_stat(width*density))) +
+    geom_boxplot(alpha = 0.1, color = "darkblue", outliers = FALSE) +
+    ylab("% of libraries") + xlab(xlab) +
+    scale_y_continuous(labels = percent_format()) +
+    ggtitle(title, subtitle) +
+    coord_cartesian(ylim = ylim) + theme_classic()
+  if (!is.null(n.breaks)) {
+    plot <- plot + scale_x_continuous(n.breaks = n.breaks)
+  }
+  plot(plot)
+  ggsave(filename = filename, plot, width = width, height = height)
 }
 
 #' Status plot of pipeline

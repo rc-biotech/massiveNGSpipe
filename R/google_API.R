@@ -52,26 +52,23 @@ default_sheets <- function(project_dir, id = 1,
 #'
 #' @param drive_url character, url to drive folder (not individual files), example:
 #' "https://drive.google.com/drive/folders/1N_Tyig3-IxMIe8Im24wBSNiS5vSohi91"
-#' @param pattern character pattern of files, default "fastq\\.gz$"
 #' @param output_dir character, output directory, will be create if not existing
+#' @param pattern character pattern of files, default "fastq\\.gz$"
 #' @param email character, email of user, default: \email{hakontjeldnes@@gmail.com}
 #' @param overwrite logical, default FALSE. If FALSE, delete existing files,
 #' if TRUE dont download existing files.
+#' @param recursive logical, default TRUE. Search sub folders for format files.
 #' @return invisible(NULL)
+#' @importFrom googledrive drive_auth as_id drive_ls drive_download
 #' @export
-download_fastq_google_drive <- function(drive_url = "https://drive.google.com/drive/folders/1N_Tyig3-IxMIe8Im24wBSNiS5vSohi91",
+download_fastq_google_drive <- function(drive_url,
+                                        output_dir,
+                                        files = google_drive_list_files(drive_url, email, format_pattern, recursive),
                                         format_pattern = "fastq\\.gz$",
-                                        output_dir = "~/livemount/Bio_data/raw_data/autophagy_timecourse2/",
                                         email = "hakontjeldnes@gmail.com",
-                                        overwrite = FALSE) {
+                                        overwrite = FALSE,
+                                        recursive = TRUE) {
   # Script
-  drive_auth(email = email)
-  drive <- as_id(drive_url)
-  files <- try(drive_ls(path = drive, pattern = "fastq\\.gz$", recursive = FALSE))
-
-  if (is(files, "try-error")) stop("Folder does not exists on given drive!")
-  if (is.null(files) && nrow(files) == 0) stop("No files found in drive")
-
   message("Found valid files, tota of ", nrow(files), " files:")
   print(files)
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
@@ -97,6 +94,21 @@ download_fastq_google_drive <- function(drive_url = "https://drive.google.com/dr
   message("Done")
   print(Sys.time() - start)
   return(invisible(NULL))
+}
+
+#' List google files on drive wrapper
+#' @inheritParams download_fastq_google_drive
+#' @return a dribble of googl drive information
+#' @export
+google_drive_list_files <- function(drive_url, email = "hakontjeldnes@gmail.com",
+                                    format_pattern = "fastq\\.gz$", recursive = TRUE) {
+  drive_auth(email = email)
+  drive <- as_id(drive_url)
+  files <- try(drive_ls(path = drive, pattern = format_pattern, recursive = recursive))
+
+  if (is(files, "try-error")) stop("Folder does not exists on given google drive!")
+  if (is.null(files) && nrow(files) == 0) stop("No files found in drive")
+  return(files)
 }
 
 

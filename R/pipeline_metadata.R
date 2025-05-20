@@ -52,7 +52,7 @@ curate_metadata <- function(accessions, config, organisms = "all",
                             complete_metadata = config$complete_metadata,
                             LibraryLayouts = c("SINGLE", "PAIRED"),
                             LibraryStrategy = c("Ribo-seq","RNA-Seq", "miRNA-Seq", "OTHER"),
-                            libtypes = "RFP",
+                            libtypes = libtype_long_to_short(config$preset),
                             Platforms = "ILLUMINA",
                             step_mode = FALSE, open_editor = interactive(),
                             fix_loop = TRUE, only_curated = FALSE,
@@ -561,7 +561,9 @@ metadata_columns_cleanup <- function(files) {
   # TODO: Split into cleanup and info
   # Check authors
   a <- unlist(files[, table(AUTHOR)])
-  stopifnot(length(a[names(a) == ""]) == 0)
+  if (length(a[names(a) == ""]) != 0) {
+    warning("You have studies with empty 'AUTHOR' field!")
+  }
   # Check INHIBITOR
   files[INHIBITOR == "CHX", INHIBITOR := "chx"]
   files[INHIBITOR == "LTM", INHIBITOR := "ltm"]
@@ -657,6 +659,8 @@ organism_name_cleanup <- function(organisms) {
 
 
 #' Create template study csv info
+#'
+#' Paired end files must be named _1.fastq, _2.fastq for each pair!
 #' @param dir a directory with fast files
 #'  (fasta or fastq, uncompressed/compressed)
 #' @param exp_name experiment name, a prefix for directory name.
@@ -686,15 +690,27 @@ local_study_csv <- function(dir, exp_name, files = list.files(dir, pattern = "\\
                             LibrarySource = "TRANSCRIPTOMIC",
                             avgLength = NA,
                             SampleName = c(""), sample_source = c(""),
+                            BioProject_max_old = 0,
                             MONTH = substr(Sys.time(), 6,7),
                             YEAR = substr(Sys.time(), 1,4),
-                            AUTHOR = Sys.info()["user"]) {
+                            AUTHOR = Sys.info()["user"],
+                            cell_line = NULL,
+                            tissue = NULL,
+                            replicate = NULL,
+                            condition = NULL,
+                            fraction = NULL) {
   #if (any(paired %in% "PAIRED")) stop("Only single end supported for now!")
   message("Using files:")
   print(basename(files))
-  message("total files: ", length(files))
   stopifnot(length(files) > 0)
   stopifnot(all(paired %in% c("SINGLE", "PAIRED")))
+  if (length(paired) == 1) paired <- rep(paired, length(files))
+  is_paired <- paired == "PAIRED"
+  message("- Total Runs: ", sum(!is_paired) + (sum(is_paired) / 2), " (Files: ", length(files), ")")
+
+  if (length(unique(paired)) == 2) {
+    stopifnot(length(paired) == length(files))
+  }
   if (is.character(avgLength) && length(avgLength) == 1 && avgLength == "auto") {
     avgLength <- sapply(files, function(file) round(mean(width(readDNAStringSet(file, format = c("fasta", "fastq")[1 + grepl("\\.fastq|\\.fq", file)], nrec = 100)))))
   }
@@ -703,6 +719,21 @@ local_study_csv <- function(dir, exp_name, files = list.files(dir, pattern = "\\
   file_basenames_split <- file_basenames
   file_basenames_unique <- unique(gsub("_\\.[1-9]\\.fast", "", file_basenames))
   size_MB <- floor(file.size(files)/1024^2)
+  avgLength <- sapply(files, function(file) mean(width(readDNAStringSet(file, nrec = 100, format = "fastq"))))
+
+
+  if (any(is_paired)) {
+    unique_samples <- gsub("_\\d+$", "", file_basenames_unique[is_paired])
+    file_basenames_unique <- unique_samples
+    unique_samples_uniqed <- unique(unique_samples)
+    stopifnot(max(table(unique_samples)) == 2)
+    read_2 <- duplicated(unique_samples)
+    user_defined_paired_end_samples <- sum(is_paired)
+    detected_paired_end_samples <- sum(read_2)*2
+    stopifnot(detected_paired_end_samples == user_defined_paired_end_samples)
+    size_MB[!read_2] <- size_MB[!read_2] + size_MB[read_2]
+  }
+
   dt_temp <- data.table(Run = file_basenames_unique,
                         spots = NA, bases = NA, avgLength = avgLength,
                         size_MB, LibraryName, LibraryStrategy,
@@ -711,12 +742,21 @@ local_study_csv <- function(dir, exp_name, files = list.files(dir, pattern = "\\
                         Platform, Model, ScientificName = organism,
                         SampleName, MONTH, YEAR, AUTHOR, sample_source,
                         sample_title)
-  dt_temp[, BioProject := as.integer(as.factor(Submission))]
-
+  dt_temp[, BioProject := BioProject_max_old + as.integer(as.factor(Submission))]
   auto_detect <- TRUE # Always TRUE for now
+
   if (auto_detect) {
     dt_temp <- ORFik:::metadata.autnaming(dt_temp)
   }
+  dt_temp[, `:=`(CELL_LINE = cell_line,
+                 TISSUE = tissue,
+                 REPLICATE = replicate,
+                 CONDITION = condition,
+                 FRACTION = fraction)]
+  if (any(is_paired)) {
+    dt_temp <- dt_temp[!read_2,]
+  }
+  stopifnot(!anyDuplicated(dt_temp$Run))
 
   return(dt_temp)
 }

@@ -27,6 +27,7 @@ pipeline_config(
   accepted_lengths_rpf = c(20, 21, 25:33),
   parallel_conf = bpoptions(log = TRUE, stop.on.error = TRUE),
   logdir = file.path(project_dir, "log_pipeline"),
+  discord_webhook = massiveNGSpipe:::discord_connection_default_cached(),
   verbose = TRUE,
   BPPARAM_TRIM = BiocParallel::MulticoreParam(8),
   BPPARAM = bpparam()
@@ -107,7 +108,9 @@ Default is the standard fractions of normal 80S ~28 and the smaller size of ~21.
 \code{bpoptions(log =TRUE, stop.on.error = TRUE)}
 Specific pipeline config for parallel settings and log directory}
 
-\item{logdir}{= file.path(project_dir, "log_pipeline"),}
+\item{logdir}{= file.path(project_dir, "log_pipeline")}
+
+\item{discord_webhook}{= massiveNGSpipe:::discord_connection_default_cached()}
 
 \item{verbose}{logical, default TRUE, give start up message}
 

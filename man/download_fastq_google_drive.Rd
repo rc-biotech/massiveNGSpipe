@@ -5,11 +5,13 @@
 \title{Get all fastq files from google drive}
 \usage{
 download_fastq_google_drive(
-  drive_url = "https://drive.google.com/drive/folders/1N_Tyig3-IxMIe8Im24wBSNiS5vSohi91",
+  drive_url,
+  output_dir,
+  files = google_drive_list_files(drive_url, email, format_pattern, recursive),
   format_pattern = "fastq\\\\.gz$",
-  output_dir = "~/livemount/Bio_data/raw_data/autophagy_timecourse2/",
   email = "hakontjeldnes@gmail.com",
-  overwrite = FALSE
+  overwrite = FALSE,
+  recursive = TRUE
 )
 }
 \arguments{
@@ -22,6 +24,8 @@ download_fastq_google_drive(
 
 \item{overwrite}{logical, default FALSE. If FALSE, delete existing files,
 if TRUE dont download existing files.}
+
+\item{recursive}{logical, default TRUE. Search sub folders for format files.}
 
 \item{pattern}{character pattern of files, default "fastq\\.gz$"}
 }

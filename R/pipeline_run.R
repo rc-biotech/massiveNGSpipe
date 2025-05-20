@@ -62,15 +62,33 @@ run_pipeline_set_up_session <- function(pipelines, config, BPPARAM = config$BPPA
 
 run_pipeline_end_session <- function(pipelines, config) {
   # Done
-  no_errors <- length(list.files(config$error_dir)) == 0
+  no_errors <- ifelse(!is.null(config$error_dir) && dir.exists(config$error_dir),
+                      length(list.files(config$error_dir)) == 0,
+                      TRUE)
   if (no_errors) {
-    message("Pipeline is done, creating report")
+    title_message <- "Pipeline is done, without any errors"
     progress_report(pipelines, config, show_stats = TRUE)
   } else {
-    message("Pipeline is done, but had errors, skipping report.",
-            "See the directory: ", config$error_dir, "for more information!")
+    title_message <- paste("Pipeline is done, but had errors, skipping report.",
+    "See the directory: ", config$error_dir, "for more information!")
   }
-  cat("Total run time: "); print(round(Sys.time() - config$init_time, 2))
+  message(title_message)
+  if (!is.null(config$discord_webhook)) {
+    exps <- pipelines_names(pipelines[1])
+    exps_main <- gsub("-.*", "", exps)
+    title_message <- paste0(config$preset, " ", title_message)
+    message <- paste(title_message, "\n",
+                     exps_main, "is done:\n" ,
+                     "- experiments are named: ", paste(exps, collapse = " and "),
+                     collapse = "\n")
+
+    massiveNGSpipe:::discord_connection_default_cached()
+    discordr::send_webhook_message(message)
+  }
+
+  if (!is.null(config$init_time)) {
+    cat("Total run time: "); print(round(Sys.time() - config$init_time, 2))
+  }
   return(no_errors)
 }
 

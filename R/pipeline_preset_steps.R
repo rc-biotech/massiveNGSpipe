@@ -247,8 +247,9 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
                       condition = df$condition, rep = df$rep,
                       stage = df$stage, fraction = fraction,
                       files = df$filepath, result_folder = out_dir)
-    message("--- Trying to load created collection")
+    message("--- Validating created collection")
     df <- read.experiment(exp_name, output.env = new.env())
+    message("--- Merging count tables from studies")
     count_folder <- QCfolder(df)
     dir.create(count_folder, recursive = TRUE, showWarnings = FALSE)
     for (region in c("mrna", "cds", "leaders", "trailers")) {
