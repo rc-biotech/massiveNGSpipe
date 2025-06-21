@@ -37,5 +37,24 @@ invisible(NULL)
 Create the superset collection of all samples per organism
 }
 \examples{
-pipeline_collection_org(config, done_organisms = "Homo sapiens", path_suffix = "10_02_2025")
+config <- pipeline_config()
+pipelines <- pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE)
+dirs <- lapply(pipelines, function(p) {
+dirs_pipe <- massiveNGSpipe:::list_dirs_of_pipeline(pipeline = p)
+names(dirs_pipe) <- tolower(names(dirs_pipe))
+lapply(dirs_pipe, function(exp) {
+  all(dir.exists(exp[-which(names(exp) \%in\% c("fastq", "trim", "exp"))]))
+})
+})
+exists <- unlist(dirs, use.names = TRUE)
+names(exists) <- sub("\\\\.", "-", names(exists))
+names(exists) <- sub(" ", "_", names(exists))
+sum(exists / length(exists))
+all_exp_names <- unlist(massiveNGSpipe:::get_experiment_names(pipelines), use.names = FALSE)
+stopifnot(all(names(exists) \%in\% all_exp_names))
+done_experiments <- names(exists)[exists]
+length(done_experiments)
+names(done_experiments) <- stringr::str_to_sentence(sub("_", " ", sub(".*-", "", done_experiments)))
+pipeline_collection_org(config, pipelines, done_organisms = "Homo sapiens", done_experiments, path_suffix = "_13_06_2025")
+#pipeline_collection_org(config, done_organisms = "Homo sapiens", path_suffix = "_10_02_2025")
 }

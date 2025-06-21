@@ -60,7 +60,6 @@ docker_copy_done_experiments <- function(config,
       merged_is_made <- csv_names %in% existing_exps
       csv_names <- csv_names[merged_is_made]
       res <- c(res, copy_experiments_to(csv_names, old_exp_dir, new_exp_dir, docker_conversion))
-
     }
     if (all_by_organism) {
       message("- All by organism")
@@ -90,7 +89,7 @@ docker_copy_done_experiments <- function(config,
 #' csvs <- list.files(ORFik::config()["exp"], pattern = "modalities\\.csv$")
 #' copy_experiments_to(csvs)
 copy_experiments_to <- function(csv_names, old_exp_dir = ORFik::config()["exp"],
-                                new_exp_dir = sub("_local$", "", old_exp_dir),
+                                new_exp_dir = sub("_local$|_local/$", "", old_exp_dir),
                                 docker_conversion = "'s/livemount\\///g'") {
   done_exp_old_path <- file.path(old_exp_dir, csv_names)
   done_exp_new_path <- file.path(new_exp_dir, csv_names)
@@ -110,5 +109,9 @@ copy_experiments_to <- function(csv_names, old_exp_dir = ORFik::config()["exp"],
 #' @return character, name of function
 #' @export
 name_of_function <- function(...) unlist(purrr:::map(rlang::ensyms(...) , as.character), use.names = FALSE)
+
+#' @inherit rstudioapi::filesPaneNavigate
+#' @importFrom rstudioapi filesPaneNavigate
+navigate <- rstudioapi::filesPaneNavigate
 
 

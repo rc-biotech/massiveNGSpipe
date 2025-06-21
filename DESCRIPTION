@@ -30,6 +30,7 @@ Imports:
     plotly,
     purrr,
     rlang,
+    rstudioapi,
     scales,
     stringr
 Remotes:

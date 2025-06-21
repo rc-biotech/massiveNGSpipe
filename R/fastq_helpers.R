@@ -123,31 +123,37 @@ adapter_list <- function(candidates_file = fs::path(tempdir(), "adapter_candidat
 }
 
 #' Fastq/fastq file organizer
-run_files_organizer <- function(runs, source_dir, exclude = c("json", "html"),
+run_files_organizer <- function(runs, source_dir, exclude = c("json", "html", "md5"),
                                 format = c(".fastq", ".fq", ".fa", ".fasta"),
-                                compressions = c("", ".gz")) {
+                                compressions = c("", ".gz"),
+                                paired_end_suffixes = list(c("_1", "_2"), c("_R1_001", "_R2_001"))) {
+  if (!dir.exists(source_dir)) stop("Input directory of runs does not exist!")
+  files <- list.files(source_dir, full.names = TRUE)
+  files <- files[!(tools::file_ext(files) %in% exclude)]
+  if (length(files) == 0) stop("There are no files of specified formats in this directory!")
+
+  prefix1 <- c("", "trimmed_")
+  prefix2 <- c("", "trimmed2_")
+
   all_files <-
     lapply(seq_len(nrow(runs)), function(i) {
       # browser()
-      filenames <-
-        if (runs[i]$LibraryLayout == "PAIRED") {
-          paste0(runs[i]$Run, c("_1", "_2"))
-        } else {
-          paste0(runs[i]$Run)
+      for (paired_end_suffix in paired_end_suffixes) {
+        filenames <-
+          if (runs[i]$LibraryLayout == "PAIRED") {
+            paste0(runs[i]$Run, paired_end_suffix)
+          } else {
+            paste0(runs[i]$Run)
+          }
+
+        file <- grep(filenames[1], files, value = TRUE)
+        file2 <- NULL
+        if(!is.na(filenames[2])) {
+          file2 <- grep(filenames[2], files, value = TRUE)
         }
-
-
-      prefix1 <- c("", "trimmed_")
-      prefix2 <- c("", "trimmed2_")
-
-      format_used <- filenames[1]
-      file <- list.files(source_dir, filenames[1], full.names = TRUE)
-      file <- file[!(tools::file_ext(file) %in% exclude)]
-      file2 <- NULL
-      if(!is.na(filenames[2])) {
-        file2 <- list.files(source_dir, filenames[2], full.names = TRUE)
-        file2 <- file2[!(tools::file_ext(file2) %in% exclude)]
+        if (length(file) != 0) break
       }
+
       if (length(file) != 1) {
         if (length(file) == 0) {
           stop("File does not exist to trim (both .gz and unzipped): ",
@@ -189,7 +195,6 @@ run_files_organizer <- function(runs, source_dir, exclude = c("json", "html"),
       }
       return(c(file, file2))
     })
-
   file_vec <- unlist(all_files, use.names = FALSE)
   no_duplicates <- length(unique(file_vec)) == length(file_vec)
   stopifnot(no_duplicates)
@@ -240,8 +245,8 @@ barcode_detector_pipeline <- function(pipeline, redownload_raw_if_needed = TRUE)
 }
 
 barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimmed_dir,
-                                    redownload_raw_if_needed = TRUE, check_at_mean_size = 34,
-                                    minimum_size = 28, max_barcode_left_size = 18) {
+                                    redownload_raw_if_needed = TRUE, check_at_mean_size = 33,
+                                    minimum_size = 26, max_barcode_left_size = 18) {
   sample <- study_sample$Run
   message("-- ", sample)
   stopifnot(is(study_sample, "data.table") && nrow(study_sample) == 1)
@@ -301,39 +306,17 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
   max_size_after <- a$summary$after_filtering$read1_mean_length
   max_size_after_all <- max_size_after
   fastq_cut <- NULL
-  if (max_size_after > check_at_mean_size) {
-
+  if (max_size_after >= check_at_mean_size) {
     curves <- a$read1_after_filtering[c("quality_curves", "content_curves")]
-    list <- lapply(curves, function(curve_type) {
-      lapply(curve_type, function(curve_vec) {
-        data.table(changepoint::cpt.mean(curve_vec, Q = 3)@cpts)
-      })
-    })
-
-    set <- unlist(list)
-    tab <- table(set)
-    tab <- tab[-length(tab)]
-    tab <- tab[as.numeric(names(tab)) <= max_size_after]
-    pos <- as.numeric(names(tab))
-
-    cut_left <- as.numeric(names(which.max(rev(tab[pos < max_barcode_left_size]))))
-    pos_high <- as.numeric(names(which.max(tab[pos > max_size_before-cut_left])))
-
-    #max(pos[pos > cut_left*2])
-
-    barcode5p_size <- max(0, cut_left, na.rm = TRUE)
-    barcode3p_size <- max(0, max_size_before - pos_high - 2, na.rm = TRUE)
-    barcodes_detected_too_big <- (max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size
-    if (barcodes_detected_too_big) { # Reduce 3p barcode size
-      amount_too_big <- minimum_size - (max_size_after - (barcode5p_size + barcode3p_size))
-      barcode3p_size <- max(barcode3p_size - amount_too_big, 0)
-      barcodes_detected_too_big <- (max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size
-      if (barcodes_detected_too_big) { # Reduce 5p barcode siz
-        amount_too_big <- minimum_size - (max_size_after - (barcode5p_size + barcode3p_size))
-        barcode5p_size <- max(barcode5p_size - amount_too_big, 0)
-      }
+    curves$content_curves$max <- rowMaxs(as.matrix(setDT(curves$content_curves)))
+    barcode_sizes <- barcode_change_point(curves, max_barcode_left_size, max_size_before,
+                                          max_size_after, minimum_size, z_score_normalize = FALSE)
+    if (max(barcode_sizes) == 0) {
+      barcode_sizes <- barcode_change_point(curves, max_barcode_left_size, max_size_before,
+                                            max_size_after, minimum_size, z_score_normalize = TRUE)
     }
-
+    barcode5p_size <- barcode_sizes["barcode5p_size"]
+    barcode3p_size <- barcode_sizes["barcode3p_size"]
     cut_right_rel_pos <- barcode3p_size + 1
     cut_left_rel_pos <- barcode5p_size + 1
 
@@ -377,4 +360,52 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
   print(dt_stats_this)
 
   return(dt_stats_this)
+}
+
+barcode_change_point <- function(curves, max_barcode_left_size,
+                                 max_size_before, max_size_after,
+                                 minimum_size, z_score_normalize = FALSE,
+                                 Q = 3) {
+  cpt_func <- if (z_score_normalize) {
+    function(curve_vec) {
+      vec <- as.vector(scale(curve_vec))
+      if (all(!is.finite(vec))) {
+        vec <- rep(0, length(vec))
+      } else vec[!is.finite(vec)] <- mean(vec, na.rm = TRUE)
+      data.table(changepoint::cpt.mean(vec, Q = Q)@cpts)
+    }
+  } else {
+    function(curve_vec) {
+      data.table(changepoint::cpt.mean(curve_vec, Q = Q)@cpts)
+    }
+  }
+
+  list <- lapply(curves, function(curve_type) {
+    lapply(curve_type, function(curve_vec) cpt_func(curve_vec))
+  })
+
+  set <- unlist(list)
+  tab <- table(set)
+  tab <- tab[-length(tab)]
+  tab <- tab[as.numeric(names(tab)) <= max_size_after]
+  pos <- as.numeric(names(tab))
+  cut_left <- as.numeric(names(which.max(rev(tab[pos < max_barcode_left_size]))))
+  pos_high <- as.numeric(names(which.max(tab[pos > max_size_before-cut_left])))
+
+  #max(pos[pos > cut_left*2])
+
+  barcode5p_size <- max(0, cut_left, na.rm = TRUE)
+  barcode3p_size <- max(0, max_size_before - pos_high - 2, na.rm = TRUE)
+
+  barcodes_detected_too_big <- (max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size
+  if (barcodes_detected_too_big) { # Reduce 3p barcode size
+    amount_too_big <- minimum_size - (max_size_after - (barcode5p_size + barcode3p_size))
+    barcode3p_size <- max(barcode3p_size - amount_too_big, 0)
+    barcodes_detected_too_big <- (max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size
+    if (barcodes_detected_too_big) { # Reduce 5p barcode siz
+      amount_too_big <- minimum_size - (max_size_after - (barcode5p_size + barcode3p_size))
+      barcode5p_size <- max(barcode5p_size - amount_too_big, 0)
+    }
+  }
+  return(c(barcode5p_size = barcode5p_size, barcode3p_size = barcode3p_size))
 }

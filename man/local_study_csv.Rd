@@ -7,7 +7,7 @@
 local_study_csv(
   dir,
   exp_name,
-  files = list.files(dir, pattern = "\\\\.fast.*", full.names = TRUE),
+  files = search_for_fasta_files(dir),
   organism,
   sample_title,
   paired = FALSE,
@@ -16,18 +16,20 @@ local_study_csv(
   LibraryName = "",
   LibraryStrategy = "RNA-Seq",
   LibrarySource = "TRANSCRIPTOMIC",
-  avgLength = NA,
+  avgLength = "auto",
   SampleName = c(""),
   sample_source = c(""),
   BioProject_max_old = 0,
   MONTH = substr(Sys.time(), 6, 7),
   YEAR = substr(Sys.time(), 1, 4),
   AUTHOR = Sys.info()["user"],
-  cell_line = NULL,
-  tissue = NULL,
-  replicate = NULL,
-  condition = NULL,
-  fraction = NULL
+  batch = "",
+  timepoint = "",
+  cell_line = "",
+  tissue = "",
+  replicate = "",
+  condition = "",
+  fraction = ""
 )
 }
 \arguments{
@@ -38,7 +40,7 @@ local_study_csv(
 The relative path without the -organism part.}
 
 \item{files}{character vector of full paths,
-default: \code{list.files(dir, pattern = "\\.fast.*", full.names = TRUE)}}
+default: search_for_fasta_files(dir)}
 
 \item{organism}{Scientific latin name of organism, give single if all
 are equal, or specify for each file if multiple. Example: "Homo sapiens"}

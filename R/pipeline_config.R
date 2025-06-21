@@ -47,8 +47,17 @@
 #' @param keep_unaligned_genome logical, default FALSE. Do not keep contaminant aligned reads,
 #'  else saved in contamination dir.
 #' @param compress_raw_data logical, default FALSE. If TRUE, will compress raw fastq files.
+#' @param stop_downloading_new_data_at_drive_usage integer, default 96,
+#' percentage value where the drive will stop downloading new data. Set to 101 to
+#' disable a cap.
+#' @param max_unprocessed_downloads numeric, default 30. Temporarily stop downloading more data
+#' if > 30 studies are not done with the first post download processing step
+#' (usually trimming)
 #' @param accepted_lengths_rpf default c(20, 21, 25:33), which read lengths to pshift.
 #' Default is the standard fractions of normal 80S ~28 and the smaller size of ~21.
+#' @param reuse_shifts_if_existing for Ribo-seq, reuse shift table called shifting_table.rds
+#' in pshifted folder if it is valid (equal number of sample shift tables in file
+#' relative toexperiment)
 #' @param parallel_conf a bpoptions object, default:
 #' \code{bpoptions(log =TRUE, stop.on.error = TRUE)}
 #' Specific pipeline config for parallel settings and log directory
@@ -80,7 +89,10 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             keep_contaminants = FALSE,
                             keep_unaligned_genome = FALSE,
                             compress_raw_data = FALSE,
+                            stop_downloading_new_data_at_drive_usage = 96,
+                            max_unprocessed_downloads = 30,
                             accepted_lengths_rpf = c(20, 21, 25:33),
+                            reuse_shifts_if_existing = TRUE,
                             parallel_conf = bpoptions(log =TRUE,
                                                       stop.on.error = TRUE),
                             logdir = file.path(project_dir, "log_pipeline"),
@@ -132,7 +144,10 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               keep_contaminants = keep_contaminants,
               keep.unaligned.genome = keep_unaligned_genome,
               compress_raw_data = compress_raw_data,
+              stop_downloading_new_data_at_drive_usage = stop_downloading_new_data_at_drive_usage,
+              max_unprocessed_downloads = max_unprocessed_downloads,
               accepted_lengths_rpf = accepted_lengths_rpf,
+              reuse_shifts_if_existing = reuse_shifts_if_existing,
               preset = preset, parallel_conf = parallel_conf,
               discord_webhook = discord_webhook,
               BPPARAM_TRIM = BPPARAM_TRIM, BPPARAM = BPPARAM))

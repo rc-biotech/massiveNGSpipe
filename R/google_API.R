@@ -138,7 +138,7 @@ plot_all_versions <- function(plot, file_prefix, formats = c("jpg", "svg"), send
                               google_drive_dir = google_drive_dir_links(1),
                               formats_discord = formats[!(formats %in% "svg")],
                               formats_google = formats[!(formats %in% c("jpg", "png"))],
-                              preview_image = FALSE, discord_message = NULL) {
+                              preview_image = FALSE, discord_message = basename(file_prefix)) {
   if (send_to_discord){
     if (is.null(discord_connection[[1]])) stop("Must have discord connection set!")
   }
@@ -163,7 +163,7 @@ plot_all_versions <- function(plot, file_prefix, formats = c("jpg", "svg"), send
     }
   }
 
-  if (!is.null(discord_message) & is(discord_connection, "character")) {
+  if (send_to_discord & !is.null(discord_message) & is(discord_message, "character")) {
     discordr::send_webhook_message(discord_message)
   }
   return(invisible(NULL))
@@ -179,7 +179,7 @@ discord_connection_default_cached <- function(channel_id = 1,
                                               connection_file = "~/livemount/.cache/discordr/r_to_discord_config",
                                               verbose = FALSE) {
   if (is.null(getOption("default_discordr_connection"))) {
-    conn <- discordr::import_discord_connections(connection_file)[[channel_id]]
+    conn <- suppressMessages(discordr::import_discord_connections(connection_file)[[channel_id]])
     discordr::set_default_discord_connection(conn)
     return(conn)
   } else {getOption("default_discordr_connection")}

@@ -190,7 +190,14 @@ pipeline_align <- function(pipeline, config) {
       # }
     }
 
-    if (nrow(runs))
+    dir_info <- as.data.table(fs::dir_info(file.path(output_dir, "aligned"), type = "file"))
+    dir_info <- dir_info[grep(paste(runs$Run, collapse = "|"), path)][grep("\\.bam$", path)]
+    if (nrow(dir_info) < nrow(runs)) {
+        stop("You have missing bam files in your aligned folder!")
+    }
+    if (any(dir_info$size == 0)) {
+      stop("You have empty bam files in your aligned folder!")
+    }
     if (config$delete_collapsed_files)
       fs::dir_delete(input_dir)
     set_flag(config, "aligned", conf["exp"])
@@ -342,11 +349,31 @@ pipeline_create_ofst <- function(df_list, config) {
 }
 
 
-pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_lengths_rpf) {
+pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_lengths_rpf,
+                            reuse_shifts_if_existing = config$reuse_shifts_if_existing) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "pshifted", name(df))) next
+
+    shifting_table <- NULL
+    if (reuse_shifts_if_existing) {
+      shifts <- suppressWarnings(try(shifts_load(df), silent = TRUE))
+      if (!is(shifts, "try-error")) {
+        if (length(shifts) == nrow(df)) {
+          shifting_table <- shifts
+          rfp_files <- filepath(df, "ofst")
+          if (!all(names(shifting_table) %in% rfp_files)) {
+            hits_order <- sapply(runIDs(df), function(x) grep(x, names(shifting_table)))
+            if (is.numeric(hits_order)) {
+              names(shifting_table) <- rfp_files[hits_order]
+            } else shifting_table <- NULL
+          }
+
+        }
+      }
+    }
     res <- tryCatch(shiftFootprintsByExperiment(df, output_format = "ofst",
-                                                accepted.lengths = accepted_lengths),
+                                                accepted.lengths = accepted_lengths,
+                                                shift.list = shifting_table),
                     error = function(e) {
                       message(e)
                       message(name(df))
@@ -355,7 +382,7 @@ pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_
                       return(e)
                     })
     if(!inherits(res, "error")) {
-      dir.create(QCfolder(df))
+      dir.create(QCfolder(df), showWarnings = FALSE)
       set_flag(config, "pshifted", name(df))
     }
   }

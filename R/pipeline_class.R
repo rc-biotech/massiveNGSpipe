@@ -16,7 +16,7 @@ list_dirs_of_pipeline <- function(pipeline) {
     dirs <- c(dirs,
               ofst = file.path(dirs["aligned"], "ofst"),
               pshifted = file.path(dirs["aligned"], "pshifted"),
-              cov = file.path(dirs["aligned"], "covRle"),
+              cov = file.path(dirs["aligned"], "cov_RLE"),
               bigwig = file.path(dirs["aligned"], "bigwig"))
     return(dirs)
   })

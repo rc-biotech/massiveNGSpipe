@@ -4,11 +4,17 @@
 \alias{pipeline_merge_org_modalities}
 \title{Gather all modalities per organism into exp}
 \usage{
-pipeline_merge_org_modalities(all_exp = list.experiments(validate = FALSE))
+pipeline_merge_org_modalities(
+  all_exp = list.experiments(validate = FALSE),
+  out_dir_base = ORFik::config()["bam"]
+)
 }
 \arguments{
 \item{all_exp}{data.table of all done experiment,
 default: list.experiments(validate = FALSE)}
+
+\item{out_dir_base}{= ORFik::config()\link{"bam"}, will make directory internally
+called name of exp (e.g. all_merged-Homo_sapiens_modalities)}
 }
 \value{
 invisible(NULL)

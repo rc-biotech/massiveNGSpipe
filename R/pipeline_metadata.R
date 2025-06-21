@@ -158,8 +158,8 @@ pipeline_metadata <- function(accessions, config, force = FALSE, max_attempts = 
       are_there <- safety_check %in% colnames(res)
       if (!all(are_there)) {
         check_add <- data.table(LIBRARYTYPE = "", REPLICATE = "", STAGE = "",
-                                CONDITION = "", INHIBITOR = "")
-        res <- cbind(res, check_add[, ..are_there])
+                                CONDITION = "", INHIBITOR = "")[, which(!are_there), with = FALSE]
+        res <- cbind(res, check_add)
       }
       return(res)
     }, config = config, force = force, BPPARAM = BPPARAM)
@@ -477,7 +477,8 @@ match_bam_to_metadata <- function(bam_dir, study, paired_end) {
   names_have_info_extensions <- anyNA(matches)
   if (names_have_info_extensions) {
     # TODO: Make this all more clear and failproof
-    bam_files_base <- gsub("_Aligned.*", "", bam_files_base)
+    bam_files_base <- sub("_R1_001_Aligned.*", "", bam_files_base)
+    bam_files_base <- sub("_Aligned.*", "", bam_files_base)
     bam_files_base <- sub(".*trimmed_", "", bam_files_base)
     bam_files_base <- sub(".*trimmed2_", "", bam_files_base)
     bam_files_base <- sub(".*collapsed_", "", bam_files_base)
@@ -657,6 +658,11 @@ organism_name_cleanup <- function(organisms) {
   return(organisms)
 }
 
+search_for_fasta_files <- function(dir, full.names = TRUE) {
+  grep("\\.md5$", list.files(dir, "\\.(fa|fna|fasta|fastq(\\.gz)?)$", full.names = full.names),
+       invert = TRUE, value = TRUE)
+}
+
 
 #' Create template study csv info
 #'
@@ -666,7 +672,7 @@ organism_name_cleanup <- function(organisms) {
 #' @param exp_name experiment name, a prefix for directory name.
 #'  The relative path without the -organism part.
 #' @param files character vector of full paths,
-#'  default: \code{list.files(dir, pattern = "\\.fast.*", full.names = TRUE)}
+#'  default: search_for_fasta_files(dir)
 #' @param organism Scientific latin name of organism, give single if all
 #' are equal, or specify for each file if multiple. Example: "Homo sapiens"
 #' @param sample_title Define a valid sample name per sample, like,
@@ -681,28 +687,32 @@ organism_name_cleanup <- function(organisms) {
 #' RUN: The sample name (For paired end, still 1 row, with basename of sample)\cr
 #' ...
 #' @export
-local_study_csv <- function(dir, exp_name, files = list.files(dir, pattern = "\\.fast.*", full.names = TRUE),
+local_study_csv <- function(dir, exp_name, files = search_for_fasta_files(dir),
                             organism, sample_title, paired = FALSE,
                             Model = "Illumina Genome Analyzer",
                             Platform = "ILLUMINA",
                             LibraryName = "",
                             LibraryStrategy = "RNA-Seq",
                             LibrarySource = "TRANSCRIPTOMIC",
-                            avgLength = NA,
+                            avgLength = "auto",
                             SampleName = c(""), sample_source = c(""),
                             BioProject_max_old = 0,
                             MONTH = substr(Sys.time(), 6,7),
                             YEAR = substr(Sys.time(), 1,4),
                             AUTHOR = Sys.info()["user"],
-                            cell_line = NULL,
-                            tissue = NULL,
-                            replicate = NULL,
-                            condition = NULL,
-                            fraction = NULL) {
+                            batch = "",
+                            timepoint = "",
+                            cell_line = "",
+                            tissue = "",
+                            replicate = "",
+                            condition = "",
+                            fraction = "") {
   #if (any(paired %in% "PAIRED")) stop("Only single end supported for now!")
   message("Using files:")
   print(basename(files))
   stopifnot(length(files) > 0)
+  stopifnot(!is.null(sample_title))
+  if (is.logical(paired)) paired <- c("SINGLE", "PAIRED")[paired + 1]
   stopifnot(all(paired %in% c("SINGLE", "PAIRED")))
   if (length(paired) == 1) paired <- rep(paired, length(files))
   is_paired <- paired == "PAIRED"
@@ -712,18 +722,17 @@ local_study_csv <- function(dir, exp_name, files = list.files(dir, pattern = "\\
     stopifnot(length(paired) == length(files))
   }
   if (is.character(avgLength) && length(avgLength) == 1 && avgLength == "auto") {
-    avgLength <- sapply(files, function(file) round(mean(width(readDNAStringSet(file, format = c("fasta", "fastq")[1 + grepl("\\.fastq|\\.fq", file)], nrec = 100)))))
+    avgLength <- sapply(files, function(file) round(mean(width(readDNAStringSet(file, nrec = 100, format = c("fasta", "fastq")[1 + grepl("\\.fastq|\\.fq", file)])))))
   }
 
   file_basenames <- gsub("\\.fast.*", "", basename(files))
   file_basenames_split <- file_basenames
   file_basenames_unique <- unique(gsub("_\\.[1-9]\\.fast", "", file_basenames))
   size_MB <- floor(file.size(files)/1024^2)
-  avgLength <- sapply(files, function(file) mean(width(readDNAStringSet(file, nrec = 100, format = "fastq"))))
 
 
   if (any(is_paired)) {
-    unique_samples <- gsub("_\\d+$", "", file_basenames_unique[is_paired])
+    unique_samples <- gsub("_R(1|2)$", "", gsub("_\\d+$", "", file_basenames_unique[is_paired]))
     file_basenames_unique <- unique_samples
     unique_samples_uniqed <- unique(unique_samples)
     stopifnot(max(table(unique_samples)) == 2)
@@ -748,7 +757,9 @@ local_study_csv <- function(dir, exp_name, files = list.files(dir, pattern = "\\
   if (auto_detect) {
     dt_temp <- ORFik:::metadata.autnaming(dt_temp)
   }
-  dt_temp[, `:=`(CELL_LINE = cell_line,
+  dt_temp[, `:=`(BATCH = batch,
+                 TIMEPOINT = timepoint,
+                 CELL_LINE = cell_line,
                  TISSUE = tissue,
                  REPLICATE = replicate,
                  CONDITION = condition,

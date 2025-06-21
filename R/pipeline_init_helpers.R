@@ -36,7 +36,10 @@ init_and_load_complete_metadata <- function(config, complete_metadata = config$c
     complete_genomes <- list.genomes(reference.folder = config$config["ref"])$name
     total_genomes <- length(unique(final_list$ScientificName))
     total_samples <- nrow(final_list)
-    final_list <- final_list[ScientificName %in% gsub("_", " ", (stringr::str_to_title(complete_genomes))), ]
+    complete_genomes_formated <- gsub("_", " ", (stringr::str_to_title(complete_genomes)))
+    mixed_genomes <- grep("_x_", complete_genomes)
+    complete_genomes_formated[mixed_genomes] <- complete_genomes[mixed_genomes]
+    final_list <- final_list[ScientificName %in% complete_genomes_formated,]
 
     message("Complete genomes ratio:", round((length(complete_genomes) / total_genomes)*100, 2), "%")
     message("Used samples ratio:", round((nrow(final_list) / total_samples)*100, 2), "%")

@@ -18,7 +18,7 @@ plot_all_versions(
   formats_discord = formats[!(formats \%in\% "svg")],
   formats_google = formats[!(formats \%in\% c("jpg", "png"))],
   preview_image = FALSE,
-  discord_message = NULL
+  discord_message = basename(file_prefix)
 )
 }
 \arguments{

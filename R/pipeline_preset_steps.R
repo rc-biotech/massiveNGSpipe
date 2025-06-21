@@ -1,5 +1,22 @@
 # Pipeline 1: Download
 pipe_fetch <- function(pipelines, config) {
+  drive_cap <- config$stop_downloading_new_data_at_drive_usage
+  disc_is_full <- as.numeric(gsub("%", "", get_system_usage()$Drive_Usage_Percent)) >= drive_cap
+  if (disc_is_full) {
+    message("Disc is nearly full, will pause downloading data for a while..")
+    return(invisible(NULL))
+  }
+
+  flag_step <- which(names(config$flag) == "fetch") # Step after fetch
+  unprocessed_downloads <- sum(progress_report(pipelines, config,
+                                          show_status_per_exp = FALSE,
+                                          show_done = FALSE,
+                                          return_progress_vector = T) == flag_step)
+  if (unprocessed_downloads > config$max_unprocessed_downloads) {
+    message("Max unprocessed downloads reached, will pause downloading data for a while..")
+    return(invisible(NULL))
+  }
+
   for (pipeline in pipelines) {
     exp <- pipeline$accession
     if (file.exists(report_failed_pipe_path(config, exp))) next
@@ -208,7 +225,26 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
 #' @return invisible(NULL)
 #' @export
 #' @examples
-#' pipeline_collection_org(config, done_organisms = "Homo sapiens", path_suffix = "10_02_2025")
+#' config <- pipeline_config()
+#' pipelines <- pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE)
+#' dirs <- lapply(pipelines, function(p) {
+#' dirs_pipe <- massiveNGSpipe:::list_dirs_of_pipeline(pipeline = p)
+#' names(dirs_pipe) <- tolower(names(dirs_pipe))
+#' lapply(dirs_pipe, function(exp) {
+#'   all(dir.exists(exp[-which(names(exp) %in% c("fastq", "trim", "exp"))]))
+#' })
+#' })
+#' exists <- unlist(dirs, use.names = TRUE)
+#' names(exists) <- sub("\\.", "-", names(exists))
+#' names(exists) <- sub(" ", "_", names(exists))
+#' sum(exists / length(exists))
+#' all_exp_names <- unlist(massiveNGSpipe:::get_experiment_names(pipelines), use.names = FALSE)
+#' stopifnot(all(names(exists) %in% all_exp_names))
+#' done_experiments <- names(exists)[exists]
+#' length(done_experiments)
+#' names(done_experiments) <- stringr::str_to_sentence(sub("_", " ", sub(".*-", "", done_experiments)))
+#' pipeline_collection_org(config, pipelines, done_organisms = "Homo sapiens", done_experiments, path_suffix = "_13_06_2025")
+#' #pipeline_collection_org(config, done_organisms = "Homo sapiens", path_suffix = "_10_02_2025")
 pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE),
                                     done_experiments = step_is_done_pipelines(config, "pcounts", pipelines),
                                     done_organisms = unique(names(done_experiments)),
@@ -259,8 +295,8 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
                                                            type = "summarized")),
                              region = region, BPPARAM = BPPARAM)
       count_list <- do.call(BiocGenerics::cbind, count_lists)
-      saveName <- file.path(count_folder, paste0("countTable_", region, ".rds"))
-      saveRDS(count_list, file = saveName)
+      saveName <- file.path(count_folder, paste0("countTable_", region, ".qs"))
+      qs::qsave(count_list, file = saveName, nthreads = 5)
       saveName <- file.path(count_folder, paste0("totalCounts_", region, ".rds"))
       saveRDS(colSums(assay(count_list)), file = saveName)
     }
@@ -365,9 +401,12 @@ make_additional_formats <- function(df_ref, exp_name, out_dir_exp) {
 #' a new experiment. Only applies to organisms with > 1 modality completed.
 #' @param all_exp data.table of all done experiment,
 #'  default: list.experiments(validate = FALSE)
+#' @param out_dir_base = ORFik::config()["bam"], will make directory internally
+#' called name of exp (e.g. all_merged-Homo_sapiens_modalities)
 #' @return invisible(NULL)
 #' @export
-pipeline_merge_org_modalities <- function(all_exp = list.experiments(validate = FALSE)) {
+pipeline_merge_org_modalities <- function(all_exp = list.experiments(validate = FALSE),
+                                          out_dir_base = ORFik::config()["bam"]) {
   message("- All modalities per organism")
   candidates <- organism_merged_exp_name(unique(all_exp$organism))
 
@@ -395,8 +434,22 @@ pipeline_merge_org_modalities <- function(all_exp = list.experiments(validate = 
     create.experiment(NULL, exper = exp_name,
                       txdb = df@txdb,
                       libtype = libtype_df, fa = df@fafile,
-                      organism = org, files = df$filepath)
-    df <- read.experiment(exp_name, output.env = new.env())
+                      organism = org, files = df$filepath,
+                      result_folder = file.path(out_dir_base, exp_name))
+    df <- read.experiment(exp_name)
+    message("- Merging count tables")
+    qc_folder <- QCfolder(df)
+    regions <- c("mrna", "leaders", "cds", "trailers")
+    dir.create(qc_folder, recursive = TRUE, showWarnings = FALSE)
+    counts <- lapply(regions, function(region) {
+      message("-- ", region)
+      sum_exp <- do.call(cbind, lapply(seq(nrow(df)), function(i) {
+        df_sub <- df[i,]
+        df_sub@resultFolder <- libFolder(df[i,])
+        countTable(df_sub, region = region, type = "summarized")
+      }))
+      save_RDSQS(sum_exp, file.path(qc_folder, paste0("countTable_", region, ".qs")))
+    })
   }
   return(invisible(NULL))
 }

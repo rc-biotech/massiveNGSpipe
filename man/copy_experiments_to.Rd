@@ -7,7 +7,7 @@
 copy_experiments_to(
   csv_names,
   old_exp_dir = ORFik::config()["exp"],
-  new_exp_dir = sub("_local$", "", old_exp_dir),
+  new_exp_dir = sub("_local$|_local/$", "", old_exp_dir),
   docker_conversion = "'s/livemount\\\\///g'"
 )
 }

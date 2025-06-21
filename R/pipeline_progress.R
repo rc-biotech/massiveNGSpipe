@@ -29,6 +29,90 @@ progress_report <- function(pipelines, config,
                             named_progress_vector = FALSE,
                             system_usage_stats = TRUE) {
   message("- Progress report:")
+
+  status_per_study_list <- status_per_study(pipelines, config,
+                                            show_status_per_exp, show_done,
+                                            show_stats)
+  progress_index <- status_per_study_list$progress_index
+  n_bioprojects <- status_per_study_list$n_bioprojects
+  if (check_merged_org) {
+    organism_report(all_organism, config, progress_index)
+  }
+  if (system_usage_stats) {
+    usage <- get_system_usage(one_liner = TRUE)
+  }
+  cat(status_per_study_list$message, "\n")
+
+  ret <- invisible(NULL)
+  if (return_progress_vector) {
+    ret <- progress_index
+    if (named_progress_vector) {
+      names(ret) <- pipelines_names(pipelines)
+    }
+  }
+  if (status_plot) {
+    ret <- status_plot(status_per_study_list)
+  }
+  if (show_stats) {
+    save_report(status_per_study_list)
+  } else return(ret)
+}
+
+#' Get running processes
+#'
+#' Nice to kill a processes group by pgid
+#' @param fields "pid,pgid,user,pcpu,pmem,nice,priority,time,command"
+#' @param intern logical, default FALSE. If TRUE, capture as character vector.
+#' @return either NULL or captured output
+#' @export
+get_running_processes <- function(fields = "pid,pgid,user,pcpu,pmem,nice,priority,time,command",
+                                  intern = FALSE) {
+  system(paste("ps xo ", fields, "--sort=pcpu,size"), intern = intern)
+}
+
+get_pgid <- function() as.integer(system("ps -o pgid= -p $$", intern = TRUE))
+
+get_pgid_all <- function() {
+  as.integer(get_running_processes("pgid", TRUE)[-1])
+}
+
+session_info_save <- function(config, pipelines) {
+  if (is.null(config$session_dir)) stop("Can only save session info for active session!")
+  info <- list(pipeline_names = names(pipelines),
+               pgid = get_pgid(),
+               init_time = config$init_time,
+               status = "started")
+
+  saveRDS(info, file.path(config$session_dir, "session_info.rds"))
+  return(invisible(NULL))
+}
+
+session_info_read <- function(config) {
+  if (is.null(config$session_dir)) stop("Can only save session info for active session!")
+  return(readRDS(file.path(config$session_dir, "session_info.rds")))
+}
+
+#' Is the last call to run_pipeline still running / zombie process
+#' @param config a pipeline config
+#' @return logical, TRUE / FALSE
+#' @export
+last_session_stil_active <- function(config) {
+  session_info_path <- list.files(sort(list.dirs(file.path(config$project, "session_logs")), decreasing = TRUE)[1],
+                                  full.names = TRUE)
+  if (length(session_info_path) == 0) stop("Last session has no valid info file")
+  session_info <- readRDS(session_info_path)
+
+  return(session_info$pgid %in% get_pgid_all())
+}
+
+#' Status per study
+#' @inheritParams progress_report
+#' @return a list structured as: list(done, progress_index, projects,
+#'  alignment.stats.all, trimmed.out.all, n_bioprojects,
+#'  report_dir = config$project, message)
+#' @export
+status_per_study <- function(pipelines, config, show_status_per_exp, show_done,
+                             show_stats) {
   n_bioprojects <- sum(unlist(lapply(pipelines, function(p) length(p$organisms))))
   steps <- names(config[["flag"]])
   negative_message <- steps; names(negative_message) <- steps
@@ -72,43 +156,32 @@ progress_report <- function(pipelines, config,
       done <- done + 1
     }
   }
-  if (check_merged_org) {
-    organism_report(all_organism, config, progress_index)
-  }
-  if (system_usage_stats) {
-    usage <- get_system_usage(one_liner = TRUE)
-  }
-  cat("Number of studies completed\n")
-  percentage_done <- round(100*(done / n_bioprojects), 2)
-  percentage_done <- paste0(" (", percentage_done, "%)")
-  cat(done, " / ", n_bioprojects, percentage_done, "\n")
-  print(current_step_table(progress_index, steps))
-  last_update_message(config)
+  message <- paste(capture.output({
+    cat("Number of studies completed\n")
+    percentage_done <- round(100*(done / n_bioprojects), 2)
+    percentage_done <- paste0(" (", percentage_done, "%)")
+    cat(done, " / ", n_bioprojects, percentage_done, "\n")
+    print(current_step_table(progress_index, steps))
+    last_update_message(config)
+  }), collapse = "\n")
 
-  ret <- invisible(NULL)
-  if (return_progress_vector) {
-    ret <- progress_index
-    if (named_progress_vector) {
-      names(ret) <- pipelines_names(pipelines)
-    }
-  }
-  if (status_plot) {
-    ret <- status_plot(steps, progress_index, projects, n_bioprojects, done)
-  }
-  if (show_stats) {
-    save_report(alignment.stats.all, trimmed.out.all, done, total = n_bioprojects, config$project)
-  } else return(ret)
+  return(list(done = done, progress_index = progress_index,
+              projects = projects, alignment.stats.all = alignment.stats.all,
+              trimmed.out.all = trimmed.out.all, n_bioprojects = n_bioprojects,
+              report_dir = config$project, message= message))
 }
 
 #' Store total trimming and alignment stats for pipeline
-#' @param dt character path, the alignment stats csv paths
-#' @param dt.trim character path, the trim stats paths
-#' @param done numeric, total done studies
-#' @param total numeric, total studies
-#' @param report_dir, directory to store results
+#' @param status_per_study_list a list, the output of \link{status_per_study}
 #' @return invisible(NULL)
 #' @noRd
-save_report <- function(alignment.stats.all, trimmed.out.all, done, total, report_dir) {
+save_report <- function(status_per_study_list) {
+
+  alignment.stats.all <- status_per_study_list$alignment.stats.all
+  trimmed.out.all <- status_per_study_list$trimmed.out.all
+  done <- status_per_study_list$done
+  total <- status_per_study_list$n_bioprojects
+  report_dir <- status_per_study_list$report_dir
 
   message("- Loading alignment stats for all studies..")
   dt <- rbindlist(lapply(alignment.stats.all, function(f) {
@@ -175,7 +248,7 @@ current_step_table <- function(progress_index, steps) {
 
   tab <- table(progress_index)
   old_index <- names(tab)
-  message("Current steps active: name(flag_index):")
+  cat("Current steps active: name(flag_index):\n")
   names(tab) <- paste0(all_flag_steps[as.numeric(old_index) + 1], "(", old_index, ")")
   return(tab)
 }
@@ -236,7 +309,14 @@ stats_all_libraries_plot <- function(ggplot, filename, xlab = "% reads removed b
 #'
 #' Given all studies, report how far they have come as a heatmap (y-axis
 #' is steps, x-axis is studies)
-status_plot <- function(steps, progress_index, projects, n_bioprojects, done) {
+status_plot <- function(status_per_study_list) {
+
+  steps <- status_per_study_list$steps
+  progress_index <- status_per_study_list$progress_index
+  projects <- status_per_study_list$projects
+  n_bioprojects <- status_per_study_list$n_bioprojects
+  done <- status_per_study_list$done
+
   status_matrix <- lapply(seq(length(steps)) - 1, function(x) as.data.table(matrix(as.integer(x <= progress_index), nrow = 1, byrow = TRUE)))
   status_matrix <- as.matrix(rbindlist(status_matrix))
   fig1 <- plot_ly(z = status_matrix, x = projects, y = steps, type = "heatmap", colors = c("red", "green")[unique(as.vector(status_matrix)) + 1], showscale=FALSE) %>%

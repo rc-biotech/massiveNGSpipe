@@ -24,7 +24,10 @@ pipeline_config(
   keep_contaminants = FALSE,
   keep_unaligned_genome = FALSE,
   compress_raw_data = FALSE,
+  stop_downloading_new_data_at_drive_usage = 96,
+  max_unprocessed_downloads = 30,
   accepted_lengths_rpf = c(20, 21, 25:33),
+  reuse_shifts_if_existing = TRUE,
   parallel_conf = bpoptions(log = TRUE, stop.on.error = TRUE),
   logdir = file.path(project_dir, "log_pipeline"),
   discord_webhook = massiveNGSpipe:::discord_connection_default_cached(),
@@ -101,8 +104,20 @@ else saved in contamination dir.}
 
 \item{compress_raw_data}{logical, default FALSE. If TRUE, will compress raw fastq files.}
 
+\item{stop_downloading_new_data_at_drive_usage}{integer, default 96,
+percentage value where the drive will stop downloading new data. Set to 101 to
+disable a cap.}
+
+\item{max_unprocessed_downloads}{numeric, default 30. Temporarily stop downloading more data
+if > 30 studies are not done with the first post download processing step
+(usually trimming)}
+
 \item{accepted_lengths_rpf}{default c(20, 21, 25:33), which read lengths to pshift.
 Default is the standard fractions of normal 80S ~28 and the smaller size of ~21.}
+
+\item{reuse_shifts_if_existing}{for Ribo-seq, reuse shift table called shifting_table.rds
+in pshifted folder if it is valid (equal number of sample shift tables in file
+relative toexperiment)}
 
 \item{parallel_conf}{a bpoptions object, default:
 \code{bpoptions(log =TRUE, stop.on.error = TRUE)}

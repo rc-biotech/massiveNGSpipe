@@ -57,6 +57,7 @@ run_pipeline_set_up_session <- function(pipelines, config, BPPARAM = config$BPPA
   config$error_dir <- file.path(config$project, "error_logs", init_time_char)
   config$session_dir <- file.path(config$project, "session_logs", init_time_char)
   dir.create(config$session_dir, recursive = TRUE, showWarnings = FALSE)
+  session_info_save(config, pipelines)
   return(config)
 }
 
@@ -68,9 +69,18 @@ run_pipeline_end_session <- function(pipelines, config) {
   if (no_errors) {
     title_message <- "Pipeline is done, without any errors"
     progress_report(pipelines, config, show_stats = TRUE)
+    info <- session_info_read(config)
+    info$status <- "Completed"
+    info$end_time <- Sys.time()
+    saveRDS(info, file.path(config$session_dir, "session_info.rds"))
+
   } else {
     title_message <- paste("Pipeline is done, but had errors, skipping report.",
     "See the directory: ", config$error_dir, "for more information!")
+    info <- session_info_read(config)
+    info$status <- "Failed"
+    info$end_time <- Sys.time()
+    saveRDS(info, file.path(config$session_dir, "session_info.rds"))
   }
   message(title_message)
   if (!is.null(config$discord_webhook)) {
