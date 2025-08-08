@@ -11,6 +11,9 @@ pipeline_download(pipeline, config)
 
 \item{config}{the mNGSp config object from \link{pipeline_config}}
 }
+\value{
+invisible(NULL)
+}
 \description{
 Extract them into '<'accession'>'.fastq.gz or '<'accession'>'_{1,2}.fastq.gz
 for SE/PE reads respectively.

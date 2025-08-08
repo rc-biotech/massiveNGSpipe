@@ -112,6 +112,33 @@ name_of_function <- function(...) unlist(purrr:::map(rlang::ensyms(...) , as.cha
 
 #' @inherit rstudioapi::filesPaneNavigate
 #' @importFrom rstudioapi filesPaneNavigate
+#' @return invisible(NULL)
+#' @export
 navigate <- rstudioapi::filesPaneNavigate
+
+#' Navigate to a Directory in the Files Pane
+#'
+#' Navigate to a directory in the Files pane.
+#' The contents of that directory will be listed and shown in the Files pane.
+#' @param exp ORFik experiment or character name of experiment,
+#' a ORFik experiment name of folder to go to, e.g. "GSE91068-saccharomyces_cerevisiae".
+#' @param rel_dir character, relative directory, "aligned", "trim", "processed" or "raw"
+#' @return invisible(NULL)
+#' @export
+navigateExp <- function(exp, rel_dir = "aligned") {
+  if (!is.character(exp)) exp <- name(exp)
+  path <-
+  if (rel_dir == "aligned") {
+    file.path(ORFik::config()["bam"], exp, "aligned")
+  } else if (rel_dir == "trim") {
+    file.path(ORFik::config()["bam"], exp, "trim")
+  } else if (rel_dir == "processed") {
+    file.path(ORFik::config()["bam"], exp)
+  } else {
+    file.path(ORFik::config()["fastq"], exp)
+  }
+
+  navigate(path)
+}
 
 

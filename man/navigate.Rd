@@ -9,6 +9,9 @@ navigate(path)
 \arguments{
 \item{path}{The filesystem path to be shown.}
 }
+\value{
+invisible(NULL)
+}
 \description{
 Navigate to a directory in the Files pane. The contents of that directory
 will be listed and shown in the Files pane.

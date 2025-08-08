@@ -391,7 +391,7 @@ make_additional_formats <- function(df_ref, exp_name, out_dir_exp) {
     rtracklayer::export.bw(object = r(covrle), bw_files[2])
   }
 
-  ORFik::countTable_regions(df, lib.type = "pshifted", forceRemake = TRUE)
+  ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE)
   return(invisible(NULL))
 }
 

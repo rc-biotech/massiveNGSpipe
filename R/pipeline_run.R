@@ -38,8 +38,8 @@ parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100) {
     if (!all(steps_done)) {
       message("Sleep (", steps_merged,")")
       Sys.sleep(wait)
-      message("Stopped sleeping (", steps_merged,")")
-      idle_round <- idle_round + 1; message("- ", idle_round)
+      idle_round <- idle_round + 1;
+      message("Stopped sleeping (", steps_merged,")", " - ", idle_round)
     }
   }
   message("Done for step pipeline:\n", steps_merged)

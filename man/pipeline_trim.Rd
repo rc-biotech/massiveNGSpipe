@@ -10,6 +10,8 @@ pipeline_trim(pipeline, config)
 }
 \arguments{
 \item{pipeline}{a pipeline object}
+
+\item{config}{the mNGSp config object from \link{pipeline_config}}
 }
 \description{
 Trim all .fastq.gz files in a given pipeline. Paired end reads

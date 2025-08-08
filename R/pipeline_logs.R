@@ -96,6 +96,9 @@ report_failed_pipe_path <- function(config, exp) {
   file.path(config$error_dir, paste0(exp, ".rds"))
 }
 
+#' Get last active session error
+#' @param config a list from a massiveNGSpipe::pipeline_config call
+#' @return a character vector of errors
 #' @export
 last_session_errors <- function(config) {
   errors <- sapply(list.files(sort(list.dirs(file.path(config$project, "error_logs")), decreasing = TRUE)[1], full.names = TRUE), readRDS)

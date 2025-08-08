@@ -64,7 +64,7 @@
 #' @param verbose logical, default TRUE, give start up message
 #' @param logdir = file.path(project_dir, "log_pipeline")
 #' @param discord_webhook = massiveNGSpipe:::discord_connection_default_cached()
-#' @param BPPARAM_TRIM BiocParallel::MulticoreParam(8),
+#' @param BPPARAM_TRIM BiocParallel::MulticoreParam(max(BiocParallel::bpworkers(), 8)),
 #' number of cores/threads to use for trimming. Optimal is 8 for most data.
 #' @param BPPARAM = bpparam(), number of cores/threads to use.
 #' @return a list with a defined config
@@ -98,7 +98,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             logdir = file.path(project_dir, "log_pipeline"),
                             discord_webhook = massiveNGSpipe:::discord_connection_default_cached(),
                             verbose = TRUE,
-                            BPPARAM_TRIM = BiocParallel::MulticoreParam(8),
+                            BPPARAM_TRIM = BiocParallel::MulticoreParam(max(BiocParallel::bpworkers(), 8)),
                             BPPARAM = bpparam()) {
   if (verbose) {
     message("Setting up mNGSp config..")

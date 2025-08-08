@@ -32,7 +32,7 @@ pipeline_config(
   logdir = file.path(project_dir, "log_pipeline"),
   discord_webhook = massiveNGSpipe:::discord_connection_default_cached(),
   verbose = TRUE,
-  BPPARAM_TRIM = BiocParallel::MulticoreParam(8),
+  BPPARAM_TRIM = BiocParallel::MulticoreParam(max(BiocParallel::bpworkers(), 8)),
   BPPARAM = bpparam()
 )
 }
@@ -129,7 +129,7 @@ Specific pipeline config for parallel settings and log directory}
 
 \item{verbose}{logical, default TRUE, give start up message}
 
-\item{BPPARAM_TRIM}{BiocParallel::MulticoreParam(8),
+\item{BPPARAM_TRIM}{BiocParallel::MulticoreParam(max(BiocParallel::bpworkers(), 8)),
 number of cores/threads to use for trimming. Optimal is 8 for most data.}
 
 \item{BPPARAM}{= bpparam(), number of cores/threads to use.}

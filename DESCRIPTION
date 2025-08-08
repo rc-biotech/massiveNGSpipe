@@ -29,6 +29,7 @@ Imports:
     jsonlite,
     plotly,
     purrr,
+    RiboCrypt,
     rlang,
     rstudioapi,
     scales,
@@ -37,5 +38,6 @@ Remotes:
     Roleren/ORFik,
     Roleren/biomartr,
     m-swirski/RiboCrypt,
-    Bioconductor/BiocFileCache
+    Bioconductor/BiocFileCache,
+    EriqLaplus/discordr
 

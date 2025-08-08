@@ -9,7 +9,7 @@ pipeline_validate_shifts(df_list, config)
 \arguments{
 \item{df_list}{a list of ORFik experiments}
 
-\item{config}{a pipeline config}
+\item{config}{the mNGSp config object from \link{pipeline_config}}
 }
 \value{
 invisible(NULL)

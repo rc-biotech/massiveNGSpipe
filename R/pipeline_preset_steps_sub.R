@@ -6,6 +6,7 @@
 #' for SE/PE reads respectively.
 #' @param pipeline a pipeline object
 #' @param config the mNGSp config object from [pipeline_config]
+#' @return invisible(NULL)
 pipeline_download <- function(pipeline, config) {
     study <- pipeline$study
     for (organism in names(pipeline$organisms)) {
@@ -24,7 +25,7 @@ pipeline_download <- function(pipeline, config) {
 #' Trim all .fastq.gz files in a given pipeline. Paired end reads
 #' ("SRR<...>_1.fastq.gz", "SRR<...>_2.fastq.gz") are trimmed separately
 #' from each other to allow for differing adapters.
-#' @param pipeline a pipeline object
+#' @inheritParams pipeline_download
 pipeline_trim <- function(pipeline, config) {
     study <- pipeline$study
     config$BPPARAM_TRIM <- SerialParam()
@@ -40,58 +41,26 @@ pipeline_trim <- function(pipeline, config) {
         # Files to run (Single end / Paired end)
         all_files <- run_files_organizer(runs, source_dir)
         # Trim
+        # tail(seq_len(nrow(runs)), 1)
         barcodes_dt <-
-        BiocParallel::bplapply(seq_len(nrow(runs)), function(i, all_files, runs, mode) {
-          run <- runs[i]$Run
+        lapply(seq_len(nrow(runs)), function(i, all_files, runs, mode) {
+          study_sample <- runs[i]
+          run <- study_sample$Run
           message(run)
           filenames <- all_files[[i]]
-          file <- filenames[1]
           single_end <- is.na(filenames[2])
-          file2 <- if(single_end) {NULL} else filenames[2]
-
-          if (!grepl("\\.fasta$|\\.fasta\\.gz$", file)) {
-            adapter <- try(fastqc_adapters_info(file))
-            if (is(adapter, "try-error")) {
-              message("This is a fasta file, fastqc adapter detection disabled")
-              adapter <- "disable"
-            }
-          } else adapter <- "disable"
-
-          ORFik::STAR.align.single(
-            file, file2,
-            output.dir = target_dir,
-            adapter.sequence = adapter,
-            index.dir = index, steps = "tr"
-          )
+          file <- filenames[1]
+          file2 <- if(!single_end) filenames[2]
+          adapter <- detect_adapter_and_trim(file, target_dir, file2)
           barcode_dt <- data.table()
-          if (single_end && runs[i]$LIBRARYTYPE == "RFP") {
-            barcode_dt <- barcode_detector_single(runs[i], source_dir, target_dir, trimmed_dir,
-                                                  redownload_raw_if_needed = mode == "online")
-            if (barcode_dt$barcode_detected)  {
-              barcode_dir <- file.path(trimmed_dir, "before_barcode_removal")
-              dir.create(barcode_dir, showWarnings = FALSE, recursive = TRUE)
-              file_trim <- massiveNGSpipe:::run_files_organizer(runs[i], trimmed_dir)[[1]]
-              json_file <- grep(run, dir(trimmed_dir, "\\.json$", full.names = TRUE), value = TRUE)
-              html_file <- grep(run, dir(trimmed_dir, "\\.html$", full.names = TRUE), value = TRUE)
-              all_3_old_files <- c(file_trim, json_file, html_file)
-              all_3_new_files <- gsub("/trimmed_|/trimmed2_", "/", file.path(barcode_dir, basename(all_3_old_files)))
-              fs::file_move(all_3_old_files, all_3_new_files)
-              file <- all_3_new_files[1]
-              ORFik::STAR.align.single(
-                file,
-                output.dir = target_dir,
-                adapter.sequence = adapter,
-                index.dir = index, steps = "tr",
-                trim.front = barcode_dt$barcode5p_size,
-                trim.tail = barcode_dt$barcode3p_size
-              )
-              fs::file_delete(file)
-            }
+          check_for_barcodes <- single_end && runs[i]$LIBRARYTYPE == "RFP"
+          if (check_for_barcodes) {
+            barcode_dt <- run_barcode_detection_and_trim(study_sample, source_dir,
+                                                         target_dir, trimmed_dir, mode, adapter)
           }
 
           return(barcode_dt)
-        }, all_files = all_files, runs = runs, mode = config$mode,
-        BPPARAM = config$BPPARAM_TRIM)
+        }, all_files = all_files, runs = runs, mode = config$mode)
         barcodes_dt <- rbindlist(barcodes_dt, fill = TRUE)
         fwrite(barcodes_dt, file.path(trimmed_dir, "adapter_barcode_table.csv"))
 
@@ -297,7 +266,7 @@ pipeline_cleanup <- function(pipeline, config) {
 }
 
 #' Create ORFik experiment from config study and bam files
-#' @noRd
+#' @inheritParams pipeline_download
 pipeline_create_experiment <- function(pipeline, config) {
     df_list <- list()
     for (organism in names(pipeline$organisms)) {
@@ -340,6 +309,9 @@ pipeline_create_experiment <- function(pipeline, config) {
   return(df_list)
 }
 
+#' Create ORFik ofst files from bam files
+#' @param df_list a list of ORFik experiments
+#' @inheritParams pipeline_download
 pipeline_create_ofst <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "ofst", name(df))) next
@@ -348,7 +320,7 @@ pipeline_create_ofst <- function(df_list, config) {
   }
 }
 
-
+#' @inheritParams pipeline_create_ofst
 pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_lengths_rpf,
                             reuse_shifts_if_existing = config$reuse_shifts_if_existing) {
   for (df in df_list) {
@@ -367,7 +339,6 @@ pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_
               names(shifting_table) <- rfp_files[hits_order]
             } else shifting_table <- NULL
           }
-
         }
       }
     }
@@ -395,8 +366,7 @@ pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_
 #' It then save a rds file called either 'warning.rds' or 'good.rds'.
 #' Depending on the results was accepted or not:
 #' \code{any(zero_frame$percent_length < 25)}
-#' @param df_list a list of ORFik experiments
-#' @param config a pipeline config
+#' @inheritParams pipeline_create_ofst
 #' @return invisible(NULL)
 pipeline_validate_shifts <- function(df_list, config) {
   #
@@ -422,6 +392,7 @@ pipeline_validate_shifts <- function(df_list, config) {
   }
 }
 
+#' @inheritParams pipeline_create_ofst
 pipeline_convert_covRLE <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "covrle", name(df))) next
@@ -430,18 +401,21 @@ pipeline_convert_covRLE <- function(df_list, config) {
   }
 }
 
+#' @inheritParams pipeline_create_ofst
 pipeline_convert_bigwig <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "bigwig", name(df))) next
-    convert_to_bigWig(df)
+    in_files <- filepath(df, "cov", suffix_stem = c("", "_pshifted"))
+    convert_to_bigWig(df, in_files)
     set_flag(config, "bigwig", name(df))
   }
 }
 
+#' @inheritParams pipeline_create_ofst
 pipeline_count_table_psites <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "pcounts", name(df))) next
-    ORFik::countTable_regions(df, lib.type = "pshifted", forceRemake = TRUE)
+    ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE)
     set_flag(config, "pcounts", name(df))
   }
 }

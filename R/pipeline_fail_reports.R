@@ -8,7 +8,6 @@ bad_pshifting_report <- function(df) {
   report_exists <- file.exists(report_flag_path)
   if (report_exists) return(invisible(NULL))
 
-  lapply()
   envExp(df) <- new.env()
   out_dir <- file.path(QCfolder(df), "before_pshifting")
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
