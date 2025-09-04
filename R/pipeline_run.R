@@ -47,6 +47,7 @@ parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100) {
 
 run_pipeline_set_up_session <- function(pipelines, config, BPPARAM = config$BPPARAM) {
   stopifnot(length(pipelines) > 0 & is(pipelines, "list"))
+  stopifnot(!anyNA(names(pipelines)) & all(lengths(pipelines) == 3))
   message("---- Starting pipline:")
   message("Number of workers: ", BPPARAM$workers)
   message("Number of studies to run: ", length(pipelines))

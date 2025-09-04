@@ -96,12 +96,25 @@ report_failed_pipe_path <- function(config, exp) {
   file.path(config$error_dir, paste0(exp, ".rds"))
 }
 
+session_error_dirs <- function(config) {
+  sort(list.dirs(file.path(config$project, "error_logs"), recursive = F), decreasing = TRUE)
+}
+
+session_error_dirs_count <- function(config) {
+  res <- sapply(session_error_dirs(config), function(x) length(list.files(x)))
+  names(res) <- basename(names(res))
+  return(res)
+}
 #' Get last active session error
 #' @param config a list from a massiveNGSpipe::pipeline_config call
 #' @return a character vector of errors
 #' @export
-last_session_errors <- function(config) {
-  errors <- sapply(list.files(sort(list.dirs(file.path(config$project, "error_logs")), decreasing = TRUE)[1], full.names = TRUE), readRDS)
+last_session_errors <- function(config, index = 1, regex = NULL) {
+  all_sessions <- session_error_dirs(config)
+  if (length(all_sessions) < index) stop("You selected session ", index, " , but there is only ",
+                                         length(all_sessions), " existing sessions")
+  errors <- sapply(list.files(all_sessions[index], full.names = TRUE), readRDS)
   names(errors) <- gsub(".*error_logs|\\.rds$", "", names(errors))
+  if (!is.null(regex)) errors <- grep(regex, errors, value = TRUE)
   return(errors)
 }

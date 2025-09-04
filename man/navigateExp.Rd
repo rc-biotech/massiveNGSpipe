@@ -7,9 +7,10 @@
 navigateExp(exp, rel_dir = "aligned")
 }
 \arguments{
-\item{exp}{character, a ORFik experiment name of folder to go to, e.g. "GSE91068-saccharomyces_cerevisiae".}
+\item{exp}{ORFik experiment or character name of experiment,
+a ORFik experiment name of folder to go to, e.g. "GSE91068-saccharomyces_cerevisiae".}
 
-\item{rel_dir}{character, relative directory, "aligned", "trim", "processed" or "raw"}
+\item{rel_dir}{character, relative directory, "aligned", "trim", c("", "processed") or "raw"}
 }
 \value{
 invisible(NULL)

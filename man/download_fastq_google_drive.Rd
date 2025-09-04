@@ -9,7 +9,7 @@ download_fastq_google_drive(
   output_dir,
   files = google_drive_list_files(drive_url, email, format_pattern, recursive),
   format_pattern = "fastq\\\\.gz$",
-  email = "hakontjeldnes@gmail.com",
+  email = gargle_mail_safe(),
   overwrite = FALSE,
   recursive = TRUE
 )

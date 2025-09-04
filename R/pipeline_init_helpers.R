@@ -152,6 +152,7 @@ get_annotation <- function(organism,
 get_symbols <- function(txdb, path = file.path(dirname(ORFik:::getGtfPathFromTxdb(txdb)), "gene_symbol_tx_table.fst"),
                         org = organism(txdb), force = FALSE, verbose = FALSE,
                         uniprot_id = FALSE) {
+  dt <- NULL
   if (file.exists(path) & !force) {
     if (verbose) message("Loading pre-existing symbols from file")
     return(invisible(NULL))
@@ -192,13 +193,27 @@ get_symbols <- function(txdb, path = file.path(dirname(ORFik:::getGtfPathFromTxd
       } else failed_fetch <- FALSE
     }
     if (failed_fetch) {
-      warning("Species not support symbols on ensembl mart, ignoring symbols")
-      saveRDS(FALSE, not_supported_by_biomart)
+      dt <- try(symbols_from_gtf(ORFik:::getGtfPathFromTxdb(txdb)), silent = TRUE)
+      if (is(dt, "try-error")) {
+        warning("Species had no supported symbols on ensembl mart or in the annotation file,
+                ignoring symbols!")
+        saveRDS(FALSE, not_supported_by_biomart)
+      }
     }
   } else dt <- geneToSymbol(txdb, include_tx_ids = TRUE, force = force,
                             uniprot_id = uniprot_id)
   if (is(dt, "data.table")) fst::write_fst(dt, path)
   return(invisible(NULL))
+}
+
+symbols_from_gtf <- function(gtf_path, gtf = import(gtf_path)) {
+  stopifnot(file.exists(gtf_path))
+  stopifnot(is(gtf, "GRanges"))
+  dt <- as.data.table(gtf)
+  stopifnot(c("gene_id", "transcript_id", "gene") %in% colnames(dt))
+
+  dt <- dt[type != "gene" & !duplicated(transcript_id)][, .(gene_id, transcript_id, gene, protein_id)]
+  colnames(dt) <- c("ensembl_gene_id", "external_gene_name", "ensembl_tx_name", "uniprot_id")
 }
 
 update_path_per_sample <- function(df, libtype_df, rel_dir = "pshifted_merged", ext = ".ofst", libtype_to_merge) {

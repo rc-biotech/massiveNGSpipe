@@ -221,7 +221,6 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
 
 #' Create the superset collection of all samples per organism
 #' @inheritParams pipeline_merge_org
-#' @param path_suffix character, default "". Add suffix to saved collection name, like a date to seperate version.
 #' @return invisible(NULL)
 #' @export
 #' @examples
@@ -307,18 +306,24 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
 #'
 #' Collected
 #' @inheritParams run_pipeline
+#' @param path_suffix character, default "". Add suffix to saved experiment name,
+#'  like a date to seperate version.
 #' @param done_experiments named character vector, default:
-#' step_is_done_pipelines(config, "merged_lib", pipelines). Set of experiments to merge
+#' step_is_done_pipelines(config, "pcounts", pipelines). Set of experiments to merge
 #' per species.
 #' @param done_organisms Scientific name (e.g. Homo sapiens), which organisms to run merging for, default
 #' unique(names(done_experiments))
 #' @return invisible(NULL)
 #' @export
+#' @examples
+#' config <- pipeline_config()
+#'
 pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, only_complete_genomes = TRUE,
                                                                      gene_symbols = FALSE),
-                               done_experiments = step_is_done_pipelines(config, "merged_lib", pipelines),
-                               done_organisms = unique(names(done_experiments)),
+                               done_experiments = step_is_done_pipelines(config, "pcounts", pipelines),
+                               done_organisms = sort(unique(names(done_experiments))),
                                libtype_to_merge = libtype_long_to_short(config$preset),
+                               suffix = "",
                                out_dir_base = config$config["bam"]) {
   message("- Merge all samples per organism")
   done_organisms <- unique(done_organisms)
@@ -338,6 +343,8 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
 
     exp_name <- organism_merged_exp_name(org)
     if (libtype_df != "RFP") exp_name <- paste0(exp_name, "_", libtype_df)
+    exp_name <- paste0(exp_name, suffix)
+
     out_dir <- file.path(out_dir_base, exp_name)
     ORFik::mergeLibs(df, out_dir, "all", "default", FALSE)
 

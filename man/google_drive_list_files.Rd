@@ -6,7 +6,7 @@
 \usage{
 google_drive_list_files(
   drive_url,
-  email = "hakontjeldnes@gmail.com",
+  email = gargle_mail_safe(),
   format_pattern = "fastq\\\\.gz$",
   recursive = TRUE
 )

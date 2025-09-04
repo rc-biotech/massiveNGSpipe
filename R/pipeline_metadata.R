@@ -596,7 +596,7 @@ export_sucessful_metadata <- function(files, libtypes, output_file,
   message("- Done")
   invalid_libtypes <- files[KEEP == TRUE & !(LIBRARYTYPE %in% c(libtypes)),]
   if (nrow(invalid_libtypes) > 0) {
-    warning("Some samples were marked as keep with empty LIBRARYTYPE!",
+    warning("Some samples were marked as keep with invalid LIBRARYTYPE!",
             " Number of samples ignored this way: ", nrow(invalid_libtypes))
 
   }

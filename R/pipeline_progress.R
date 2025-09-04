@@ -62,12 +62,20 @@ progress_report <- function(pipelines, config,
 #'
 #' Nice to kill a processes group by pgid
 #' @param fields "pid,pgid,user,pcpu,pmem,nice,priority,time,command"
-#' @param intern logical, default FALSE. If TRUE, capture as character vector.
+#' @param as.data.table logical, default FALSE. If FALSE, capture as character vector, else
+#' convert to data.table.
 #' @return either NULL or captured output
 #' @export
 get_running_processes <- function(fields = "pid,pgid,user,pcpu,pmem,nice,priority,time,command",
-                                  intern = FALSE) {
-  system(paste("ps xo ", fields, "--sort=pcpu,size"), intern = intern)
+                                  as.data.table = FALSE) {
+  res <- system(paste("ps xo ", fields, "--sort=pcpu,size"), intern = TRUE)
+  if (as.data.table) {
+    dt <- fread(text = res, header = T, fill = T, sep = " ")
+    dt_command <- dt[, 10:ncol(dt), with = F]
+    dt_command[, arguments := do.call(paste, c(.SD, sep = " "))]
+    res <- cbind(dt[, 1:9, with = FALSE], dt_command[, .(arguments)])
+  }
+  return(res)
 }
 
 get_pgid <- function() as.integer(system("ps -o pgid= -p $$", intern = TRUE))

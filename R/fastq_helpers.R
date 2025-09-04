@@ -36,6 +36,14 @@
 #' fastqc_adapters_info(tempfile, 1e6)
 fastqc_adapters_info <- function(file, nreads = 2e6,
                                  adapters_file = fs::path(tempdir(), "adapter_candidates.txt")) {
+  manual_defined_adapters <- file.path(dirname(file), "adapters_manual.csv")
+  if (file.exists(manual_defined_adapters)) {
+    message("Using manually defined adapter file")
+    adapters <- fread(manual_defined_adapters, header = TRUE)
+    index <- which(lengths(lapply(adapters$Run, function(i) grep(i, basename(file)))) > 0)
+    if (length(index) == 0) stop("Manually defined index file did not contain information about sample")
+    return(adapters[index,][1]$adapter)
+  }
   message("- Auto detecting adapter with fastQC candidate list:")
   # Create and save the candidate adapter table.
   candidates <- adapter_list(adapters_file)
@@ -51,6 +59,7 @@ fastqc_adapters_info <- function(file, nreads = 2e6,
     status <- attributes(adapters)$status
     no_adapter_found <- status == "pass" | nrow(adapters) == 0
     if (no_adapter_found) {
+      message("- No adapter found, returning disable")
       return("disable")
     }
   }
@@ -60,21 +69,28 @@ fastqc_adapters_info <- function(file, nreads = 2e6,
   return(found_adapter)
 }
 
-fastqc_parse_adapters <- function(file, nreads, adapters_file) {
+fastqc_parse_adapters <- function(file, nreads, adapters_file =
+                                  fs::path(tempdir(), "adapter_candidates.txt")) {
 
   qc_report_path <- run_fastqc(file, nreads, adapters_file)
+  return(read_fastq_adapter_output(qc_report_path))
+}
 
-  # Parse the report and return the adapter sequence with most hits
-  # (or "disable" if none found).
+#' Read fastqc output (subset adapter)
+#'
+#' Parse the report and return the adapter sequence with most hits
+#' (or "disable" if none found). Threshold defined by fastqc and
+#' "fail" means adapter was found.
+read_fastq_adapter_output <- function(qc_report_path) {
   report <- fread(text = readLines(qc_report_path), fill = Inf)
 
   adapter_section_index <- grep("^>>Adapter Content", report$V1)
-
   adapters <- report[-c((seq(adapter_section_index + 1)), nrow(report)),]
   colnames(adapters) <- unlist(report[adapter_section_index + 1,])
-  adapters[, (names(adapters)) := lapply(.SD, as.numeric)]
+  score_columns <- adapters[, -1]
+  adapters <- cbind(`#Position` = adapters[, `#Position`], score_columns[, (names(score_columns)) := lapply(.SD, as.numeric)])
   status <- report[adapter_section_index, 2][[1]]
-  attributes(adapters) <- c(attributes(adapters), status = status)
+  attributes(adapters) <- c(attributes(adapters), status = status, qc_report_path = qc_report_path)
   return(adapters)
 }
 
@@ -156,7 +172,10 @@ run_files_organizer <- function(runs, source_dir, exclude = c("json", "html", "m
 
         file <- grep(filenames[1], files, value = TRUE)
         file2 <- NULL
-        if(!is.na(filenames[2])) {
+        if (length(file) == 2) {
+          file2 <- file[2]
+          file <- file[1]
+        } else if(!is.na(filenames[2])) {
           file2 <- grep(filenames[2], files, value = TRUE)
         }
         if (length(file) != 0) break
@@ -164,7 +183,7 @@ run_files_organizer <- function(runs, source_dir, exclude = c("json", "html", "m
 
       if (length(file) != 1) {
         if (length(file) == 0) {
-          stop("File does not exist to trim (both .gz and unzipped): ",
+          stop("Input File does not exist (both .gz and unzipped): ",
                runs[i]$Run)
         } else {
           read_1_search <- paste0(filenames[1], format,
@@ -185,7 +204,7 @@ run_files_organizer <- function(runs, source_dir, exclude = c("json", "html", "m
 
 
         if (length(file2) == 0) {
-          stop("File does not exist to trim (both .gz and unzipped): ",
+          stop("Input File does not exist (both .gz and unzipped): ",
                runs[i]$Run)
         } else {
           read_2_search <- paste0(filenames[1], format,
@@ -203,9 +222,11 @@ run_files_organizer <- function(runs, source_dir, exclude = c("json", "html", "m
       }
       return(c(file, file2))
     })
+
   file_vec <- unlist(all_files, use.names = FALSE)
   no_duplicates <- length(unique(file_vec)) == length(file_vec)
   stopifnot(no_duplicates)
+  stopifnot(!anyNA(file_vec))
   return(all_files)
 }
 
@@ -220,7 +241,10 @@ run_files_organizer <- function(runs, source_dir, exclude = c("json", "html", "m
 #' config <- pipeline_config()
 #' pipelines <- pipeline_init_all(config, only_complete_genomes = TRUE, gene_symbols = FALSE, simple_progress_report = FALSE)
 #' pipeline <- pipelines[["PRJNA634994"]]
-#' barcode_detector(pipeline, FALSE)
+#' # barcode_detector_pipeline(pipeline, FALSE)
+#' # debug(detect_adapter_and_trim)
+#' # pipeline$study <- pipeline$study[Run == "SRR10846527"]
+#' barcode_detector_pipeline(pipeline, TRUE)
 barcode_detector_pipeline <- function(pipeline, redownload_raw_if_needed = TRUE) {
   message("Barcode detection for study (", pipeline$accession, ")")
   dt_stats <- data.table()
@@ -282,17 +306,19 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
 
   file_trim <- try(massiveNGSpipe:::run_files_organizer(study_sample, trimmed_dir)[[1]], silent = TRUE)
   trimmed_file_exists <- !is(file_trim, "try-error")
-  file <- file.path(fastq_dir, paste0(sample, ".fastq"))
-  raw_file_exists <- file.exists(file)
+  file <- try(massiveNGSpipe:::run_files_organizer(study_sample, fastq_dir)[[1]][1], silent = TRUE)
+  raw_file_exists <- !is(file, "try-error")
   # Download
   if (!raw_file_exists & redownload_raw_if_needed) {
     massiveNGSpipe:::download_sra(study_sample, fastq_dir, compress = FALSE)
+    file <- try(massiveNGSpipe:::run_files_organizer(study_sample, fastq_dir)[[1]][1], silent = TRUE)
+    raw_file_exists <- !is(file, "try-error")
   }
   # Trim
   if (!trimmed_file_exists) {
     adapter <- detect_adapter_and_trim(file, process_dir)
   }
-  file_trim <- massiveNGSpipe:::run_files_organizer(study_sample, trimmed_dir)[[1]]
+  file_trim <- massiveNGSpipe:::run_files_organizer(study_sample, trimmed_dir)[[1]][1]
 
   a <- jsonlite::fromJSON(sub("/trimmed_", "/report_", sub("\\.fastq$", ".json", file_trim)))
   adapter <- a$adapter_cutting$read1_adapter_sequence
@@ -337,12 +363,16 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
     # x <- rbindlist(list[[1]], fill = TRUE)
     if (raw_file_exists & adapter != "passed") {
       fastq_raw <- readDNAStringSet(file, format = "fastq", nrec = 1e6, use.names = FALSE)
-      adapter_ext <- paste0(adapter, paste0(rep("N", max_size_before - nchar(adapter)), collapse = ""))
-      fastq_raw_trimmed <- trimLRPatterns(Lpattern = "", Rpattern = adapter_ext, subject = fastq_raw, max.Rmismatch = 3,
-                                          Rfixed = FALSE)
-      fastq_raw_trimmed_len <- fastq_raw_trimmed[width(fastq_raw_trimmed) > 20]
-      untrimmed_reads_raw_ORFik <- sum(width(fastq_raw_trimmed_len) == max(width(fastq_raw_trimmed_len)))
-      reads_no_adapter_removed_ORFik <- round(100 - (100* ( untrimmed_reads_raw_ORFik / length(fastq_raw_trimmed_len))), 1)
+      # adapter_ext <- paste0(adapter, paste0(rep("N", max_size_before - nchar(adapter)), collapse = ""))
+      # fastq_raw_trimmed <- trimLRPatterns(Lpattern = "", Rpattern = adapter_ext, subject = fastq_raw, max.Rmismatch = 3,
+      #                                     Rfixed = FALSE)
+      fastq_raw_trimmed <- remove_adapter_ORFik(fastq_raw, adapter, max.mismatch = 2)
+
+      original_widths <- width(fastq_raw)
+      trimmed_widths <- width(fastq_raw_trimmed)
+      trimmed_too_short <- trimmed_widths < 20
+      untrimmed_reads_raw_ORFik <- sum(trimmed_widths == original_widths)
+      reads_no_adapter_removed_ORFik <- round((100* ( untrimmed_reads_raw_ORFik / length(fastq_raw_trimmed))), 1)
     }
 
 
@@ -438,13 +468,15 @@ run_barcode_detection_and_trim <- function(study_sample, source_dir, target_dir,
 
     # Step 3: Get relevant files
     run <- study_sample$Run
-    file_trim <- massiveNGSpipe:::run_files_organizer(study_sample, trimmed_dir)[[1]]
+    # Ignores file 2 in pair for now!
+    file_trim_all <- massiveNGSpipe:::run_files_organizer(study_sample, trimmed_dir)[[1]]
+    file_trim <- file_trim_all[1]
     json_file <- grep(run, dir(trimmed_dir, "\\.json$", full.names = TRUE), value = TRUE)
     html_file <- grep(run, dir(trimmed_dir, "\\.html$", full.names = TRUE), value = TRUE)
 
     all_3_old_files <- c(file_trim, json_file, html_file)
-    all_3_new_files <- gsub("/trimmed_|/trimmed2_", "/", file.path(barcode_dir, basename(all_3_old_files)))
-
+    all_3_new_files <- sub("/trimmed_", "/", file.path(barcode_dir, basename(all_3_old_files))) # /trimmed2_
+    stopifnot(!any(duplicated(all_3_new_files)))
     # Step 4: Move old files
     fs::file_move(all_3_old_files, all_3_new_files)
 
@@ -498,4 +530,67 @@ detect_adapter_and_trim <- function(file, process_dir, file2 = NULL,
   )
   if (polyN_adapter) {file.remove(tempfile)}
   return(adapter)
+}
+
+#' @export
+barcodes_manual_assign <- function(pipeline, barcode5p_size, barcode3p_size) {
+  study <- pipeline$study
+  for (organism in names(pipeline$organisms)) {
+    conf <- pipeline$organisms[[organism]]$conf
+    index <- pipeline$organisms[[organism]]$index
+    process_dir <- target_dir <- conf["bam"]
+    trimmed_dir <- fs::path(process_dir, "trim")
+
+    runs <- study[ScientificName == organism]
+    barcodes_manual_assign_table(trimmed_dir, runs$Run, barcode5p_size,
+                                 barcode3p_size)
+  }
+}
+
+barcodes_manual_assign_table <- function(trimmed_dir, run_ids, barcode5p_size,
+                                         barcode3p_size) {
+  path <- file.path(trimmed_dir, "barcodes_manual.csv")
+  dt_barcode <- data.table(Run = run_ids, barcode5p_size, barcode3p_size)
+  fwrite(dt_barcode, path)
+  message("Barcodes saved to: ", path)
+  return(dt_barcode[])
+}
+
+#' @export
+adapters_manual_assign <- function(pipeline, adapters) {
+  study <- pipeline$study
+  for (organism in names(pipeline$organisms)) {
+    conf <- pipeline$organisms[[organism]]$conf
+    index <- pipeline$organisms[[organism]]$index
+    process_dir <- target_dir <- conf["bam"]
+    trimmed_dir <- fs::path(process_dir, "trim")
+
+    runs <- study[ScientificName == organism]
+    adapters_manual_assign_table(trimmed_dir, runs$Run, adapters)
+  }
+}
+
+adapters_manual_assign_table <- function(trimmed_dir, run_ids, adapters) {
+  path <- file.path(trimmed_dir, "adapters_manual.csv")
+  dt_barcode <- data.table(Run = run_ids, adapter = adapters)
+  fwrite(dt_barcode, path)
+  message("Adapters saved to: ", path)
+  return(dt_barcode[])
+}
+
+remove_adapter_ORFik <- function(fastq_raw, adapter, max.mismatch = 2) {
+  hits <- vmatchPattern(DNAString(adapter), fastq_raw,
+                        max.mismatch = max.mismatch)
+  hits <- start(IRangesList(hits))
+  hits <- hits[hits > 0]
+  empty <- lengths(hits) == 0
+  h <- hits[!empty] - 1
+  h <- unlist(heads(h, 1))
+  whole_read_trimmed <- h == 0
+  h <- h[whole_read_trimmed]
+  fastq_raw_trimmed <- fastq_raw
+  fastq_raw_trimmed[!empty][whole_read_trimmed] <- ""
+  fastq_raw_trimmed[!empty][!whole_read_trimmed] <-
+    subseq(fastq_raw_trimmed[!empty][!whole_read_trimmed], 1, h)
+  return(fastq_raw_trimmed)
 }

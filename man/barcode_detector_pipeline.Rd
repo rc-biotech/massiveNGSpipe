@@ -24,5 +24,8 @@ Detects both 5' and 3' barcodes
 config <- pipeline_config()
 pipelines <- pipeline_init_all(config, only_complete_genomes = TRUE, gene_symbols = FALSE, simple_progress_report = FALSE)
 pipeline <- pipelines[["PRJNA634994"]]
-barcode_detector(pipeline, FALSE)
+# barcode_detector_pipeline(pipeline, FALSE)
+# debug(detect_adapter_and_trim)
+# pipeline$study <- pipeline$study[Run == "SRR10846527"]
+barcode_detector_pipeline(pipeline, TRUE)
 }

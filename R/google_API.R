@@ -16,12 +16,13 @@ read_sheet_safe <- function(google_url) {
 #'  temp_metadata file
 #' @return invisible(NULL)
 #' @export
-sync_sheet_safe <- function(config) {
+sync_sheet_safe <- function(config, validate_to_complete_local = FALSE) {
   stopifnot(!is.null(config$google_url))
   stopifnot(!is.null(config$temp_metadata) & file.exists(config$temp_metadata))
   sheet <- read_sheet_safe(config$google_url)
   fwrite(sheet, config$temp_metadata)
   message("Google sheet synced to file: \n", config$temp_metadata)
+  if (validate_to_complete_local) curate_metadata(NULL, config, google_url = NULL)
   return(invisible(NULL))
 }
 
@@ -29,6 +30,175 @@ write_sheet_safe <- function(file, google_url, sheet = 1) {
   message("Uploading updated version to google sheet:")
   # TODO: update to range_write with comparison to local
   write_sheet(read.csv(file), ss = google_url, sheet = sheet)
+}
+
+gargle_mail_safe <- function(email = NULL) {
+  if (!is.null(email)) return(email)
+  if (!is.null(gargle::gargle_oauth_email())) {
+    return(gargle::gargle_oauth_email())
+  }
+  emails <- unique(sub(".*_", "", list.files("~/.cache/gargle/")))
+  if (length(emails) == 0) return(NULL)
+  message("Auto selecting email for google api: ", emails[1])
+  if (length(emails) > 1) {
+    message("Alternatives:", paste(emails[-1], collapse = ", "))
+    message("Change default by doing: options(gargle_oauth_email = 'your_email')")
+  }
+  options(gargle_oauth_email = emails[1])
+  return(emails[1])
+}
+
+write_sheet_safe_new <- function(file, google_url, sheet = 0,
+                                 tmp_name = sprintf("tmp_paste_%s", format(Sys.time(), "%Y%m%d-%H%M%S")),
+                                 gargle_email = gargle_mail_safe()) {
+  message("Uploading updated version to google sheet:")
+  stopifnot(requireNamespace("googlesheets4"),
+            requireNamespace("googledrive"),
+            requireNamespace("data.table"),
+            requireNamespace("httr"),
+            requireNamespace("jsonlite"),
+            requireNamespace("gargle"))
+
+  if (!is(file, "data.frame")) file <- fread(file)
+  df <- file
+  message("- Estimated upload time: ", round((nrow(file) / 15e3) * 30, 0), " seconds..")
+
+  target_ss <- google_url
+  target_sheet <- sheet
+
+  # Token + email setup
+  googlesheets4::gs4_auth(email = gargle_email)
+  googledrive::drive_auth(email = gargle_email)
+  # One token with BOTH Drive + Sheets scopes
+  tok <- gargle::token_fetch(scopes = c(
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/spreadsheets"
+  ))
+  suppressMessages(googledrive::drive_auth(token = tok, cache = TRUE))
+  suppressMessages(googlesheets4::gs4_auth(token = tok))
+
+  # 1) Create a temporary spreadsheet from CSV (INCLUDES HEADERS)
+  tmp_csv <- tempfile(fileext = ".csv")
+  data.table::fwrite(df, tmp_csv, sep = ",", na = "", quote = TRUE,
+                     bom = FALSE, col.names = TRUE)
+  tmp_file <- googledrive::drive_upload(
+    media  = tmp_csv, name = tmp_name, type = "spreadsheet", verbose = FALSE
+  )
+  unlink(tmp_csv)
+
+  target_ss_id <- as.character(googlesheets4::as_sheets_id(target_ss))
+  tmp_ss_id    <- googledrive::as_id(tmp_file)
+
+  # Resolve target tab (name | sheetId | 0-based index)
+  props <- googlesheets4::sheet_properties(target_ss_id)
+  resolve_target <- function(sheet, props) {
+    if (is.character(sheet)) {
+      stopifnot(sheet %in% props$name)
+      list(id = props$id[match(sheet, props$name)], name = sheet)
+    } else if (is.numeric(sheet) && length(sheet) == 1) {
+      if (sheet %in% props$id) {
+        nm <- props$name[match(sheet, props$id)]
+        list(id = as.integer(sheet), name = nm)
+      } else {
+        idx_order <- order(props$index) # 0 = leftmost
+        pos <- as.integer(sheet) + 1L
+        stopifnot(pos >= 1L, pos <= length(idx_order))
+        ix <- idx_order[pos]
+        list(id = props$id[ix], name = props$name[ix])
+      }
+    } else stop("target_sheet must be name, sheetId, or 0-based index.")
+  }
+  tgt <- resolve_target(target_sheet, props)
+  target_sheet_id   <- as.integer(tgt$id)
+  target_sheet_name <- tgt$name
+  current_rows <- as.integer(props$grid_rows[match(target_sheet_id, props$id)])
+  current_cols <- as.integer(props$grid_columns[match(target_sheet_id, props$id)])
+
+  # Temp sheetId (CSV->Sheet has one tab)
+  tmp_props    <- googlesheets4::sheet_properties(tmp_ss_id)
+  tmp_sheet_id <- as.integer(tmp_props$id[1])
+
+  # Auth header
+  access_token <- tok$credentials$access_token
+  auth_header <- httr::add_headers(
+    Authorization = sprintf("Bearer %s", access_token),
+    `Content-Type` = "application/json"
+  )
+  gPOST <- function(url, body) {
+    resp <- httr::RETRY("POST", url, auth_header,
+                        body = jsonlite::toJSON(body, auto_unbox = TRUE),
+                        times = 3, pause_base = 1, terminate_on = c(400,401,403,404))
+    httr::stop_for_status(resp)
+    ct <- httr::http_type(resp)
+    if (identical(ct, "application/json")) {
+      jsonlite::fromJSON(httr::content(resp, as = "text", encoding = "UTF-8"), simplifyVector = TRUE)
+    } else TRUE
+  }
+
+  # 2) Copy temp sheet into target spreadsheet (server-side)
+  copy_to_url  <- sprintf("https://sheets.googleapis.com/v4/spreadsheets/%s/sheets/%s:copyTo",
+                          as.character(tmp_ss_id), tmp_sheet_id)
+  copy_res     <- gPOST(copy_to_url, list(destinationSpreadsheetId = target_ss_id))
+  new_temp_sheet_id   <- as.integer(copy_res$sheetId)
+  new_temp_sheet_name <- copy_res$title
+
+  # 3) Resize grid if needed (only ENLARGE; never shrink to preserve existing formatting)
+  need_rows <- nrow(df) + 1L   # +1 for header row
+  need_cols <- ncol(df)
+  enlarge_requests <- list()
+  if (!is.na(current_rows) && need_rows > current_rows) {
+    enlarge_requests <- c(enlarge_requests, list(list(updateSheetProperties = list(
+      properties = list(sheetId = target_sheet_id,
+                        gridProperties = list(rowCount = need_rows)),
+      fields = "gridProperties.rowCount"
+    ))))
+  }
+  if (!is.na(current_cols) && need_cols > current_cols) {
+    enlarge_requests <- c(enlarge_requests, list(list(updateSheetProperties = list(
+      properties = list(sheetId = target_sheet_id,
+                        gridProperties = list(columnCount = need_cols)),
+      fields = "gridProperties.columnCount"
+    ))))
+  }
+  if (length(enlarge_requests)) {
+    gPOST(sprintf("https://sheets.googleapis.com/v4/spreadsheets/%s:batchUpdate", target_ss_id),
+          list(requests = enlarge_requests))
+  }
+
+  # 4) Clear values on target (keep formatting), then copyPaste HEADERS+DATA
+  batch_url  <- sprintf("https://sheets.googleapis.com/v4/spreadsheets/%s:batchUpdate", target_ss_id)
+  n_rows <- nrow(df) + 1L  # include header
+  n_cols <- ncol(df)
+  batch_body <- list(
+    requests = list(
+      # Clear values (big enough rectangle), preserves formats
+      list(updateCells = list(
+        range  = list(sheetId = target_sheet_id,
+                      startRowIndex = 0, startColumnIndex = 0,
+                      endRowIndex = max(current_rows, n_rows),
+                      endColumnIndex = max(current_cols, n_cols)),
+        fields = "userEnteredValue"
+      )),
+      # Copy headers+data from the imported temp tab (rows 0..n_rows)
+      list(copyPaste = list(
+        source = list(sheetId = new_temp_sheet_id,
+                      startRowIndex = 0, startColumnIndex = 0,
+                      endRowIndex = n_rows, endColumnIndex = n_cols),
+        destination = list(sheetId = target_sheet_id,
+                           startRowIndex = 0, startColumnIndex = 0),
+        pasteType = "PASTE_VALUES",
+        pasteOrientation = "NORMAL"
+      )),
+      # Delete the imported temp tab in the target
+      list(deleteSheet = list(sheetId = new_temp_sheet_id))
+    )
+  )
+  gPOST(batch_url, batch_body)
+
+  # 5) Trash the temporary spreadsheet file
+  suppressWarnings(googledrive::drive_trash(tmp_file))
+
+  invisible(TRUE)
 }
 
 #' Get pre-existing or create a new google sheet for metadata
@@ -65,7 +235,7 @@ download_fastq_google_drive <- function(drive_url,
                                         output_dir,
                                         files = google_drive_list_files(drive_url, email, format_pattern, recursive),
                                         format_pattern = "fastq\\.gz$",
-                                        email = "hakontjeldnes@gmail.com",
+                                        email = gargle_mail_safe(),
                                         overwrite = FALSE,
                                         recursive = TRUE) {
   # Script
@@ -100,7 +270,7 @@ download_fastq_google_drive <- function(drive_url,
 #' @inheritParams download_fastq_google_drive
 #' @return a dribble of googl drive information
 #' @export
-google_drive_list_files <- function(drive_url, email = "hakontjeldnes@gmail.com",
+google_drive_list_files <- function(drive_url, email = gargle_mail_safe(),
                                     format_pattern = "fastq\\.gz$", recursive = TRUE) {
   drive_auth(email = email)
   drive <- as_id(drive_url)

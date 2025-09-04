@@ -4,7 +4,7 @@
 \alias{last_session_errors}
 \title{Get last active session error}
 \usage{
-last_session_errors(config)
+last_session_errors(config, index = 1, regex = NULL)
 }
 \arguments{
 \item{config}{a list from a massiveNGSpipe::pipeline_config call}

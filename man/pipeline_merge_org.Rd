@@ -8,9 +8,10 @@ pipeline_merge_org(
   config,
   pipelines = pipeline_init_all(config, only_complete_genomes = TRUE, gene_symbols =
     FALSE),
-  done_experiments = step_is_done_pipelines(config, "merged_lib", pipelines),
-  done_organisms = unique(names(done_experiments)),
+  done_experiments = step_is_done_pipelines(config, "pcounts", pipelines),
+  done_organisms = sort(unique(names(done_experiments))),
   libtype_to_merge = libtype_long_to_short(config$preset),
+  suffix = "",
   out_dir_base = config$config["bam"]
 )
 }
@@ -21,15 +22,22 @@ NGS pipeline}
 \item{pipelines}{list, output of pipeline_init_all}
 
 \item{done_experiments}{named character vector, default:
-step_is_done_pipelines(config, "merged_lib", pipelines). Set of experiments to merge
+step_is_done_pipelines(config, "pcounts", pipelines). Set of experiments to merge
 per species.}
 
 \item{done_organisms}{Scientific name (e.g. Homo sapiens), which organisms to run merging for, default
 unique(names(done_experiments))}
+
+\item{path_suffix}{character, default "". Add suffix to saved experiment name,
+like a date to seperate version.}
 }
 \value{
 invisible(NULL)
 }
 \description{
 Collected
+}
+\examples{
+config <- pipeline_config()
+
 }

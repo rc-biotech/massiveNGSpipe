@@ -122,7 +122,7 @@ navigate <- rstudioapi::filesPaneNavigate
 #' The contents of that directory will be listed and shown in the Files pane.
 #' @param exp ORFik experiment or character name of experiment,
 #' a ORFik experiment name of folder to go to, e.g. "GSE91068-saccharomyces_cerevisiae".
-#' @param rel_dir character, relative directory, "aligned", "trim", "processed" or "raw"
+#' @param rel_dir character, relative directory, "aligned", "trim", c("", "processed") or "raw"
 #' @return invisible(NULL)
 #' @export
 navigateExp <- function(exp, rel_dir = "aligned") {
@@ -132,7 +132,7 @@ navigateExp <- function(exp, rel_dir = "aligned") {
     file.path(ORFik::config()["bam"], exp, "aligned")
   } else if (rel_dir == "trim") {
     file.path(ORFik::config()["bam"], exp, "trim")
-  } else if (rel_dir == "processed") {
+  } else if (rel_dir %in% c("", "processed")) {
     file.path(ORFik::config()["bam"], exp)
   } else {
     file.path(ORFik::config()["fastq"], exp)
@@ -141,4 +141,10 @@ navigateExp <- function(exp, rel_dir = "aligned") {
   navigate(path)
 }
 
+navigateRef <- function(exp, rel_dir = "aligned") {
+  if (!is.character(exp)) exp <- organism(exp)
+  organism <- sub(" |-", "_" , tolower(exp))
+  path <- file.path(ORFik::config()["ref"], organism)
 
+  navigate(path)
+}

@@ -42,21 +42,24 @@ download_sra_aws <- function(run_accession, outdir, aws_bin = "aws",
                              aws_mirror = "s3://sra-pub-run-odp/sra") {
 
   file_aws_url <- file.path(aws_mirror, run_accession)
-  ret <- system2(aws_bin, c(
+  check_file_on_aws <- system2(aws_bin, c(
     "--no-sign-request", "s3", "ls",
     file_aws_url
   ), stdout = FALSE)
+  run_exists_on_aws <- check_file_on_aws == 0
 
-  if (ret == 0) {
-    ret <- system2(aws_bin, c(
+  if (run_exists_on_aws) {
+    download_status <- system2(aws_bin, c(
       "--no-sign-request", "s3", "sync",
       file_aws_url,
       outdir
     ))
-    stopifnot("Run found on aws, but awscli exited with non-zero exit code" = ret == 0)
+    succesful_download_aws <- download_status == 0
+    stopifnot("Run found on aws, but awscli exited with non-zero exit code" = succesful_download_aws)
+    run_exists_on_aws <- succesful_download_aws
     # TODO: Add file is downloaded check too (this is not enough)
   }
-  return(ret == 0)
+  return(run_exists_on_aws)
 }
 
 download_sra_ascp <- function(run_accession, outdir,
@@ -85,10 +88,27 @@ find_ascp_srr_url <- function(run_accession) {
                       convert_to_ascp = TRUE)
 }
 
+check_tempdir_has_space_sra_to_fastq <- function(accession, outdir, tempdir, PAIRED_END) {
+  file <- fs::path_join(c(outdir, accession))
+  if (!file.exists(file)) {
+    file_extracted_gb <- 5 # Set a guess, TODO: make safe
+  } else {
+    file_extracted_gb <- 3.7*(file.size(file) / (1024^3))
+  }
+  file_extracted_gb <- ifelse(PAIRED_END, file_extracted_gb*2, file_extracted_gb)
+
+  tempdir_size_gb <- get_system_usage(drive = ORFik:::detect_drive(tempdir))$Drive_Free
+  tempdir_size_gb <- as.numeric(sub("[a-z]+|[A-Z]+", "", tempdir_size_gb))
+
+  dir_to_use <- ifelse(file_extracted_gb > tempdir_size_gb, outdir, tempdir)
+  if (is.na(dir_to_use)) dir_to_use <- outdir
+  return(ifelse(file_extracted_gb > tempdir_size_gb, outdir, tempdir))
+}
+
 extract_srr_preformat <- function(accession, outdir, compress = TRUE,
                                   sratoolkit_path = fs::path_dir(ORFik::install.sratoolkit()),
                                   PAIRED_END, progress_bar = TRUE,
-                                  fasterq_temp_dir = tempdir()) {
+                                  fasterq_temp_dir = check_tempdir_has_space_sra_to_fastq(accession, outdir, tempdir(), PAIRED_END)) {
 
   message(accession)
   binary <- "fasterq-dump"
@@ -102,8 +122,9 @@ extract_srr_preformat <- function(accession, outdir, compress = TRUE,
     "-f", progress_bar, "-t", fasterq_temp_dir,
     "--split-files", "--skip-technical",
     "--outdir", outdir,
-    srr_path
-  ))
+    accession
+  )) # TODO: why was it srr_path instead of accession ?
+
   fasterq_dump_failed <- ret != 0
   if (fasterq_dump_failed) {
     message("Using ebi fallback")
@@ -111,10 +132,12 @@ extract_srr_preformat <- function(accession, outdir, compress = TRUE,
     already_compressed <- TRUE
     if (is(res, "try-error")) {
       message("Using fastq-dump fallback")
+      already_compressed <- FALSE
       res <- ORFik::download.SRA(accession, outdir, use.ebi.ftp = FALSE,
                                  rename = FALSE, compress = compress)
     } else {
       if (!compress) {
+        already_compressed <- FALSE
         lapply(res, function(fastq) R.utils::gunzip(fastq, overwrite = TRUE))
       }
     }
@@ -123,6 +146,8 @@ extract_srr_preformat <- function(accession, outdir, compress = TRUE,
   filenames <- fs::path_file(fs::dir_ls(outdir,
                                         glob = paste0("**/", accession, "*.fastq")
   ))
+
+  # TODO: Make a subsetter
   # TODO: Check this is correct, If special format .lite fastq, remove the larger file
   lite_file_format <- paste0(accession, c("", "_1"), ".fastq")
   if (setequal(filenames, lite_file_format)) {

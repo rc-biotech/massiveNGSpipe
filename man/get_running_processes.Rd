@@ -6,13 +6,14 @@
 \usage{
 get_running_processes(
   fields = "pid,pgid,user,pcpu,pmem,nice,priority,time,command",
-  intern = FALSE
+  as.data.table = FALSE
 )
 }
 \arguments{
 \item{fields}{"pid,pgid,user,pcpu,pmem,nice,priority,time,command"}
 
-\item{intern}{logical, default FALSE. If TRUE, capture as character vector.}
+\item{as.data.table}{logical, default FALSE. If FALSE, capture as character vector, else
+convert to data.table.}
 }
 \value{
 either NULL or captured output

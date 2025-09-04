@@ -23,7 +23,7 @@ NGS pipeline}
 \item{pipelines}{list, output of pipeline_init_all}
 
 \item{done_experiments}{named character vector, default:
-step_is_done_pipelines(config, "merged_lib", pipelines). Set of experiments to merge
+step_is_done_pipelines(config, "pcounts", pipelines). Set of experiments to merge
 per species.}
 
 \item{done_organisms}{Scientific name (e.g. Homo sapiens), which organisms to run merging for, default
