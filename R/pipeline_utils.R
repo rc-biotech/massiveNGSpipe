@@ -91,6 +91,8 @@ docker_copy_done_experiments <- function(config,
 copy_experiments_to <- function(csv_names, old_exp_dir = ORFik::config()["exp"],
                                 new_exp_dir = sub("_local$|_local/$", "", old_exp_dir),
                                 docker_conversion = "'s/livemount\\///g'") {
+  stopifnot(old_exp_dir != new_exp_dir)
+  stopifnot(dir.exists(old_exp_dir)); stopifnot(dir.exists(new_exp_dir))
   done_exp_old_path <- file.path(old_exp_dir, csv_names)
   done_exp_new_path <- file.path(new_exp_dir, csv_names)
   res <- c()
@@ -99,7 +101,7 @@ copy_experiments_to <- function(csv_names, old_exp_dir = ORFik::config()["exp"],
     cmd <- system(paste0("sed -i ", docker_conversion, " ",done_exp_new_path[i]))
     res <- c(res, cmd)
   }
-  return(res)
+  return(res == 0)
 }
 
 #' Get name of function

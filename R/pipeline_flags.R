@@ -118,6 +118,7 @@ step_is_next_not_done <- function(config, step, experiment
   all_steps <- names(config[["flag"]])
   all_flags <- file.exists(file.path(config[["flag"]], paste0(experiment, ".rds")))
   index <- which(all_steps %in% step)
+  if (length(index) == 0) stop("'", step,"'", " is not a valid flag step!")
   all_previous_done <- if (index == 1) {
     TRUE
   } else all(all_flags[seq(index-1)])

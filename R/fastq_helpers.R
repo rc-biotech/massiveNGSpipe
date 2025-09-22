@@ -35,14 +35,17 @@
 #'
 #' fastqc_adapters_info(tempfile, 1e6)
 fastqc_adapters_info <- function(file, nreads = 2e6,
-                                 adapters_file = fs::path(tempdir(), "adapter_candidates.txt")) {
-  manual_defined_adapters <- file.path(dirname(file), "adapters_manual.csv")
+                                 adapters_file = fs::path(tempdir(), "adapter_candidates.txt"),
+                                 adapter_manual_dir = dirname(file[1])) {
+  manual_defined_adapters <- file.path(adapter_manual_dir, "adapters_manual.csv")
   if (file.exists(manual_defined_adapters)) {
     message("Using manually defined adapter file")
     adapters <- fread(manual_defined_adapters, header = TRUE)
     index <- which(lengths(lapply(adapters$Run, function(i) grep(i, basename(file)))) > 0)
     if (length(index) == 0) stop("Manually defined index file did not contain information about sample")
-    return(adapters[index,][1]$adapter)
+    accession <- gsub("\\.fastq", "", basename(file))
+    if (accession %in% adapters$Run) stop("Could not find Run id matching file: ", file)
+    return(adapters[Run == accession]$adapter)
   }
   message("- Auto detecting adapter with fastQC candidate list:")
   # Create and save the candidate adapter table.
@@ -147,7 +150,7 @@ adapter_list <- function(candidates_file = fs::path(tempdir(), "adapter_candidat
 }
 
 #' Fastq/fastq file organizer
-run_files_organizer <- function(runs, source_dir, exclude = c("json", "html", "md5"),
+run_files_organizer <- function(runs, source_dir, exclude = c("","json", "html", "md5"),
                                 format = c(".fastq", ".fq", ".fa", ".fasta"),
                                 compressions = c("", ".gz"),
                                 paired_end_suffixes = list(c("_1", "_2"), c("_R1_001", "_R2_001"))) {
@@ -282,7 +285,7 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
   sample <- study_sample$Run
   message("-- ", sample)
   stopifnot(is(study_sample, "data.table") && nrow(study_sample) == 1)
-  barcode5p_size <- barcode3p_size <- cut_left_rel_pos <- cut_right_rel_pos <- 0
+  barcode_sizes <- barcode5p_size <- barcode3p_size <- cut_left_rel_pos <- cut_right_rel_pos <- 0
   consensus_string_5p <- consensus_string_3p <- ""
 
   json_file <- grep(sample, dir(trimmed_dir, "\\.json$", full.names = TRUE), value = TRUE)
@@ -316,26 +319,26 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
   }
   # Trim
   if (!trimmed_file_exists) {
-    adapter <- detect_adapter_and_trim(file, process_dir)
+    detect_adapter_and_trim(file, process_dir)
   }
   file_trim <- massiveNGSpipe:::run_files_organizer(study_sample, trimmed_dir)[[1]][1]
 
-  a <- jsonlite::fromJSON(sub("/trimmed_", "/report_", sub("\\.fastq$", ".json", file_trim)))
+  json_file <- sub("/trimmed_", "/report_", sub("\\.fastq$", ".json", file_trim))
+  if (!file.exists(json_file)) stop("Json file from fastp does not exist: ", json_file)
+  a <- jsonlite::fromJSON(json_file)
   adapter <- a$adapter_cutting$read1_adapter_sequence
   if (is.null(adapter)) adapter <- "passed"
   adapter_trimmed_reads <- a$adapter_cutting$adapter_trimmed_reads
   if (is.null(adapter_trimmed_reads)) adapter_trimmed_reads <- NA
   reads_no_adapter_removed <- round(100 - (100* (adapter_trimmed_reads / a$summary$before_filtering$total_reads)), 1)
-  reads_no_adapter_removed_ORFik <- NA
   max_size_before <- a$read1_before_filtering$total_cycles
   mean_size_before <- a$summary$before_filtering$read1_mean_length
   max_size_after <- a$summary$after_filtering$read1_mean_length
   max_size_after_all <- max_size_after
+
+  reads_no_adapter_removed_ORFik <- NA
   fastq_cut <- NULL
   if (max_size_after >= check_at_mean_size) {
-    curves <- a$read1_after_filtering[c("quality_curves", "content_curves")]
-    curves$content_curves$max <- rowMaxs(as.matrix(setDT(curves$content_curves)))
-
     manual_specified_barcodes_file <- file.path(trimmed_dir, "barcodes_manual.csv")
     manual_specified_barcodes_exists <- file.exists(manual_specified_barcodes_file)
     if (manual_specified_barcodes_exists) {
@@ -345,6 +348,9 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
       stopifnot(sample %in% dt_barcode$Run)
       barcode_sizes <- unlist(dt_barcode[Run == sample, 2:3])
     } else { # Detect them
+      curves <- a$read1_after_filtering[c("quality_curves", "content_curves")]
+      curves$content_curves$max <- rowMaxs(as.matrix(setDT(curves$content_curves)), useNames = FALSE)
+
       barcode_sizes <- barcode_change_point(curves, max_barcode_left_size, max_size_before,
                                             max_size_after, minimum_size, z_score_normalize = FALSE)
       if (max(barcode_sizes) == 0) {
@@ -355,51 +361,35 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
 
     barcode5p_size <- barcode_sizes["barcode5p_size"]
     barcode3p_size <- barcode_sizes["barcode3p_size"]
-    cut_right_rel_pos <- barcode3p_size + 1
-    cut_left_rel_pos <- barcode5p_size + 1
 
 
-    # a$summary$after_filtering$read1_mean_length
-    # x <- rbindlist(list[[1]], fill = TRUE)
-    if (raw_file_exists & adapter != "passed") {
-      fastq_raw <- readDNAStringSet(file, format = "fastq", nrec = 1e6, use.names = FALSE)
-      # adapter_ext <- paste0(adapter, paste0(rep("N", max_size_before - nchar(adapter)), collapse = ""))
-      # fastq_raw_trimmed <- trimLRPatterns(Lpattern = "", Rpattern = adapter_ext, subject = fastq_raw, max.Rmismatch = 3,
-      #                                     Rfixed = FALSE)
-      fastq_raw_trimmed <- remove_adapter_ORFik(fastq_raw, adapter, max.mismatch = 2)
-
-      original_widths <- width(fastq_raw)
-      trimmed_widths <- width(fastq_raw_trimmed)
-      trimmed_too_short <- trimmed_widths < 20
-      untrimmed_reads_raw_ORFik <- sum(trimmed_widths == original_widths)
-      reads_no_adapter_removed_ORFik <- round((100* ( untrimmed_reads_raw_ORFik / length(fastq_raw_trimmed))), 1)
-    }
-
-
-    fastq <- readDNAStringSet(file_trim, format = "fastq", nrec = 100000, use.names = FALSE)
-    fastq_cut <- subseq(fastq, cut_left_rel_pos, width(fastq) - cut_right_rel_pos)
-    max_size_after_all <- mean(width(fastq_cut))
-    if (cut_left_rel_pos > 1) {
-      consensus_string_5p <- consensusString(subseq(fastq, 1, cut_left_rel_pos - 1))
-    }
-    if (cut_right_rel_pos > 1) {
-      consensus_string_3p <- consensusString(subseq(fastq, width(fastq) - cut_right_rel_pos, width(fastq)))
+    if (raw_file_exists) { # Internal fastq validations
+      # Adapter checker
+      if (adapter != "passed") {
+        fastq_raw <- readDNAStringSet(file, format = "fastq", nrec = 1e6, use.names = FALSE)
+        fastq_raw_trimmed <- remove_adapter_ORFik(fastq_raw, adapter, max.mismatch = 2)
+        reads_no_adapter_removed_ORFik <- attr(fastq_raw_trimmed, "statistics")$reads_no_adapter_removed
+      }
+      # Barcode checker
+      fastq <- readDNAStringSet(file_trim, format = "fastq", nrec = 1e5, use.names = FALSE)
+      fastq_cut <- trim_flanks_ORFik(fastq, barcode5p_size, barcode3p_size)
     }
   }
+  consensus_string_5p <- attr(fastq_cut, "consensus_string_5p")
+  consensus_string_3p <- attr(fastq_cut, "consensus_string_3p")
   # subseq(dna, cut_left_rel_pos, width(dna) - cut_right_rel_pos)
   dt_stats_this <- data.table(id = sample, adapter = adapter,
-                              barcode_detected = (cut_left_rel_pos > 1) | (cut_right_rel_pos > 1),
+                              barcode_detected = max(barcode_sizes) > 0,
                               max_length_raw = max_size_before,
                               mean_length_raw = mean_size_before,
                               mean_length_adapter_filtered = max_size_after,
-                              mean_length_adapter_barcode_filtered = round(max_size_after_all, 0),
+                              mean_length_adapter_barcode_filtered = attr(fastq_cut, "mean_size_after_trim"),
                               barcode5p_size, barcode3p_size,
                               `reads_no_adapter_removed fastp(%)` = reads_no_adapter_removed,
                               `reads_no_adapter_removed ORFik(%)` = reads_no_adapter_removed_ORFik,
                               consensus_string_5p, consensus_string_3p)
   if (nrow(dt_stats_this) == 0) stop("Malformed values for barcode table, some are NULL")
   if (is.na(dt_stats_this$barcode_detected)) dt_stats_this[, barcode_detected := FALSE]
-
   print(dt_stats_this)
 
   return(dt_stats_this)
@@ -462,26 +452,12 @@ run_barcode_detection_and_trim <- function(study_sample, source_dir, target_dir,
 
   if (barcode_dt$barcode_detected) {
     message("Barcode detected")
-    # Step 2: Create directory to store original files before barcode removal
+    # Step 2: Define directory to store original files before barcode removal
     barcode_dir <- file.path(trimmed_dir, "before_barcode_removal")
-    dir.create(barcode_dir, showWarnings = FALSE, recursive = TRUE)
+    # Step 3 & 4: Get and move relevant files
+    file <- move_trimmed_files(study_sample, trimmed_dir, barcode_dir)
 
-    # Step 3: Get relevant files
-    run <- study_sample$Run
-    # Ignores file 2 in pair for now!
-    file_trim_all <- massiveNGSpipe:::run_files_organizer(study_sample, trimmed_dir)[[1]]
-    file_trim <- file_trim_all[1]
-    json_file <- grep(run, dir(trimmed_dir, "\\.json$", full.names = TRUE), value = TRUE)
-    html_file <- grep(run, dir(trimmed_dir, "\\.html$", full.names = TRUE), value = TRUE)
-
-    all_3_old_files <- c(file_trim, json_file, html_file)
-    all_3_new_files <- sub("/trimmed_", "/", file.path(barcode_dir, basename(all_3_old_files))) # /trimmed2_
-    stopifnot(!any(duplicated(all_3_new_files)))
-    # Step 4: Move old files
-    fs::file_move(all_3_old_files, all_3_new_files)
-
-    # Step 5: Run STAR alignment on the trimmed file with barcode info
-    file <- all_3_new_files[1]
+    # Step 4: Run STAR alignment on the trimmed file with barcode info
     ORFik::STAR.align.single(
       file,
       output.dir = target_dir,
@@ -498,9 +474,29 @@ run_barcode_detection_and_trim <- function(study_sample, source_dir, target_dir,
   return(barcode_dt)
 }
 
+move_trimmed_files <- function(study_sample, trimmed_dir, barcode_dir) {
+  # Ignores file 2 in pair for now!
+  run <- study_sample$Run
+
+  file_trim_all <- massiveNGSpipe:::run_files_organizer(study_sample, trimmed_dir)[[1]]
+  file_trim <- file_trim_all[1]
+  json_file <- grep(run, dir(trimmed_dir, "\\.json$", full.names = TRUE), value = TRUE)
+  html_file <- grep(run, dir(trimmed_dir, "\\.html$", full.names = TRUE), value = TRUE)
+
+  all_3_old_files <- c(file_trim, json_file, html_file)
+  all_3_new_files <- sub("/trimmed_", "/", file.path(barcode_dir, basename(all_3_old_files))) # /trimmed2_
+  stopifnot(length(file_trim) > 0)
+  stopifnot(!any(duplicated(all_3_new_files)))
+  # Step 4: Move old files
+  dir.create(barcode_dir, showWarnings = FALSE, recursive = TRUE)
+  fs::file_move(all_3_old_files, all_3_new_files)
+  return(all_3_new_files[1])
+}
+
 
 detect_adapter_and_trim <- function(file, process_dir, file2 = NULL,
-                                    adapter = try(fastqc_adapters_info(file))) {
+      adapter = try(fastqc_adapters_info(file, adapter_manual_dir = file.path(process_dir, "trim")))) {
+
   tempfile <- file
   is_fastq <- !grepl("\\.fasta$|\\.fasta\\.gz$", file)
   if (is_fastq) {
@@ -578,19 +574,76 @@ adapters_manual_assign_table <- function(trimmed_dir, run_ids, adapters) {
   return(dt_barcode[])
 }
 
-remove_adapter_ORFik <- function(fastq_raw, adapter, max.mismatch = 2) {
+remove_adapter_ORFik <- function(fastq_raw, adapter, max.mismatch = 2,
+                                 fixed = TRUE, add_statistics = TRUE) {
   hits <- vmatchPattern(DNAString(adapter), fastq_raw,
-                        max.mismatch = max.mismatch)
+                        max.mismatch = max.mismatch,
+                        fixed = fixed)
   hits <- start(IRangesList(hits))
   hits <- hits[hits > 0]
   empty <- lengths(hits) == 0
   h <- hits[!empty] - 1
   h <- unlist(heads(h, 1))
   whole_read_trimmed <- h == 0
-  h <- h[whole_read_trimmed]
   fastq_raw_trimmed <- fastq_raw
-  fastq_raw_trimmed[!empty][whole_read_trimmed] <- ""
-  fastq_raw_trimmed[!empty][!whole_read_trimmed] <-
-    subseq(fastq_raw_trimmed[!empty][!whole_read_trimmed], 1, h)
+  fastq_raw_trimmed[!empty] <- subseqSafe(fastq_raw_trimmed[!empty], 1, h)
+
+  if (add_statistics) {
+    original_widths <- width(fastq_raw)
+    trimmed_widths <- width(fastq_raw_trimmed)
+    trimmed_too_short <- trimmed_widths < 20
+    untrimmed_reads_raw_ORFik <- sum(trimmed_widths == original_widths)
+    reads_no_adapter_removed_ORFik <- round((100* ( untrimmed_reads_raw_ORFik / length(fastq_raw_trimmed))), 1)
+    attr(fastq_raw_trimmed, "statistics") <-
+    data.table(original_reads = length(fastq_raw), trimmed_reads = length(fastq_raw_trimmed),
+               reads_no_adapter_removed = reads_no_adapter_removed_ORFik,
+               reads_too_short = sum(trimmed_too_short),
+               zero_length_reads = sum(width(fastq_raw_trimmed) == 0),
+               max_size_reads = sum(trimmed_widths == max(trimmed_widths)),
+               mean_readlength = mean(trimmed_widths),
+               median_readlength = median(trimmed_widths))
+  }
   return(fastq_raw_trimmed)
+}
+
+trim_flanks_ORFik <- function(fastq, left = 0, right = 0) {
+  stopifnot(!is.character(fastq) | is(fastq, "DNAString") | is(fastq, "DNAStringSet"))
+  stopifnot(is.numeric(left) & is.numeric(right))
+  stopifnot(min(c(left, right)) >= 0)
+
+  cut_left_rel_pos <- left + 1
+  cut_right_rel_pos <- right + 1
+
+
+  fastq_width <- width(fastq)
+  fastq_cut <- subseqSafe(fastq, cut_left_rel_pos, fastq_width - right)
+
+  mean_size_after_trim <- round(mean(width(fastq_cut)), 0)
+  attr(fastq_cut, "mean_size_after_trim") <- mean_size_after_trim
+  string_5p <- string_3p <- ""
+  if (left > 0) {
+    string_5p <- consensusString(subseqSafe(fastq, 1, left))
+  }
+  if (right > 0) {
+    right_start <- fastq_width - cut_right_rel_pos
+    string_3p <- consensusString(subseqSafe(fastq, right_start, fastq_width))
+  }
+  attr(fastq_cut, "consensus_string_5p") <- ifelse(length(string_5p) == 0, "", string_5p)
+  attr(fastq_cut, "consensus_string_3p") <- ifelse(length(string_3p) == 0, "", string_3p)
+
+  return(fastq_cut)
+}
+
+subseqSafe <- function(x, start = NA, end = NA) {
+  stopifnot(length(start) == 1 | length(start) == length(x))
+  stopifnot(length(end) == 1 | length(end) == length(x))
+  if (identical(start, NA) & identical(end, NA)) return(subseq(x, start, end))
+  width_x <- width(x)
+  valid <- width_x >= start & width_x >= end & end != 0
+  if (length(start) != 1) start <- start[valid]
+  if (length(end) != 1) end <- end[valid]
+
+  if (any(!valid)) x[!valid] <- ""
+  x[valid] <- subseq(x[valid], start, end)
+  return(x)
 }

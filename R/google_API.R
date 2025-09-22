@@ -1,4 +1,6 @@
-read_sheet_safe <- function(google_url) {
+read_sheet_safe <- function(google_url, gargle_email = gargle_mail_safe()) {
+  googledrive::drive_auth(email = gargle_email)
+
   file <- tempfile(fileext = ".csv")
   drive_download(google_url, path = file, type = "csv", overwrite = TRUE)
   sheet <- fread(file)
@@ -16,10 +18,11 @@ read_sheet_safe <- function(google_url) {
 #'  temp_metadata file
 #' @return invisible(NULL)
 #' @export
-sync_sheet_safe <- function(config, validate_to_complete_local = FALSE) {
+sync_sheet_safe <- function(config, validate_to_complete_local = FALSE,
+                            gargle_email = gargle_mail_safe()) {
   stopifnot(!is.null(config$google_url))
   stopifnot(!is.null(config$temp_metadata) & file.exists(config$temp_metadata))
-  sheet <- read_sheet_safe(config$google_url)
+  sheet <- read_sheet_safe(config$google_url, gargle_email)
   fwrite(sheet, config$temp_metadata)
   message("Google sheet synced to file: \n", config$temp_metadata)
   if (validate_to_complete_local) curate_metadata(NULL, config, google_url = NULL)
@@ -28,8 +31,7 @@ sync_sheet_safe <- function(config, validate_to_complete_local = FALSE) {
 
 write_sheet_safe <- function(file, google_url, sheet = 1) {
   message("Uploading updated version to google sheet:")
-  # TODO: update to range_write with comparison to local
-  write_sheet(read.csv(file), ss = google_url, sheet = sheet)
+  write_sheet_safe_new(file, google_url, sheet = sheet - 1)
 }
 
 gargle_mail_safe <- function(email = NULL) {

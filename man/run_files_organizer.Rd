@@ -7,7 +7,7 @@
 run_files_organizer(
   runs,
   source_dir,
-  exclude = c("json", "html", "md5"),
+  exclude = c("", "json", "html", "md5"),
   format = c(".fastq", ".fq", ".fa", ".fasta"),
   compressions = c("", ".gz"),
   paired_end_suffixes = list(c("_1", "_2"), c("_R1_001", "_R2_001"))

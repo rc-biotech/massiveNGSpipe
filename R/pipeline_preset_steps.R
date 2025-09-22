@@ -103,14 +103,14 @@ pipe_pshift_and_validate <- function(pipelines, config) {
     try <- try({
       df_list <- lapply(experiments, function(e)
         read.experiment(e, validate = FALSE, output.env = new.env()))
-      pipeline_pshift(df_list,          config)
+      pipeline_pshift(df_list, config)
     })
     status <- report_failed_pipe(try, config, "pshift", experiments[1])
     if (status) {
       try <- try({
         pipeline_validate_shifts(df_list, config)
       })
-      report_failed_pipe(try, config, "validate", experiments[1])
+      report_failed_pipe(try, config, "valid_pshift", experiments[1])
     }
 
   }
@@ -121,7 +121,8 @@ pipe_pshift_and_validate <- function(pipelines, config) {
 # Pipeline 4: Merge libraries: per study -> all merged per organism
 pipe_convert <- function(pipelines, config) {
   exp <- get_experiment_names(pipelines)
-  done_exp <- unlist(lapply(exp, function(e) step_is_next_not_done(config, "covrle", e)))
+  done_exp <- unlist(lapply(exp, function(e)
+    step_is_next_not_done(config, "covrle", e) || step_is_next_not_done(config, "bigwig", e)))
 
   for (experiments in exp[done_exp]) {
     if (file.exists(report_failed_pipe_path(config, experiments[1]))) next
@@ -130,7 +131,7 @@ pipe_convert <- function(pipelines, config) {
       pipeline_convert_covRLE(df_list, config)
       pipeline_convert_bigwig(df_list, config)
     })
-    report_failed_pipe(try, config, "bigwig_covRLE", experiments[1])
+    report_failed_pipe(try, config, "covRLE_bigwig", experiments[1])
   }
 }
 
@@ -141,7 +142,8 @@ pipe_counts <- function(pipelines, config) {
   for (experiments in exp[done_exp]) {
     if (file.exists(report_failed_pipe_path(config, experiments[1]))) next
     try <- try({
-      df_list <- lapply(experiments, function(e) read.experiment(e, validate = F))
+      df_list <- lapply(experiments, function(e) read.experiment(e, validate = F,
+                                                                 output.env = new.env()))
       pipeline_count_table_psites(df_list, config)
     })
     report_failed_pipe(try, config, "counts", experiments[1])
@@ -335,10 +337,10 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
     stopifnot(length(df_list) > 0)
     df <- do.call(rbind, df_list)
     df <- df[df$libtype == libtype_to_merge,]
+    df_raw <- df
 
     # Overwrite default paths to merged
     libtype_df <- libraryTypes(df)
-
     df <- update_path_per_sample(df, libtype_df, libtype_to_merge = libtype_to_merge)
 
     exp_name <- organism_merged_exp_name(org)
@@ -346,9 +348,24 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
     exp_name <- paste0(exp_name, suffix)
 
     out_dir <- file.path(out_dir_base, exp_name)
-    ORFik::mergeLibs(df, out_dir, "all", "default", FALSE)
+    if (config$all_mappers) {
+      message("Skipping non unique, fix when done")
+      ORFik::mergeLibs(df, out_dir, "all", "default", FALSE)
+      make_additional_formats(df[1,], exp_name, out_dir)
+    }
 
-    make_additional_formats(df[1,], exp_name, out_dir)
+    if (config$split_unique_mappers) {
+      message("Unique mappers only")
+      df_unique_merged <- read.experiment(exp_name)
+      df_unique <- df_raw
+      uniqueMappers(df_unique) <- TRUE
+      uniqueMappers(df_unique_merged) <- TRUE
+      df_unique <- update_path_per_sample(df_unique, libtype_df, libtype_to_merge = libtype_to_merge)
+      all(grepl("unique", filepath(df_unique, "default")))
+      out_dir_unique <- libFolder(df_unique_merged)
+      ORFik::mergeLibs(df_unique, out_dir_unique, "all", "default", FALSE)
+      make_additional_formats_internal(df_unique_merged[1,])
+    }
   }
   return(invisible(NULL))
 }
@@ -381,9 +398,20 @@ make_additional_formats <- function(df_ref, exp_name, out_dir_exp) {
                     libtype = libtype_df_ref,  fa = df_ref@fafile,
                     organism = organism(df_ref))
   df <- read.experiment(exp_name, output.env = new.env())
+  return(make_additional_formats_internal(df))
+}
+
+#' Make additional formats for an experiment
+#'
+#' With pre-created experiment
+#' @param df_ref an ORFik experiment
+#' @return invisible(NULL)
+#' @export
+make_additional_formats_internal <- function(df, libtype_df_ref =
+                                               identical(libraryTypes(df), "RFP")) {
 
   convert_to_covRleList(df)
-  if (libtype_df_ref == "RFP") {
+  if (libtype_df_ref) {
     message("- Bigwig method: ORFik (5' ends)")
     convert_to_bigWig(df, in_files = filepath(df, "cov"))
   } else {
@@ -397,7 +425,6 @@ make_additional_formats <- function(df_ref, exp_name, out_dir_exp) {
     message("-- Bigwig reverse")
     rtracklayer::export.bw(object = r(covrle), bw_files[2])
   }
-
   ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE)
   return(invisible(NULL))
 }
@@ -412,7 +439,11 @@ make_additional_formats <- function(df_ref, exp_name, out_dir_exp) {
 #' called name of exp (e.g. all_merged-Homo_sapiens_modalities)
 #' @return invisible(NULL)
 #' @export
-pipeline_merge_org_modalities <- function(all_exp = list.experiments(validate = FALSE),
+#' @examples
+#' all_exp <- list.experiments(validate = FALSE, pattern = "all_merged")
+#' all_exp <- all_exp[organism == "Homo sapiens"]
+#' pipeline_merge_org_modalities(all_exp[grep("04_oct_2024", name, invert = T)])
+pipeline_merge_org_modalities <- function(all_exp = list.experiments(validate = FALSE, pattern = "all_merged"),
                                           out_dir_base = ORFik::config()["bam"]) {
   message("- All modalities per organism")
   candidates <- organism_merged_exp_name(unique(all_exp$organism))
@@ -443,6 +474,7 @@ pipeline_merge_org_modalities <- function(all_exp = list.experiments(validate = 
                       libtype = libtype_df, fa = df@fafile,
                       organism = org, files = df$filepath,
                       result_folder = file.path(out_dir_base, exp_name))
+    message("--- Trying to load modalities experiment..")
     df <- read.experiment(exp_name)
     message("- Merging count tables")
     qc_folder <- QCfolder(df)
@@ -450,7 +482,7 @@ pipeline_merge_org_modalities <- function(all_exp = list.experiments(validate = 
     dir.create(qc_folder, recursive = TRUE, showWarnings = FALSE)
     counts <- lapply(regions, function(region) {
       message("-- ", region)
-      sum_exp <- do.call(cbind, lapply(seq(nrow(df)), function(i) {
+      sum_exp <- do.call(BiocGenerics::cbind, lapply(seq(nrow(df)), function(i) {
         df_sub <- df[i,]
         df_sub@resultFolder <- libFolder(df[i,])
         countTable(df_sub, region = region, type = "summarized")
@@ -458,6 +490,7 @@ pipeline_merge_org_modalities <- function(all_exp = list.experiments(validate = 
       save_RDSQS(sum_exp, file.path(qc_folder, paste0("countTable_", region, ".qs")))
     })
   }
+  message("Modalities done")
   return(invisible(NULL))
 }
 

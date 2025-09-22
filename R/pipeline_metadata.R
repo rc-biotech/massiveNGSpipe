@@ -448,9 +448,7 @@ add_new_data <- function(accessions, config, organisms = "all",
     if (sum(new_studies) > 0) {
       local_google_copy <- file.path(config$project, "temp_google_local.csv")
       fwrite(all_SRA_metadata_RFP, local_google_copy)
-      write_sheet(read.csv(local_google_copy),
-                  ss = google_url,
-                  sheet = 1)
+      write_sheet_safe(local_google_copy, google_url, sheet = 1)
     }
   }
 

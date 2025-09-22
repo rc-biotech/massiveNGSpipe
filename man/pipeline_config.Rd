@@ -28,11 +28,14 @@ pipeline_config(
   max_unprocessed_downloads = 30,
   accepted_lengths_rpf = c(20, 21, 25:33),
   reuse_shifts_if_existing = TRUE,
-  parallel_conf = bpoptions(log = TRUE, stop.on.error = TRUE),
-  logdir = file.path(project_dir, "log_pipeline"),
+  split_unique_mappers = FALSE,
+  all_mappers = TRUE,
+  parallel_conf = bpoptions(log = TRUE, jobname = "pipeline_step", logdir =
+    file.path(project_dir, "log_pipeline"), stop.on.error = TRUE),
   discord_webhook = massiveNGSpipe:::discord_connection_default_cached(),
   verbose = TRUE,
-  BPPARAM_TRIM = BiocParallel::MulticoreParam(max(BiocParallel::bpworkers(), 8)),
+  BPPARAM_MAIN = BiocParallel::MulticoreParam(length(pipeline_steps)),
+  BPPARAM_TRIM = BiocParallel::MulticoreParam(min(BiocParallel::bpworkers(), 8)),
   BPPARAM = bpparam()
 )
 }
@@ -119,15 +122,24 @@ Default is the standard fractions of normal 80S ~28 and the smaller size of ~21.
 in pshifted folder if it is valid (equal number of sample shift tables in file
 relative toexperiment)}
 
-\item{parallel_conf}{a bpoptions object, default:
-\code{bpoptions(log =TRUE, stop.on.error = TRUE)}
-Specific pipeline config for parallel settings and log directory}
+\item{split_unique_mappers}{logical, default FALSE.
+Run for unique mappers only, split out into seperate directory.}
 
-\item{logdir}{= file.path(project_dir, "log_pipeline")}
+\item{all_mappers}{logical, default TRUE. Run for all mappers}
+
+\item{parallel_conf}{a bpoptions object, default:
+\code{bpoptions(log =TRUE,
+ jobname = "pipeline_step",
+ logdir = file.path(project_dir, "log_pipeline"),
+ stop.on.error = TRUE)}
+Specific pipeline config for parallel settings and log directory for BPPARAM_MAIN}
 
 \item{discord_webhook}{= massiveNGSpipe:::discord_connection_default_cached()}
 
 \item{verbose}{logical, default TRUE, give start up message}
+
+\item{BPPARAM_MAIN}{BiocParallel::MulticoreParam(length(pipeline_steps))
+The main parallel backend for pipeline, specifying logging behavoir etc.}
 
 \item{BPPARAM_TRIM}{BiocParallel::MulticoreParam(max(BiocParallel::bpworkers(), 8)),
 number of cores/threads to use for trimming. Optimal is 8 for most data.}

@@ -216,13 +216,23 @@ symbols_from_gtf <- function(gtf_path, gtf = import(gtf_path)) {
   colnames(dt) <- c("ensembl_gene_id", "external_gene_name", "ensembl_tx_name", "uniprot_id")
 }
 
-update_path_per_sample <- function(df, libtype_df, rel_dir = "pshifted_merged", ext = ".ofst", libtype_to_merge) {
+update_path_per_sample <- function(df, libtype_df, rel_dir = "pshifted_merged",
+                                   ext = ".ofst", libtype_to_merge, check_exist = TRUE) {
   if (length(libtype_df) == 0) stop("No libs of libtype: '", libtype_to_merge, "' in experiments given")
   if (length(libtype_df) != 1) stop("Only single libtype experiments supported for merging")
   if (libtype_df == "") stop("Libtype of experiment must be defined!")
-  df@listData$filepath <- file.path(dirname(filepath(df, "default")),
+
+
+  df@listData$filepath <- file.path(libFolder(df, mode = "all"),
                                     rel_dir, paste0(libtype_df, ext))
   df@listData$rep <- seq(nrow(df))
+  if (check_exist) {
+    file_paths <- filepath(df, "default")
+    if (!all(file.exists(file_paths))) {
+      stop("Missing ", rel_dir, " tracks for exps:",
+           paste(file_paths[!file.exists(file_paths)], collapse = ", "))
+    }
+  }
   return(df)
 }
 

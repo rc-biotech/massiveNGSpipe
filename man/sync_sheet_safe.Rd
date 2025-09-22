@@ -4,7 +4,11 @@
 \alias{sync_sheet_safe}
 \title{Sync your local temp to google sheet}
 \usage{
-sync_sheet_safe(config, validate_to_complete_local = FALSE)
+sync_sheet_safe(
+  config,
+  validate_to_complete_local = FALSE,
+  gargle_email = gargle_mail_safe()
+)
 }
 \arguments{
 \item{config}{a mNGSp config with defined google_url and existing

@@ -5,7 +5,7 @@
 \title{Gather all modalities per organism into exp}
 \usage{
 pipeline_merge_org_modalities(
-  all_exp = list.experiments(validate = FALSE),
+  all_exp = list.experiments(validate = FALSE, pattern = "all_merged"),
   out_dir_base = ORFik::config()["bam"]
 )
 }
@@ -22,4 +22,9 @@ invisible(NULL)
 \description{
 Using libtype modalities like Ribo-seq, RNA-seq, disome-seq, create
 a new experiment. Only applies to organisms with > 1 modality completed.
+}
+\examples{
+all_exp <- list.experiments(validate = FALSE, pattern = "all_merged")
+all_exp <- all_exp[organism == "Homo sapiens"]
+pipeline_merge_org_modalities(all_exp[grep("04_oct_2024", name, invert = T)])
 }

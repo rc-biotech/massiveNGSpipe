@@ -5,19 +5,22 @@
 \title{Get running processes}
 \usage{
 get_running_processes(
-  fields = "pid,pgid,user,pcpu,pmem,nice,priority,time,command",
-  as.data.table = FALSE
+  pgid_subset = NULL,
+  as.data.table = TRUE,
+  fields = "pid,pgid,user,pcpu,pmem,nice,priority,time,command"
 )
 }
 \arguments{
-\item{fields}{"pid,pgid,user,pcpu,pmem,nice,priority,time,command"}
+\item{pgid_subset}{numeric, default NULL, else subset to process group}
 
-\item{as.data.table}{logical, default FALSE. If FALSE, capture as character vector, else
+\item{as.data.table}{logical, default T If FALSE, capture as character vector, else
 convert to data.table.}
+
+\item{fields}{"pid,pgid,user,pcpu,pmem,nice,priority,time,command"}
 }
 \value{
 either NULL or captured output
 }
 \description{
-Nice to kill a processes group by pgid
+Nice to get an overview or kill a processes group by pgid
 }

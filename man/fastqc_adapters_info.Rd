@@ -7,7 +7,8 @@
 fastqc_adapters_info(
   file,
   nreads = 2e+06,
-  adapters_file = fs::path(tempdir(), "adapter_candidates.txt")
+  adapters_file = fs::path(tempdir(), "adapter_candidates.txt"),
+  adapter_manual_dir = dirname(file[1])
 )
 }
 \arguments{

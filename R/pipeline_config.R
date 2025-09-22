@@ -58,12 +58,19 @@
 #' @param reuse_shifts_if_existing for Ribo-seq, reuse shift table called shifting_table.rds
 #' in pshifted folder if it is valid (equal number of sample shift tables in file
 #' relative toexperiment)
+#' @param split_unique_mappers logical, default FALSE.
+#' Run for unique mappers only, split out into seperate directory.
+#' @param all_mappers logical, default TRUE. Run for all mappers
 #' @param parallel_conf a bpoptions object, default:
-#' \code{bpoptions(log =TRUE, stop.on.error = TRUE)}
-#' Specific pipeline config for parallel settings and log directory
+#' \code{bpoptions(log =TRUE,
+#'  jobname = "pipeline_step",
+#'  logdir = file.path(project_dir, "log_pipeline"),
+#'  stop.on.error = TRUE)}
+#' Specific pipeline config for parallel settings and log directory for BPPARAM_MAIN
 #' @param verbose logical, default TRUE, give start up message
-#' @param logdir = file.path(project_dir, "log_pipeline")
 #' @param discord_webhook = massiveNGSpipe:::discord_connection_default_cached()
+#' @param BPPARAM_MAIN BiocParallel::MulticoreParam(length(pipeline_steps))
+#' The main parallel backend for pipeline, specifying logging behavoir etc.
 #' @param BPPARAM_TRIM BiocParallel::MulticoreParam(max(BiocParallel::bpworkers(), 8)),
 #' number of cores/threads to use for trimming. Optimal is 8 for most data.
 #' @param BPPARAM = bpparam(), number of cores/threads to use.
@@ -93,12 +100,16 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             max_unprocessed_downloads = 30,
                             accepted_lengths_rpf = c(20, 21, 25:33),
                             reuse_shifts_if_existing = TRUE,
+                            split_unique_mappers = FALSE,
+                            all_mappers = TRUE,
                             parallel_conf = bpoptions(log =TRUE,
+                                                      jobname = "pipeline_step",
+                                                      logdir = file.path(project_dir, "log_pipeline"),
                                                       stop.on.error = TRUE),
-                            logdir = file.path(project_dir, "log_pipeline"),
                             discord_webhook = massiveNGSpipe:::discord_connection_default_cached(),
                             verbose = TRUE,
-                            BPPARAM_TRIM = BiocParallel::MulticoreParam(max(BiocParallel::bpworkers(), 8)),
+                            BPPARAM_MAIN = BiocParallel::MulticoreParam(length(pipeline_steps)),
+                            BPPARAM_TRIM = BiocParallel::MulticoreParam(min(BiocParallel::bpworkers(), 8)),
                             BPPARAM = bpparam()) {
   if (verbose) {
     message("Setting up mNGSp config..")
@@ -112,7 +123,9 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
   stopifnot(mode %in% c("online", "local"))
   stopifnot(is.logical(delete_raw_files) & is.logical(delete_trimmed_files) &
             is.logical(delete_collapsed_files) & is.logical(keep_contaminants) &
-            is.logical(keep_unaligned_genome) & is.logical(compress_raw_data))
+            is.logical(keep_unaligned_genome) & is.logical(compress_raw_data) &
+            is.logical(split_unique_mappers) & is.logical(all_mappers))
+  stopifnot(all_mappers | split_unique_mappers)
   stopifnot(is(pipeline_steps, "list"))
   if (preset == "empty") message("Using empty preset, now add your steps: using add_step_to_pipeline()")
   if (preset != "empty") stopifnot(is(pipeline_steps[[1]], "function"))
@@ -124,8 +137,8 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
     message("You have run local fastq files with delete ",
     paste(names(delete_any_files)[delete_any_files], collapse = " & "), " files,",
             "are you sure this is what you want?")
-  if (!is.null(parallel_conf) && !is.null(logdir)) {
-    BPPARAM <- set_log_dir(BPPARAM, logdir)
+  if (!is.null(parallel_conf) && !is.null(parallel_conf$logdir)) {
+    BPPARAM_MAIN <- set_parallel_conf(BPPARAM_MAIN, parallel_conf)
   }
 
 
@@ -148,8 +161,11 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               max_unprocessed_downloads = max_unprocessed_downloads,
               accepted_lengths_rpf = accepted_lengths_rpf,
               reuse_shifts_if_existing = reuse_shifts_if_existing,
+              split_unique_mappers = split_unique_mappers,
+              all_mappers = all_mappers,
               preset = preset, parallel_conf = parallel_conf,
               discord_webhook = discord_webhook,
+              BPPARAM_MAIN = BPPARAM_MAIN,
               BPPARAM_TRIM = BPPARAM_TRIM, BPPARAM = BPPARAM))
 }
 

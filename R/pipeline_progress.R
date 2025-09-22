@@ -60,23 +60,42 @@ progress_report <- function(pipelines, config,
 
 #' Get running processes
 #'
-#' Nice to kill a processes group by pgid
+#' Nice to get an overview or kill a processes group by pgid
+#' @param pgid_subset numeric, default NULL, else subset to process group
 #' @param fields "pid,pgid,user,pcpu,pmem,nice,priority,time,command"
-#' @param as.data.table logical, default FALSE. If FALSE, capture as character vector, else
+#' @param as.data.table logical, default T If FALSE, capture as character vector, else
 #' convert to data.table.
 #' @return either NULL or captured output
 #' @export
-get_running_processes <- function(fields = "pid,pgid,user,pcpu,pmem,nice,priority,time,command",
-                                  as.data.table = FALSE) {
+get_running_processes <- function(pgid_subset = NULL,
+                                  as.data.table = TRUE,
+                                  fields = "pid,pgid,user,pcpu,pmem,nice,priority,time,command") {
   res <- system(paste("ps xo ", fields, "--sort=pcpu,size"), intern = TRUE)
   if (as.data.table) {
+    extract_script <- function(x) {
+      m <- regexpr("(?<=script~\\+~=~\\+~')[^']+(?=',~\\+~encoding)", x, perl = TRUE)
+      out <- ifelse(m > 0, regmatches(x, m), NA_character_)
+      basename(out)
+    }
     dt <- fread(text = res, header = T, fill = T, sep = " ")
     dt_command <- dt[, 10:ncol(dt), with = F]
     dt_command[, arguments := do.call(paste, c(.SD, sep = " "))]
-    res <- cbind(dt[, 1:9, with = FALSE], dt_command[, .(arguments)])
+    dt_command[, Rscript := extract_script(arguments)]
+    dt <- dt[, 1:9, with = FALSE]
+    command_path <- dt[,9][[1]]
+    dt[, COMMAND := gsub(".*/", "", COMMAND)]
+    res <- cbind(dt, dt_command[, .(Rscript, arguments)], COMMAND_PATH = command_path)
+    res <- res[order(`%CPU`, decreasing = TRUE)]
+    if (length(unique(res$USER)) == 1) res[, USER := NULL]
+    if (length(unique(res$NI)) == 1) res[, NI := NULL]
+    if (length(unique(res$PRI)) == 1) res[, PRI := NULL]
   }
+  if (!is.null(pgid_subset)) res <- res[PGID %in% pgid_subset,]
   return(res)
 }
+#' @inherit get_running_processes
+#' @title Call View on get_running_processes
+ps <- function(pgid_subset) View(get_running_processes(pgid_subset))
 
 get_pgid <- function() as.integer(system("ps -o pgid= -p $$", intern = TRUE))
 
@@ -96,8 +115,26 @@ session_info_save <- function(config, pipelines) {
 }
 
 session_info_read <- function(config) {
-  if (is.null(config$session_dir)) stop("Can only save session info for active session!")
-  return(readRDS(file.path(config$session_dir, "session_info.rds")))
+  if (is.null(config$session_dir)) stop("Can only read session info for actived sessions!")
+  session_info <- file.path(config$session_dir, "session_info.rds")
+  stopifnot(!is.null(config$session_dir) && dir.exists(config$session_dir))
+  stopifnot(file.exists(session_info))
+  return(readRDS(session_info))
+}
+
+session_info_read_specific <- function(config, session_index = 1) {
+  info <- session_info_table(config)
+  if (session_index > nrow(info)) stop("There are ", nrow(info), "session,
+                                       you gave index ", session_index)
+  return(session_info_read(list(session_dir = info$path[session_index])))
+}
+
+session_info_table <- function(config) {
+  session_dir <- file.path(config$project, "session_logs")
+  info <- dir_info(session_dir)
+  info <- info[info$type == "directory",]
+  info <- info[order(info$modification_time, decreasing = TRUE),]
+  return(info)
 }
 
 #' Is the last call to run_pipeline still running / zombie process
@@ -176,7 +213,7 @@ status_per_study <- function(pipelines, config, show_status_per_exp, show_done,
   return(list(done = done, progress_index = progress_index,
               projects = projects, alignment.stats.all = alignment.stats.all,
               trimmed.out.all = trimmed.out.all, n_bioprojects = n_bioprojects,
-              report_dir = config$project, message= message))
+              report_dir = config$project, message= message, steps = names(config$flag)))
 }
 
 #' Store total trimming and alignment stats for pipeline
@@ -327,7 +364,7 @@ status_plot <- function(status_per_study_list) {
 
   status_matrix <- lapply(seq(length(steps)) - 1, function(x) as.data.table(matrix(as.integer(x <= progress_index), nrow = 1, byrow = TRUE)))
   status_matrix <- as.matrix(rbindlist(status_matrix))
-  fig1 <- plot_ly(z = status_matrix, x = projects, y = steps, type = "heatmap", colors = c("red", "green")[unique(as.vector(status_matrix)) + 1], showscale=FALSE) %>%
+  fig1 <- plot_ly(z = status_matrix, x = projects, y = as.factor(steps), type = "heatmap", colors = c("green", "red")[unique(as.vector(status_matrix)) + 1], showscale=FALSE) %>%
     layout(title = list(text = paste0('NGS Processing Status',
                                       '<br>',
                                       '<sup>',

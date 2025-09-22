@@ -4,7 +4,12 @@
 \alias{progress_log}
 \title{Get log for specific pipeline run}
 \usage{
-progress_log(config, task = 1, lines = 100, logdir = bplogdir(config$BPPARAM))
+progress_log(
+  config,
+  task = 1,
+  lines = 100,
+  logdir = bplogdir(config$BPPARAM_MAIN)
+)
 }
 \arguments{
 \item{config}{a config object}

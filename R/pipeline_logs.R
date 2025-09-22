@@ -1,8 +1,11 @@
-set_log_dir <- function(BPPARAM, logdir) {
+set_parallel_conf <- function(BPPARAM, parallel_conf) {
+  stopifnot(is(parallel_conf, "list"))
+  logdir <- parallel_conf$logdir
   stopifnot(is.character(logdir))
   dir.create(logdir, recursive = TRUE, showWarnings = FALSE)
   bplog(BPPARAM) <- TRUE
   bplogdir(BPPARAM) <- logdir
+  bpjobname(BPPARAM) <- parallel_conf$jobname
   return(BPPARAM)
 }
 
@@ -18,9 +21,9 @@ set_log_dir <- function(BPPARAM, logdir) {
 #' @return NULL (text output to screen)
 #' @export
 progress_log <- function(config, task = 1, lines = 100,
-                         logdir = bplogdir(config$BPPARAM)) {
+                         logdir = bplogdir(config$BPPARAM_MAIN)) {
   stopifnot(dir.exists(logdir))
-  log_job <- paste0("BPJOB.task", task, ".log")
+  log_job <- paste0(config$parallel_conf$jobname, ".task",task, ".log")
   log_file <- file.path(logdir, log_job)
   system(paste("tail -n", lines, log_file))
 }

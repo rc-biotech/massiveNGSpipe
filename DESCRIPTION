@@ -18,6 +18,7 @@ Depends:
     BiocParallel
 Imports:
     biomartr,
+    changepoint,
     DataEditR,
     discordr,
     filelock,
@@ -33,6 +34,7 @@ Imports:
     rlang,
     rstudioapi,
     scales,
+    shiny,
     stringr
 Remotes:
     Roleren/ORFik,

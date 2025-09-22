@@ -51,6 +51,7 @@ pipeline_trim <- function(pipeline, config) {
           single_end <- is.na(filenames[2])
           file <- filenames[1]
           file2 <- if(!single_end) filenames[2]
+          # adapter <- "AGATCGGAAGAG"
           adapter <- detect_adapter_and_trim(file, target_dir, file2)
           barcode_dt <- data.table()
           check_for_barcodes <- runs[i]$LIBRARYTYPE == "RFP"
@@ -317,7 +318,13 @@ pipeline_create_experiment <- function(pipeline, config) {
 pipeline_create_ofst <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "ofst", name(df))) next
-    convert_bam_to_ofst(df)
+    if (config$all_mappers)
+      convert_bam_to_ofst(df)
+
+    if (config$split_unique_mappers) {
+      uniqueMappers(df) <- TRUE
+      convert_bam_to_ofst(df)
+    }
     set_flag(config, "ofst", name(df))
   }
 }
@@ -325,88 +332,32 @@ pipeline_create_ofst <- function(df_list, config) {
 #' @inheritParams pipeline_create_ofst
 pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_lengths_rpf,
                             reuse_shifts_if_existing = config$reuse_shifts_if_existing,
+                            allowed_hard12_species = c("Escherichia coli", "Sars cov2"),
                             BPPARAM = config$BPPARAM) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "pshifted", name(df))) next
-
-    shifting_table <- NULL
-    if (reuse_shifts_if_existing) {
-      shifts <- suppressWarnings(try(shifts_load(df), silent = TRUE))
-      if (!is(shifts, "try-error")) {
-        if (length(shifts) > 0) {
-          shifting_table <- shifts
-          length_original <- length(shifts)
-          rfp_files <- filepath(df, "ofst")
-          if (!all(names(shifting_table) %in% rfp_files)) {
-            hits_order <- sapply(runIDs(df), function(x) grep(x, names(shifting_table)))
-            names(shifting_table) <- rfp_files[unlist(hits_order)]
-          }
-          stopifnot(length(shifting_table) == length_original)
-          if (length(shifting_table) != nrow(df)) {
-            shifting_table <- shifting_table[rfp_files]
-            names(shifting_table) <- rfp_files
-          }
-          stopifnot(length(shifting_table) == nrow(df))
-        }
-      }
+    res <- 1
+    shifting_table <- shifts_load_safe(df, reuse_shifts_if_existing)
+    if (config$all_mappers) {
+      res <- shiftFootprintsByExperimentSafe(df, shifting_table, accepted_lengths,
+                                             allowed_hard12_species, BPPARAM)
     }
-    fft_strengths <- c("strong", "weak", "manual_12")
-    fft_strength <- fft_strengths[1]
-    fft_files <- file.path(QCfolder(df), paste0(fft_strengths, "_periodicity.rds"))
-    names(fft_files) <- fft_strengths
-    res <- tryCatch(shiftFootprintsByExperiment(df, output_format = "ofst",
-                                                accepted.lengths = accepted_lengths,
-                                                shift.list = shifting_table,
-                                                BPPARAM = BPPARAM),
-                    error = function(e) {
-                      message(e)
-                      message(name(df))
-                      message("P-shifting failed with strict FFT, trying weak!")
-                      return(e)
-                    })
 
-    if(inherits(res, "error")) {
-      fft_strength <- fft_strengths[2]
-      res <- tryCatch(shiftFootprintsByExperiment(df, output_format = "ofst",
-                                                accepted.lengths = accepted_lengths,
-                                                shift.list = shifting_table,
-                                                strict.fft = FALSE,
-                                                BPPARAM = BPPARAM),
-                    error = function(e) {
-                      message(e)
-                      message(name(df))
-                      message("P-shifting failed also failed with weak FFT")
-                      return(e)
-                    })
-      if(inherits(res, "error")) {
-        allowed_hard12_species <- c("Escherichia coli", "Sars cov2")
-        if (organism(df) %in% allowed_hard12_species) {
-          fft_strength <- fft_strengths[3]
-          shifting_table <- template_shift_table(df, accepted_lengths)
-          res <- tryCatch(shiftFootprintsByExperiment(df, output_format = "ofst",
-                                                      accepted.lengths = accepted_lengths,
-                                                      shift.list = shifting_table,
-                                                      strict.fft = FALSE,
-                                                      BPPARAM = BPPARAM),
-                          error = function(e) {
-                            message(e)
-                            message(name(df))
-                            message("P-shifting failed also failed for hard 12nt,
-                                    Fix manually (skipping to next project!)")
-                            return(e)
-                          })
-        } else {
-          message("Fix manually (skipping to next project!)")
-          bad_pshifting_report(df)
-        }
+    if(config$split_unique_mappers & !inherits(res, "error")) {
+      shifting_table <- try(shifts_load(df), silent = TRUE)
+      if (is(shifting_table, "try-error")) {
+        stop("Experiment: ", name(df), "has no shifting table to use for unique mappers!")
       }
+      uniqueMappers(df) <- TRUE
+      names(shifting_table) <- filepath(df, "ofst")
+      res <- shiftFootprintsByExperimentSafe(df, shifting_table, accepted_lengths,
+                                             allowed_hard12_species, BPPARAM)
     }
+
     if(!inherits(res, "error")) {
-      suppressWarnings(file.remove(fft_files[!(names(fft_files) %in% fft_strength)]))
-      dir.create(QCfolder(df), showWarnings = FALSE)
-      suppressWarnings(saveRDS(fft_strength, fft_files[fft_strength]))
       set_flag(config, "pshifted", name(df))
     }
+
   }
 }
 
@@ -424,27 +375,12 @@ pipeline_validate_shifts <- function(df_list, config) {
   # TODO: This function can be improved, especially how we detect bad shifts!
   for (df in df_list) {
     if (!step_is_next_not_done(config, "valid_pshift", name(df))) next
-    # Plot max 39 libraries!
-    subset <- if (nrow(df) >= 40) {seq(39)} else {seq(nrow(df))}
-    invisible(shiftPlots(df[subset,], output = "auto", plot.ext = ".png"))
-    # Check frame usage
-    frameQC <- orfFrameDistributions(df)
-    remove.experiments(df)
-    zero_frame <- frameQC[frame == 0 & best_frame == FALSE,]
-    # Store a flag that says good / bad shifting
-    QCFolder <- QCfolder(df)
-    data.table::fwrite(frameQC, file = file.path(QCFolder, "Ribo_frames_all.csv"))
-    data.table::fwrite(zero_frame, file = file.path(QCFolder, "Ribo_frames_badzero.csv"))
-    status_flag_files <- file.path(QCFolder, c("warning", "good"), ".rds")
-    names(status_flag_files) <- c("warning", "good")
-    status <- "good"
-    any_wrong_frame <- any(zero_frame$percent_length < 25)
-    if (any_wrong_frame) {
-      warning("Some libraries contain shift that is < 25% of CDS coverage")
-      status <- "warning"
+    if (config$all_mappers)
+      shift_qc(df)
+    if (config$split_unique_mappers) {
+      uniqueMappers(df) <- TRUE
+      shift_qc(df)
     }
-    saveRDS(TRUE, status_flag_files[status])
-    file.remove(status_flag_files[names(status_flag_files) != status])
     set_flag(config, "valid_pshift", name(df))
   }
 }
@@ -453,7 +389,12 @@ pipeline_validate_shifts <- function(df_list, config) {
 pipeline_convert_covRLE <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "covrle", name(df))) next
-    convert_to_covRleList(df)
+    if (config$all_mappers)
+      convert_to_covRleList(df)
+    if (config$split_unique_mappers) {
+      uniqueMappers(df) <- TRUE
+      convert_to_covRleList(df)
+    }
     set_flag(config, "covrle", name(df))
   }
 }
@@ -462,8 +403,12 @@ pipeline_convert_covRLE <- function(df_list, config) {
 pipeline_convert_bigwig <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "bigwig", name(df))) next
-    in_files <- filepath(df, "cov", suffix_stem = c("", "_pshifted"))
-    convert_to_bigWig(df, in_files)
+    if (config$all_mappers)
+      convert_to_bigWig(df, filepath(df, "cov"))
+    if (config$split_unique_mappers) {
+      uniqueMappers(df) <- TRUE
+      convert_to_bigWig(df, filepath(df, "cov"))
+    }
     set_flag(config, "bigwig", name(df))
   }
 }
@@ -472,7 +417,12 @@ pipeline_convert_bigwig <- function(df_list, config) {
 pipeline_count_table_psites <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "pcounts", name(df))) next
-    ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE)
+    if (config$all_mappers)
+      ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE)
+    if (config$split_unique_mappers) {
+      uniqueMappers(df) <- TRUE
+      ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE)
+    }
     set_flag(config, "pcounts", name(df))
   }
 }
