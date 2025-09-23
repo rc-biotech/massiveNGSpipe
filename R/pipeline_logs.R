@@ -34,11 +34,15 @@ progress_log <- function(config, task = 1, lines = 100,
 #' @param flagdir character, default: \code{dirname(config$flag[1])},
 #' path to flag directory
 #' @return character, a date string
-last_update <- function(config, flagdir = dirname(config$flag[1])) {
-  stopifnot(dir.exists(flagdir))
-  info <- dir_info(flagdir)
+last_update <- function(config, flagdir = flag_dir(config$project),
+                        info = last_update_dir_info(flagdir)) {
   mod_time <- info$modification_time
   return(max(mod_time))
+}
+
+last_update_dir_info <- function(flagdir) {
+  stopifnot(dir.exists(flagdir))
+  return(dir_info(flagdir))
 }
 
 #' Get last pipeline update, in days relative to now

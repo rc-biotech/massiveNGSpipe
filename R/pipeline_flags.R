@@ -85,14 +85,17 @@ pipeline_flags <- function(project_dir, mode = c("online", "local")[1],
   if (preset == "empty") return(character())
   stopifnot(is(flag_names, "character"))
 
-  flag_dir <- file.path(project_dir, "flags")
-  flags <- file.path(flag_dir, flag_names)
+  flags <- file.path(flag_dir(project_dir), flag_names)
   stopifnot(length(flags) > 0)
   names(flags) <- flag_names
   attr(flags, "grouping") <- names(flag_names)
   if (create_dirs)
     lapply(flags, function(f) dir.create(f, showWarnings = FALSE, recursive = TRUE))
   return(flags)
+}
+
+flag_dir <- function(project_dir) {
+  return(file.path(project_dir, "flags"))
 }
 
 step_is_done <- function(config, step, experiment) {

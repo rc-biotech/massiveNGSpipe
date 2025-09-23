@@ -1,18 +1,115 @@
-# app.R
-# Minimal Shiny dashboard for massiveNGSpipe runtime monitoring (full-width controls row)
-
-# ---- load massiveNGSpipe (dev path first if present) ----
-
+#' Processing monitor app
+#' Minimal Shiny dashboard for massiveNGSpipe runtime monitoring (full-width controls row)
 #'
 #' @import shiny
+#' @export
 mNGSp_app <- function(config = pipeline_config(),
                       pipelines_all = pipeline_init_all(config,
-      only_complete_genomes = TRUE, gene_symbols = FALSE, show_status_per_exp = FALSE)) {
+      only_complete_genomes = TRUE, gene_symbols = FALSE, show_status_per_exp = FALSE),
+      options = list()) {
   pipeline_sessions <- session_info_table(config)
-  default_show_done  <- TRUE
-  default_show_stats <- FALSE
-
   # ---- ui ----
+  ui <- mNGSp_app_ui(config, pipelines_all, pipeline_sessions,
+                     default_show_done  = TRUE, default_show_stats = FALSE)
+
+  # ---- server ----
+  server <- function(input, output, session) {
+    # helper: manual or timer invalidation
+    invalidate_tick <- reactive({
+      invalidateLater(input$refresh_ms * 1e3, session)
+      Sys.time()
+    })
+
+    # steps (static from config)
+    output$pipeline_steps <- renderText({
+      paste(names(config$flag), collapse = ", ")
+    })
+
+    # overall system usage (one-liner string)
+    output$system_usage <- renderText({
+      invalidate_tick()
+      tryCatch(
+        capture.output(get_system_usage(one_liner = TRUE))[1],
+        error = function(e) paste("System usage unavailable:", conditionMessage(e))
+      )
+    })
+
+    # selected session info -> pipelines, status, processes
+    sel <- reactive({
+      req(nrow(pipeline_sessions) > 0)
+      idx <- as.integer(input$session_selected)
+      validate(need(idx >= 1 && idx <= nrow(pipeline_sessions), "Invalid session selection"))
+      list(
+        idx  = idx,
+        path = pipeline_sessions$path[idx],
+        name = basename(pipeline_sessions$path[idx])
+      )
+    })
+
+    # read session + subset pipelines
+    session_obj <- reactive({
+      invalidate_tick()
+      s <- session_info_read(list(session_dir = sel()$path))
+      keep <- intersect(s$pipeline_names, names(pipelines_all))
+      pl   <- pipelines_all[keep]
+      list(s = s, pipelines = pl)
+    })
+
+    # compute status table and plot
+    status_reactive <- reactive({
+      invalidate_tick()
+      s <- session_obj()
+      req(length(s$pipelines) > 0)
+      status <- status_per_study(
+        s$pipelines, config,
+        show_status_per_exp = FALSE,
+        show_done           = isTRUE(input$show_done),
+        show_stats          = isTRUE(input$show_stats)
+      )
+      status
+    })
+
+    output$status_plot <- renderPlotly({
+      st <- status_reactive()
+      validate(need(NROW(st) > 0, "No status to plot for this session"))
+      status_plot(st)  # returns plotly object
+    })
+
+    # per-session processes + summed CPU/MEM
+    session_ps <- reactive({
+      invalidate_tick()
+      s <- session_obj()$s
+      tryCatch(
+        get_running_processes(s$pgid),
+        error = function(e) data.table(message = conditionMessage(e))
+      )
+    })
+
+    output$proc_table <- renderTable({
+      session_ps()
+    })
+
+    output$session_usage <- renderTable({
+      ps <- session_ps()
+      if (!all(c("%CPU", "%MEM") %in% names(ps))) {
+        return(data.frame(Metric = c("CPU", "MEM"), Value = c("NA", "NA")))
+      }
+      data.frame(
+        Metric = c("CPU % (sum)", "MEM % (sum)"),
+        Value  = c(sum(ps$`%CPU`, na.rm = TRUE), sum(ps$`%MEM`, na.rm = TRUE)),
+        check.names = FALSE
+      )
+    }, striped = TRUE, bordered = TRUE, spacing = "s")
+  }
+
+  shinyApp(ui, server, options = options)
+}
+
+mNGSp_app_ui <- function(config,
+                         pipelines_all,
+                         pipeline_sessions,
+                         default_show_done  = TRUE,
+                         default_show_stats = FALSE) {
   ui <- fluidPage(
     titlePanel("massiveNGSpipe monitor"),
 
@@ -90,97 +187,4 @@ mNGSp_app <- function(config = pipeline_config(),
       )
     )
   )
-
-  # ---- server ----
-  server <- function(input, output, session) {
-
-    # helper: manual or timer invalidation
-    invalidate_tick <- reactive({
-      invalidateLater(input$refresh_ms * 1e3, session)
-      Sys.time()
-    })
-
-    # steps (static from config)
-    output$pipeline_steps <- renderText({
-      paste(names(config$flag), collapse = ", ")
-    })
-
-    # overall system usage (one-liner string)
-    output$system_usage <- renderText({
-      invalidate_tick()
-      tryCatch(
-        capture.output(get_system_usage(one_liner = TRUE))[1],
-        error = function(e) paste("System usage unavailable:", conditionMessage(e))
-      )
-    })
-
-    # selected session info -> pipelines, status, processes
-    sel <- reactive({
-      req(nrow(pipeline_sessions) > 0)
-      idx <- as.integer(input$session_selected)
-      validate(need(idx >= 1 && idx <= nrow(pipeline_sessions), "Invalid session selection"))
-      list(
-        idx  = idx,
-        path = pipeline_sessions$path[idx],
-        name = pipeline_sessions$name[idx]
-      )
-    })
-
-    # read session + subset pipelines
-    session_obj <- reactive({
-      invalidate_tick()
-      s <- session_info_read(list(session_dir = sel()$path))
-      keep <- intersect(s$pipeline_names, names(pipelines_all))
-      pl   <- pipelines_all[keep]
-      list(s = s, pipelines = pl)
-    })
-
-    # compute status table and plot
-    status_reactive <- reactive({
-      invalidate_tick()
-      s <- session_obj()
-      req(length(s$pipelines) > 0)
-      status <- status_per_study(
-        s$pipelines, config,
-        show_status_per_exp = FALSE,
-        show_done           = isTRUE(input$show_done),
-        show_stats          = isTRUE(input$show_stats)
-      )
-      status
-    })
-
-    output$status_plot <- renderPlotly({
-      st <- status_reactive()
-      validate(need(NROW(st) > 0, "No status to plot for this session"))
-      status_plot(st)  # returns plotly object
-    })
-
-    # per-session processes + summed CPU/MEM
-    session_ps <- reactive({
-      invalidate_tick()
-      s <- session_obj()$s
-      tryCatch(
-        get_running_processes(s$pgid),
-        error = function(e) data.table(message = conditionMessage(e))
-      )
-    })
-
-    output$proc_table <- renderTable({
-      session_ps()
-    })
-
-    output$session_usage <- renderTable({
-      ps <- session_ps()
-      if (!all(c("%CPU", "%MEM") %in% names(ps))) {
-        return(data.frame(Metric = c("CPU", "MEM"), Value = c("NA", "NA")))
-      }
-      data.frame(
-        Metric = c("CPU % (sum)", "MEM % (sum)"),
-        Value  = c(sum(ps$`%CPU`, na.rm = TRUE), sum(ps$`%MEM`, na.rm = TRUE)),
-        check.names = FALSE
-      )
-    }, striped = TRUE, bordered = TRUE, spacing = "s")
-  }
-
-  shinyApp(ui, server)
 }

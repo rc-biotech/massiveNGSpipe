@@ -346,7 +346,7 @@ pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_
     if(config$split_unique_mappers & !inherits(res, "error")) {
       shifting_table <- try(shifts_load(df), silent = TRUE)
       if (is(shifting_table, "try-error")) {
-        stop("Experiment: ", name(df), "has no shifting table to use for unique mappers!")
+        stop("Experiment: '", name(df), "' has no shifting table to use for unique mappers!")
       }
       uniqueMappers(df) <- TRUE
       names(shifting_table) <- filepath(df, "ofst")

@@ -118,3 +118,13 @@ shift_qc <- function(df) {
   saveRDS(TRUE, status_flag_files[status])
   suppressWarnings(file.remove(status_flag_files[names(status_flag_files) != status]))
 }
+
+template_shift_table_exps <- function(exps, accepted.lengths = c(20, 21, 25:33)) {
+  lapply(exps, function(exp) {
+    message(exp)
+    df <- read.experiment(exp)
+    l <- template_shift_table(df, accepted.lengths = accepted.lengths)
+    shifts_save(l, file.path(libFolder(df), "pshifted"))
+  })
+  return(invisible(done))
+}
