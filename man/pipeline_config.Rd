@@ -34,7 +34,7 @@ pipeline_config(
     file.path(project_dir, "log_pipeline"), stop.on.error = TRUE),
   discord_webhook = massiveNGSpipe:::discord_connection_default_cached(),
   verbose = TRUE,
-  BPPARAM_MAIN = BiocParallel::MulticoreParam(length(pipeline_steps)),
+  BPPARAM_MAIN = MulticoreParam_with_options(length(pipeline_steps), parallel_conf),
   BPPARAM_TRIM = BiocParallel::MulticoreParam(min(BiocParallel::bpworkers(), 8)),
   BPPARAM = bpparam()
 )

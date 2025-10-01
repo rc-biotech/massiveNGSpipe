@@ -44,7 +44,8 @@ fastqc_adapters_info <- function(file, nreads = 2e6,
     index <- which(lengths(lapply(adapters$Run, function(i) grep(i, basename(file)))) > 0)
     if (length(index) == 0) stop("Manually defined index file did not contain information about sample")
     accession <- gsub("\\.fastq", "", basename(file))
-    if (accession %in% adapters$Run) stop("Could not find Run id matching file: ", file)
+    accession_in_adapter_list <- accession %in% adapters$Run
+    if (!accession_in_adapter_list) stop("Could not find Run id matching file: ", file)
     return(adapters[Run == accession]$adapter)
   }
   message("- Auto detecting adapter with fastQC candidate list:")
@@ -625,7 +626,7 @@ trim_flanks_ORFik <- function(fastq, left = 0, right = 0) {
     string_5p <- consensusString(subseqSafe(fastq, 1, left))
   }
   if (right > 0) {
-    right_start <- fastq_width - cut_right_rel_pos
+    right_start <- fastq_width - right + 1
     string_3p <- consensusString(subseqSafe(fastq, right_start, fastq_width))
   }
   attr(fastq_cut, "consensus_string_5p") <- ifelse(length(string_5p) == 0, "", string_5p)
@@ -639,7 +640,7 @@ subseqSafe <- function(x, start = NA, end = NA) {
   stopifnot(length(end) == 1 | length(end) == length(x))
   if (identical(start, NA) & identical(end, NA)) return(subseq(x, start, end))
   width_x <- width(x)
-  valid <- width_x >= start & width_x >= end & end != 0
+  valid <- width_x >= start & width_x >= end & end != 0 & end >= start
   if (length(start) != 1) start <- start[valid]
   if (length(end) != 1) end <- end[valid]
 

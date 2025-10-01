@@ -6,18 +6,20 @@
 #' @param dbs character, prioritized order of genome databases to search, default:
 #' c("ensembl", "refseq"). Options are c("ensembl", "refseq", "genbank") in any wanted
 #' priority order.
+#' @param verbose_load_annotation logical, default TRUE. Will list name of each organism loaded
 #' @return a list of pipelines
 #' @export
 pipeline_init_all <- function(config, complete_metadata = config$complete_metadata,
                               progress_report = TRUE, gene_symbols = TRUE,
                               only_complete_genomes = FALSE, dbs = c("ensembl", "refseq"),
-                              show_status_per_exp = TRUE) {
+                              show_status_per_exp = TRUE, verbose_load_annotation = TRUE) {
   # Load all valid metadata
   final_list <- init_and_load_complete_metadata(config, complete_metadata,
                                                 only_complete_genomes)
   # Fetch all organism references ++
   reference_list <- get_all_annotation_and_index(final_list, config,
-                                                 gene_symbols, dbs)
+                                                 gene_symbols, dbs,
+                                                 verbose_load_annotation)
   # For each accession run pipeline_init
   pipelines <- finalize_pipeline_objects(final_list, config, reference_list)
 
@@ -52,16 +54,16 @@ init_and_load_complete_metadata <- function(config, complete_metadata = config$c
   return(final_list)
 }
 
-get_all_annotation_and_index <- function(final_list, config,
-                                         gene_symbols = TRUE,
-                                         dbs = c("ensembl", "refseq")) {
-  message("- Fetching all organism required")
+get_all_annotation_and_index <- function(final_list, config, gene_symbols = TRUE,
+                                         dbs = c("ensembl", "refseq"),
+                                         verbose = TRUE) {
+  message("- Fetching all organism required / Loading valid existing")
   unique_organisms <- unique(final_list$ScientificName)
   reference_list <- lapply(unique_organisms,
                            function(organism) {
                              get_annotation_and_index(organism,
                                                       file.path(config$config["ref"], reference_folder_name(organism)),
-                                                      gene_symbols, dbs)
+                                                      gene_symbols, dbs, verbose = verbose)
                              })
   names(reference_list) <- unique_organisms
   message("-------- Done --------")
@@ -71,8 +73,9 @@ get_all_annotation_and_index <- function(final_list, config,
 get_annotation_and_index <- function(organism,
                                      dir = reference_folder_name(organism,
                                                                  TRUE),
-                                     gene_symbols = TRUE, dbs = c("ensembl", "refseq")) {
-  message("---- ", organism)
+                                     gene_symbols = TRUE, dbs = c("ensembl", "refseq"),
+                                     verbose = TRUE) {
+  if (verbose) message("---- ", organism)
   # Ensembl
   for (db in dbs) {
     annotation <- get_annotation(organism, dir, gene_symbols = gene_symbols,
@@ -322,4 +325,13 @@ path_config <- function(experiment, assembly_name, config, type = ifelse(config$
   names(conf) <- gsub(" $", "", names(conf))
   sapply(conf[1:3], fs::dir_create)
   return(conf)
+}
+
+MulticoreParam_with_options <- function(workers, parallel_conf) {
+  stopifnot(is.list(parallel_conf) && !is.null(names(parallel_conf)))
+  stopifnot(all(names(parallel_conf) %in% c("log", "logdir", "jobname", "stop.on.error")))
+  BiocParallel::MulticoreParam(workers, log = parallel_conf$log,
+                               logdir = parallel_conf$logdir,
+                               jobname = parallel_conf$jobname,
+                               stop.on.error = parallel_conf$stop.on.error)
 }

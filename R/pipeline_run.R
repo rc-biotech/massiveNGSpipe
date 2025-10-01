@@ -21,7 +21,7 @@ run_pipeline <- function(pipelines, config, wait = 100, BPPARAM = config$BPPARAM
       parallel_wrap(config$pipeline_steps[[i]], pipelines, config,
                     config$flag_steps[[i]], wait),
     pipelines = pipelines, wait = wait, config = config,
-    BPOPTIONS = config$parallel_conf, BPPARAM = config$BPPARAM_MAIN)
+    BPPARAM = config$BPPARAM_MAIN)
 
   return(run_pipeline_end_session(pipelines, config))
 }

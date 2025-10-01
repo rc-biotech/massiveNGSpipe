@@ -4,7 +4,7 @@
 \alias{ps}
 \title{Call View on get_running_processes}
 \usage{
-ps(pgid_subset)
+ps(pgid_subset = NULL)
 }
 \arguments{
 \item{pgid_subset}{numeric, default NULL, else subset to process group}

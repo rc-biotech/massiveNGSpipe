@@ -110,13 +110,56 @@ shift_qc <- function(df) {
   status_flag_files <- file.path(QCFolder, paste0(c("warning", "good"), ".rds"))
   names(status_flag_files) <- c("warning", "good")
   status <- "good"
-  any_wrong_frame <- any(zero_frame$percent_length < 25)
+  any_wrong_frame <- any(zero_frame$percent_length < 25) | nrow(zero_frame) == 0
   if (any_wrong_frame) {
     warning("Some libraries contain shift that is < 25% of CDS coverage")
     status <- "warning"
   }
   saveRDS(TRUE, status_flag_files[status])
   suppressWarnings(file.remove(status_flag_files[names(status_flag_files) != status]))
+}
+
+orfFrameDistributions <- function(df, type = "pshifted", weight = "score",
+                                  orfs = loadRegion(df, part = "cds"),
+                                  libraries = outputLibs(df, type = type, output.mode = "envirlist"),
+                                  BPPARAM = BiocParallel::bpparam()) {
+  frame_sum_per <- regionPerReadLengthPerLib(orfs, libraries, scoring = "frameSumPerL",
+                                             weight, BPPARAM)
+  if (nrow(frame_sum_per) == 0) frame_sum_per <- data.table(frame = numeric(),
+                                                            fraction = numeric(),
+                                                            length = numeric(),
+                                                            score = numeric())
+  frame_sum_per[, frame := as.factor(frame)]
+  frame_sum_per[, fraction := as.factor(fraction)]
+  frame_sum_per[, percent := (score / sum(score))*100, by = fraction]
+  frame_sum_per[, percent_length := (score / sum(score))*100, by = .(fraction, length)]
+  frame_sum_per[, best_frame := (percent_length / max(percent_length)) == 1, by = .(fraction, length)]
+  frame_sum_per[, fraction := factor(fraction, levels = names(libraries),
+                                     labels = gsub("^RFP_", "", names(libraries)), ordered = TRUE)]
+
+  frame_sum_per[, fraction := factor(fraction, levels = unique(fraction), ordered = TRUE)]
+  frame_sum_per[]
+  return(frame_sum_per)
+}
+
+regionPerReadLengthPerLib <- function(grl, libraries, scoring = "frameSumPerL",
+                         weight = "score", BPPARAM = BiocParallel::bpparam()) {
+  stopifnot(is(libraries, "list"))
+  # Frame distribution over all
+  frame_sum_per1 <- bplapply(libraries, FUN = function(lib, grl, weight) {
+    name <- attr(lib, "name_short")
+    message("- ", name)
+    total <- regionPerReadLength(grl, lib,
+                                 withFrames = TRUE, scoring = "frameSumPerL",
+                                 weight = weight, drop.zero.dt = TRUE,
+                                 exclude.zero.cov.grl = length(lib) == 0)
+    if (nrow(total) > 0) {
+      total[, length := fraction]
+      total[, fraction := rep(name, nrow(total))]
+    }
+    return(total)
+  }, grl = grl, weight = weight, BPPARAM = BPPARAM)
+  return(rbindlist(frame_sum_per1))
 }
 
 template_shift_table_exps <- function(exps, accepted.lengths = c(20, 21, 25:33)) {
@@ -126,5 +169,5 @@ template_shift_table_exps <- function(exps, accepted.lengths = c(20, 21, 25:33))
     l <- template_shift_table(df, accepted.lengths = accepted.lengths)
     shifts_save(l, file.path(libFolder(df), "pshifted"))
   })
-  return(invisible(done))
+  return(invisible(TRUE))
 }

@@ -95,7 +95,7 @@ get_running_processes <- function(pgid_subset = NULL,
 }
 #' @inherit get_running_processes
 #' @title Call View on get_running_processes
-ps <- function(pgid_subset) View(get_running_processes(pgid_subset))
+ps <- function(pgid_subset = NULL) View(get_running_processes(pgid_subset))
 
 get_pgid <- function() as.integer(system("ps -o pgid= -p $$", intern = TRUE))
 
@@ -364,12 +364,20 @@ status_plot <- function(status_per_study_list) {
 
   status_matrix <- lapply(seq(length(steps)) - 1, function(x) as.data.table(matrix(as.integer(x <= progress_index), nrow = 1, byrow = TRUE)))
   status_matrix <- as.matrix(rbindlist(status_matrix))
-  fig1 <- plot_ly(z = status_matrix, x = projects, y = as.factor(steps), type = "heatmap", colors = c("green", "red")[unique(as.vector(status_matrix)) + 1], showscale=FALSE) %>%
+  order <- order(colSums(status_matrix))
+  z <- status_matrix[,order, drop = FALSE]
+  x <- factor(projects[order], ordered = TRUE)
+  y <- factor(steps, ordered = TRUE)
+  color <- c("green", "red")[unique(as.vector(status_matrix)) + 1]
+  fig1 <- plot_ly(z = z, x = x, y = y,
+                  type = "heatmap", colors = color,
+                  showscale=FALSE, ygap = 2, xgap = 2) %>%
     layout(title = list(text = paste0('NGS Processing Status',
                                       '<br>',
                                       '<sup>',
                                       paste0("Completed: ", done, " / ", n_bioprojects),
-                                      '</sup>')), margin=list(t = 75))
+                                      '</sup>')),
+           margin=list(t = 40))
   return(fig1)
 }
 

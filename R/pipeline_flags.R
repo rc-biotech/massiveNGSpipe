@@ -176,7 +176,8 @@ set_flag_all_exp <- function(config, steps = names(config$flag), exps) {
   for (e in exps) {
     for (step in steps) set_flag(config, step, e, value = TRUE)
   }
-  message("Updated flags for pipeline subset:")
+  message("Updated flags for pipeline subset: ")
+  message(paste(exps, collapse = ", "))
   return(invisible(NULL))
 }
 
@@ -224,7 +225,7 @@ remove_flag_all_exp <- function(config, steps = names(config$flag), exps) {
   for (e in exps) {
     for (step in steps) remove_flag(config, step, e)
   }
-  message("Removed flags for pipeline subset:")
+  message("- Removed flags for pipeline subset:")
   message(paste(exps, collapse = ", "))
   return(invisible(NULL))
 }

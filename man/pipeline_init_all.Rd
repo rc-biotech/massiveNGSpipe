@@ -11,7 +11,8 @@ pipeline_init_all(
   gene_symbols = TRUE,
   only_complete_genomes = FALSE,
   dbs = c("ensembl", "refseq"),
-  show_status_per_exp = TRUE
+  show_status_per_exp = TRUE,
+  verbose_load_annotation = TRUE
 )
 }
 \arguments{
@@ -27,6 +28,8 @@ with complete genome/annotation directories. Will fail if 0 species are done.}
 \item{dbs}{character, prioritized order of genome databases to search, default:
 c("ensembl", "refseq"). Options are c("ensembl", "refseq", "genbank") in any wanted
 priority order.}
+
+\item{verbose_load_annotation}{logical, default TRUE. Will list name of each organism loaded}
 
 \item{simple_progress_report}{logical, default TRUE. Display current progress.}
 }

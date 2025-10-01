@@ -2,6 +2,7 @@
 #' Minimal Shiny dashboard for massiveNGSpipe runtime monitoring (full-width controls row)
 #'
 #' @import shiny
+#' @importFrom plotly plotlyOutput renderPlotly
 #' @export
 mNGSp_app <- function(config = pipeline_config(),
                       pipelines_all = pipeline_init_all(config,

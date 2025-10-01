@@ -4,7 +4,11 @@
 \alias{last_update}
 \title{Get latest time of pipeline update flag}
 \usage{
-last_update(config, flagdir = dirname(config$flag[1]))
+last_update(
+  config,
+  flagdir = flag_dir(config$project),
+  info = last_update_dir_info(flagdir)
+)
 }
 \arguments{
 \item{config}{a pipeline_config object}
