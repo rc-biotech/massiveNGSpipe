@@ -302,6 +302,8 @@ google_drive_list_files <- function(drive_url, email = gargle_mail_safe(),
 #' @param preview_image = FALSE, if TRUE, will open browser and display image, then wait for you to press enter,
 #' then you can cancel if ratios are wrong etc.
 #' @param discord_message = NULL, if character, sends the message to discord after images are sent.
+#' @param google_overwrite logical, default FALSE. If TRUE, if file exists on googledrive, it will replace.
+#' Else it makes a copy.
 #' @return invisible(NULL)
 #' @export
 plot_all_versions <- function(plot, file_prefix, formats = c("jpg", "svg"), send_to_google_drive = FALSE,
@@ -310,7 +312,8 @@ plot_all_versions <- function(plot, file_prefix, formats = c("jpg", "svg"), send
                               google_drive_dir = google_drive_dir_links(1),
                               formats_discord = formats[!(formats %in% "svg")],
                               formats_google = formats[!(formats %in% c("jpg", "png"))],
-                              preview_image = FALSE, discord_message = basename(file_prefix)) {
+                              preview_image = FALSE, discord_message = basename(file_prefix),
+                              google_overwrite = FALSE) {
   if (send_to_discord){
     if (is.null(discord_connection[[1]])) stop("Must have discord connection set!")
   }
@@ -328,7 +331,7 @@ plot_all_versions <- function(plot, file_prefix, formats = c("jpg", "svg"), send
     }
 
     if (send_to_google_drive & (f %in% formats_google)) {
-      googledrive::drive_upload(file, google_drive_dir, name = basename(file))
+      googledrive::drive_upload(file, google_drive_dir, name = basename(file), overwrite = google_overwrite)
     }
     if (send_to_discord & (f %in% formats_discord)) {
       discordr::send_webhook_file(file, conn = discord_connection)
@@ -342,20 +345,54 @@ plot_all_versions <- function(plot, file_prefix, formats = c("jpg", "svg"), send
 }
 
 #' Get discord default webhook
+#'
+#' Steps to make the file:\cr
+#' 1. Go to wanted discord channel\cr
+#' 2. Create webhook\cr
+#' 3. Call:\cr
+#' \code{}  \cr
 #' @param channel_id numeric, id of channel to use.
-#' @param connection_file character, file path to cached webhooks
+#' @param connection_file character, default: discord_cache_file(),
+#' file path to cached webhooks.
 #' @param verbose logical, FALSE. If TRUE, will display discordr info.
-#' @return list of size 4, a webhook connection object
+#' @return list of size 4, a webhook connection object or NULL if file does not exist
 #' @import discordr
+#' @export
 discord_connection_default_cached <- function(channel_id = 1,
-                                              connection_file = "~/livemount/.cache/discordr/r_to_discord_config",
+                                              connection_file = discord_cache_file(),
                                               verbose = FALSE) {
   if (is.null(getOption("default_discordr_connection"))) {
-    conn <- suppressMessages(discordr::import_discord_connections(connection_file)[[channel_id]])
-    discordr::set_default_discord_connection(conn)
+    if (identical(file.exists(connection_file), TRUE)) {
+      conn <- suppressMessages(discordr::import_discord_connections(connection_file)[[channel_id]])
+      discordr::set_default_discord_connection(conn)
+    } else {
+      conn <- NULL
+    }
     return(conn)
   } else {getOption("default_discordr_connection")}
 }
+
+discord_cache_file <- function() {
+  candidates <- file.path(c("~", "~/livemount"), ".cache/discordr/r_to_discord_config")
+  candidates <- candidates[file.exists(candidates)]
+  return(head(candidates, 1))
+}
+
+#' Given a webhook, create cache file
+#'
+#' Will append if webhooks exist in file already.
+#' @param filepath character path, default "~/.cache/discordr/r_to_discord_config"
+#' @return Returns the path you specified as input if sucessful.
+#' @export
+export_discord_cache_file <- function(filepath = "~/.cache/discordr/r_to_discord_config") {
+  dir.create(dirname(filepath), recursive = TRUE)
+  discordr::export_discord_connection(discordr::create_discord_connection(),
+  filepath = filepath)
+  return(filepath)
+}
+
+
+
 
 google_drive_dir_links <- function(id = 1, id_file = "~/livemount/.cache/gargle/drive_folder_links") {
   stopifnot(length(id) > 0)

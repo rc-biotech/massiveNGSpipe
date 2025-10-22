@@ -234,12 +234,23 @@ save_report <- function(status_per_study_list) {
     if (is(alignment.stats.dt, "try-error")) alignment.stats.dt <- data.table()
     return(alignment.stats.dt)
   }), fill = TRUE)
+  if (nrow(dt)) {
+    aligned_file <- file.path(report_dir, "summary_statistics", "aligned_reads_stats.csv")
+    message("-- Saving alignment statistics to: ", aligned_file)
+    fwrite(dt, aligned_file)
+  }
+
   message("- Loading trimming stats for all studies..")
   dt.trim <- rbindlist(lapply(trimmed.out.all, function(f) {
     dt.trim.single <- try(ORFik:::trimming.table(f), silent = TRUE)
     if (is(dt.trim.single, "try-error")) dt.trim.single <- data.table()
     return(dt.trim.single)
   }), fill = TRUE)
+  if (nrow(dt.trim)) {
+    trimming_file <- file.path(report_dir, "summary_statistics","raw_trimmed_reads_stats.csv")
+    message("-- Saving trimming statistics to: ", trimming_file)
+    fwrite(dt.trim, trimming_file)
+  }
 
   if (file.exists(file.path(report_dir, "FINAL_LIST.csv"))) {
     valid_runs <- fread(file.path(report_dir, "FINAL_LIST.csv"))
@@ -281,8 +292,6 @@ save_report <- function(status_per_study_list) {
   suppressWarnings(print(round((read.dist / sum(read.dist)) * 100, 1)))
 
   # Save
-  fwrite(dt.trim, file.path(report_dir, "raw_trimmed_reads_stats.csv"))
-  fwrite(dt, file.path(report_dir, "aligned_reads_stats.csv"))
   mapping_rate_plot(dt, dt.trim, report_dir)
 
   return(invisible(NULL))
@@ -354,13 +363,18 @@ stats_all_libraries_plot <- function(ggplot, filename, xlab = "% reads removed b
 #'
 #' Given all studies, report how far they have come as a heatmap (y-axis
 #' is steps, x-axis is studies)
-status_plot <- function(status_per_study_list) {
+status_plot <- function(status_per_study_list, show_done = TRUE) {
 
   steps <- status_per_study_list$steps
   progress_index <- status_per_study_list$progress_index
   projects <- status_per_study_list$projects
   n_bioprojects <- status_per_study_list$n_bioprojects
   done <- status_per_study_list$done
+  is_not_done <- progress_index != 14
+  if (!show_done & any(is_not_done)) {
+    projects <- projects[is_not_done]
+    progress_index <- progress_index[is_not_done]
+  }
 
   status_matrix <- lapply(seq(length(steps)) - 1, function(x) as.data.table(matrix(as.integer(x <= progress_index), nrow = 1, byrow = TRUE)))
   status_matrix <- as.matrix(rbindlist(status_matrix))

@@ -243,12 +243,12 @@ run_files_organizer <- function(runs, source_dir, exclude = c("","json", "html",
 #' @return data.table with stats for all runs in experiment
 #' @examples
 #' config <- pipeline_config()
-#' pipelines <- pipeline_init_all(config, only_complete_genomes = TRUE, gene_symbols = FALSE, simple_progress_report = FALSE)
+#' pipelines <- pipeline_init_all(config, only_complete_genomes = TRUE, gene_symbols = FALSE, progress_report = FALSE)
 #' pipeline <- pipelines[["PRJNA634994"]]
 #' # barcode_detector_pipeline(pipeline, FALSE)
 #' # debug(detect_adapter_and_trim)
 #' # pipeline$study <- pipeline$study[Run == "SRR10846527"]
-#' barcode_detector_pipeline(pipeline, TRUE)
+#' # barcode_detector_pipeline(pipeline, TRUE)
 barcode_detector_pipeline <- function(pipeline, redownload_raw_if_needed = TRUE) {
   message("Barcode detection for study (", pipeline$accession, ")")
   dt_stats <- data.table()
@@ -280,12 +280,31 @@ barcode_detector_pipeline <- function(pipeline, redownload_raw_if_needed = TRUE)
   return(dt_stats)
 }
 
+#' Internal barcode detector
+#' @noRd
+#' @examples
+#' library(massiveNGSpipe)
+#' config <- ORFik::config()
+#' fastq_dir <- "directory_with_fastq_run" # Change this to correct
+#' stopifnot(dir.exists(fastq_dir))
+#' # Specify run and paired end status. This is filename in fastq_dir, can have suffix .fastq or .fastq.gz
+#' run <- data.table(Run = "SRR12031232", LibraryLayout = "SINGLE")
+#' stopifnot(length(list.files(fastq_dir, pattern = paste0(run$Run, ".fastq"))))
+#' output_dir <- file.path(config["bam"], basename(fastq_dir)) # Main output dir, change if wanted
+#' trim_dir <- file.path(output_dir, "trim") # fastp / barcode output dir
+#' dir.create(trim_dir, recursive = TRUE)
+#' # Run in debug mode, press n + enter to step through, s + enter to step into sub function
+#' debug(massiveNGSpipe:::barcode_detector_single)
+#' #massiveNGSpipe:::barcode_detector_single(run,
+#' #                                         fastq_dir, output_dir, trim_dir,
+#' #                                         redownload_raw_if_needed = FALSE)
 barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimmed_dir,
                                     redownload_raw_if_needed = TRUE, check_at_mean_size = 33,
                                     minimum_size = 26, max_barcode_left_size = 18) {
   sample <- study_sample$Run
   message("-- ", sample)
   stopifnot(is(study_sample, "data.table") && nrow(study_sample) == 1)
+  # Pre-define variables
   barcode_sizes <- barcode5p_size <- barcode3p_size <- cut_left_rel_pos <- cut_right_rel_pos <- 0
   consensus_string_5p <- consensus_string_3p <- ""
 
@@ -531,6 +550,7 @@ detect_adapter_and_trim <- function(file, process_dir, file2 = NULL,
 
 #' @export
 barcodes_manual_assign <- function(pipeline, barcode5p_size, barcode3p_size) {
+  stopifnot(length(pipeline) > 0 & is.list(pipeline))
   study <- pipeline$study
   for (organism in names(pipeline$organisms)) {
     conf <- pipeline$organisms[[organism]]$conf
@@ -555,6 +575,7 @@ barcodes_manual_assign_table <- function(trimmed_dir, run_ids, barcode5p_size,
 
 #' @export
 adapters_manual_assign <- function(pipeline, adapters) {
+  stopifnot(length(pipeline) > 0 & is.list(pipeline))
   study <- pipeline$study
   for (organism in names(pipeline$organisms)) {
     conf <- pipeline$organisms[[organism]]$conf

@@ -73,7 +73,7 @@ mNGSp_app <- function(config = pipeline_config(),
     output$status_plot <- renderPlotly({
       st <- status_reactive()
       validate(need(NROW(st) > 0, "No status to plot for this session"))
-      status_plot(st)  # returns plotly object
+      status_plot(st, isTRUE(input$show_done))  # returns plotly object
     })
 
     # per-session processes + summed CPU/MEM
@@ -143,7 +143,7 @@ mNGSp_app_ui <- function(config,
             column(
               width = 3,
               # Toggles
-              checkboxInput("show_done",  "Include done steps", value = default_show_done),
+              checkboxInput("show_done",  "Include done studies (plot)", value = default_show_done),
               checkboxInput("show_stats", "Show stats",          value = default_show_stats)
             ),
             column(

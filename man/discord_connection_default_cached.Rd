@@ -6,20 +6,27 @@
 \usage{
 discord_connection_default_cached(
   channel_id = 1,
-  connection_file = "~/livemount/.cache/discordr/r_to_discord_config",
+  connection_file = discord_cache_file(),
   verbose = FALSE
 )
 }
 \arguments{
 \item{channel_id}{numeric, id of channel to use.}
 
-\item{connection_file}{character, file path to cached webhooks}
+\item{connection_file}{character, default: discord_cache_file(),
+file path to cached webhooks.}
 
 \item{verbose}{logical, FALSE. If TRUE, will display discordr info.}
 }
 \value{
-list of size 4, a webhook connection object
+list of size 4, a webhook connection object or NULL if file does not exist
 }
 \description{
-Get discord default webhook
+Steps to make the file:\cr
+\enumerate{
+\item Go to wanted discord channel\cr
+\item Create webhook\cr
+\item Call:\cr
+\code{}  \cr
+}
 }

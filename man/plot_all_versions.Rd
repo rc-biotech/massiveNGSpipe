@@ -18,7 +18,8 @@ plot_all_versions(
   formats_discord = formats[!(formats \%in\% "svg")],
   formats_google = formats[!(formats \%in\% c("jpg", "png"))],
   preview_image = FALSE,
-  discord_message = basename(file_prefix)
+  discord_message = basename(file_prefix),
+  google_overwrite = FALSE
 )
 }
 \arguments{
@@ -50,6 +51,9 @@ plot_all_versions(
 then you can cancel if ratios are wrong etc.}
 
 \item{discord_message}{= NULL, if character, sends the message to discord after images are sent.}
+
+\item{google_overwrite}{logical, default FALSE. If TRUE, if file exists on googledrive, it will replace.
+Else it makes a copy.}
 }
 \value{
 invisible(NULL)

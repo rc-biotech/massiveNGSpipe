@@ -17,10 +17,12 @@ Depends:
     ORFik,
     BiocParallel
 Imports:
+    base64enc,
     biomartr,
     changepoint,
     DataEditR,
     discordr,
+    DT,
     filelock,
     fs,
     fst,
@@ -35,6 +37,9 @@ Imports:
     rstudioapi,
     scales,
     shiny,
+    shinycssloaders,
+    shinyjqui,
+    shinyWidgets,
     stringr
 Remotes:
     Roleren/ORFik,

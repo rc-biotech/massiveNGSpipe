@@ -4,7 +4,7 @@
 \alias{status_plot}
 \title{Status plot of pipeline}
 \usage{
-status_plot(status_per_study_list)
+status_plot(status_per_study_list, show_done = TRUE)
 }
 \description{
 Given all studies, report how far they have come as a heatmap (y-axis
