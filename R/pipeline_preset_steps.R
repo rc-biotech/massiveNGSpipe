@@ -292,9 +292,11 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
     for (region in c("mrna", "cds", "leaders", "trailers")) {
       message("---- ", region)
       count_lists <- bplapply(df_list,
-                             function(e, region) suppressMessages(countTable(e, region,
-                                                           type = "summarized")),
-                             region = region, BPPARAM = BPPARAM)
+                              function(e, region) {
+                                res <- try(suppressMessages(countTable(e, region, type = "summarized")))
+                                if (is(res, "try-error")) stop(paste("Failed loading counts for exp ", name(e)))
+                                return(res)
+      }, region = region, BPPARAM = BPPARAM)
       count_list <- do.call(BiocGenerics::cbind, count_lists)
       saveName <- file.path(count_folder, paste0("countTable_", region, ".qs"))
       qs::qsave(count_list, file = saveName, nthreads = 5)
@@ -318,7 +320,7 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
 #' @return invisible(NULL)
 #' @export
 #' @examples
-#' config <- pipeline_config()
+#' #config <- pipeline_config()
 #'
 pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, only_complete_genomes = TRUE,
                                                                      gene_symbols = FALSE),
@@ -331,7 +333,8 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
   done_organisms <- unique(done_organisms)
   stopifnot(length(names(done_experiments)) > 0)
   for (org in done_organisms) {
-    message("-- Organism: ", org)
+    exps_species <- done_experiments[names(done_experiments) == org]
+    message("-- Organism: ", org, " (", length(exps_species), " studies)")
     df_list <- lapply(done_experiments[names(done_experiments) == org], function(e)
       read.experiment(e, validate = F)[1,])
     stopifnot(length(df_list) > 0)
@@ -349,21 +352,25 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
 
     out_dir <- file.path(out_dir_base, exp_name)
     if (config$all_mappers) {
-      message("Skipping non unique, fix when done")
-      ORFik::mergeLibs(df, out_dir, "all", "default", FALSE)
+      message("--- Merging all mappers..")
+      paths <- filepath(df, "default", base_folders = libFolder(df, mode = "all"))
+      ORFik::mergeLibs(df, out_dir, "all", "default", FALSE, paths = paths)
       make_additional_formats(df[1,], exp_name, out_dir)
     }
 
     if (config$split_unique_mappers) {
-      message("Unique mappers only")
+      message("--- Merging Unique mappers only")
       df_unique_merged <- read.experiment(exp_name)
       df_unique <- df_raw
       uniqueMappers(df_unique) <- TRUE
       uniqueMappers(df_unique_merged) <- TRUE
       df_unique <- update_path_per_sample(df_unique, libtype_df, libtype_to_merge = libtype_to_merge)
-      all(grepl("unique", filepath(df_unique, "default")))
+      stopifnot(all(grepl("unique", filepath(df_unique, "default"))))
       out_dir_unique <- libFolder(df_unique_merged)
-      ORFik::mergeLibs(df_unique, out_dir_unique, "all", "default", FALSE)
+      paths <- filepath(df_unique, "default",
+                        base_folders = libFolder(df_unique, mode = "all"))
+      ORFik::mergeLibs(df_unique, out_dir_unique, "all", "default", FALSE,
+                       paths = paths)
       make_additional_formats_internal(df_unique_merged[1,])
     }
   }

@@ -43,8 +43,6 @@ Imports:
     stringr
 Remotes:
     Roleren/ORFik,
-    Roleren/biomartr,
     m-swirski/RiboCrypt,
     Bioconductor/BiocFileCache,
     EriqLaplus/discordr
-

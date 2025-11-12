@@ -1,6 +1,6 @@
 #' For each study that is done, validate / fix shifts
 #' @import shinycssloaders shinyjqui shinyWidgets base64enc
-#' @importFrom DT datatable renderDT DTOutput
+#' @importFrom DT datatable renderDT DTOutput dataTableProxy
 #' @export
 psite_reshift_app <- function(config, exp_names = reshift_app_exp_names(config),
                               options = list("launch.browser" = TRUE)) {

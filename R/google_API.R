@@ -63,7 +63,7 @@ write_sheet_safe_new <- function(file, google_url, sheet = 0,
 
   if (!is(file, "data.frame")) file <- fread(file)
   df <- file
-  message("- Estimated upload time: ", round((nrow(file) / 15e3) * 30, 0), " seconds..")
+  message("- Estimated upload time: ", max(5, round((nrow(file) / 15e3) * 30, 0)), " seconds..")
 
   target_ss <- google_url
   target_sheet <- sheet
@@ -294,6 +294,8 @@ google_drive_list_files <- function(drive_url, email = gargle_mail_safe(),
 #' @param send_to_discord = FALSE
 #' @param width = 8
 #' @param height = 6
+#' @param units One of the following units in which the width and height arguments are expressed:
+#' "in", "cm", "mm" or "px". Default "in".
 #' @param dpi = 600
 #' @param discord_connection = discord_connection_default_cached()
 #' @param google_drive_dir = google_drive_dir_links(1)
@@ -307,7 +309,8 @@ google_drive_list_files <- function(drive_url, email = gargle_mail_safe(),
 #' @return invisible(NULL)
 #' @export
 plot_all_versions <- function(plot, file_prefix, formats = c("jpg", "svg"), send_to_google_drive = FALSE,
-                              send_to_discord = FALSE, width = 8, height = 6, dpi = 600,
+                              send_to_discord = FALSE, width = 8, height = 6,
+                              units = c("in", "cm", "mm", "px"), dpi = 600,
                               discord_connection = discord_connection_default_cached(),
                               google_drive_dir = google_drive_dir_links(1),
                               formats_discord = formats[!(formats %in% "svg")],
@@ -324,7 +327,7 @@ plot_all_versions <- function(plot, file_prefix, formats = c("jpg", "svg"), send
     message(f)
     file <- paste0(file_prefix, ".", f)
     ggsave(file, plot = plot,
-           dpi = dpi, height = height, width = width)
+           dpi = dpi, height = height, width = width, units = units)
     if (preview_image && f == formats[1]) {
       browseURL(file)
       readline(prompt="Press [enter] to continue if you are happy with image ratios")

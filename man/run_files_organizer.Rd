@@ -2,7 +2,7 @@
 % Please edit documentation in R/fastq_helpers.R
 \name{run_files_organizer}
 \alias{run_files_organizer}
-\title{Fastq/fastq file organizer}
+\title{Get file path from study id}
 \usage{
 run_files_organizer(
   runs,
@@ -10,9 +10,32 @@ run_files_organizer(
   exclude = c("", "json", "html", "md5"),
   format = c(".fastq", ".fq", ".fa", ".fasta"),
   compressions = c("", ".gz"),
+  prefixes = list(c("", "trimmed_", "collapsed_trimmed_"), c("", "trimmed2_",
+    "collapsed_trimmed2_")),
   paired_end_suffixes = list(c("_1", "_2"), c("_R1_001", "_R2_001"))
 )
 }
+\arguments{
+\item{runs}{a data.table of study, with columns Run and LibraryLayout}
+
+\item{source_dir}{character path, directory to match study ids}
+
+\item{exclude}{formats to exclude, default: c("","json", "html", "md5")}
+
+\item{format}{formats to search for, default: c(".fastq", ".fq", ".fa", ".fasta")}
+
+\item{compressions}{character, suffixes to allow for formats,
+default: c("", ".gz")}
+
+\item{prefixes}{a list of length 2: prefixes allowed for files, default
+list(c("", "trimmed_", "collapsed_trimmed_"), c("", "trimmed2_", "collapsed_trimmed2_"))}
+
+\item{paired_end_suffixes}{a list of length 2: suffixes allowed for files, default
+list(c("_1", "_2"), c("_R1_001", "_R2_001"))}
+}
+\value{
+a list of character vectors (paths)
+}
 \description{
-Fastq/fastq file organizer
+Get file path from study id
 }

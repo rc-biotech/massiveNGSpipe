@@ -38,6 +38,6 @@ invisible(NULL)
 Collected
 }
 \examples{
-config <- pipeline_config()
+#config <- pipeline_config()
 
 }

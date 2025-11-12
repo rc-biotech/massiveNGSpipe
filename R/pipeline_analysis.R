@@ -13,69 +13,87 @@ analysis_pipeline_ribo_rna <- function(df.rfp = read.experiment("Eleonora-homo_s
   message("- Ribo-seq & RNA-seq analysis_pipeline starting")
 
   #¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤#
-  # Convert files and run Annotation vs alignment QC
+  # Run Annotation and alignment QC
   #¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤#
+  qc_pipeline_generic(df.rna)
+
+  analysis_pipeline_ribo(df.rfp)
+  message("- Ribo-seq & RNA-seq analysis pipeline done")
+
+}
+
+qc_pipeline_generic <- function(df) {
+
   message("-- QC..")
   # General QC
-  ORFikQC(df.rfp, create.ofst = FALSE)
-  ORFikQC(df.rna, create.ofst = FALSE)
-  ggsave(filename = file.path(QCfolder(df.rfp), paste0("PCAplot_", df.rfp@experiment, ".png")),
-         ORFik:::pcaExperiment(df.rfp), height = 7, width = 7)
-  ggsave(filename = file.path(QCfolder(df.rna), paste0("PCAplot_", df.rna@experiment, ".png")),
-         ORFik:::pcaExperiment(df.rna), height = 7, width = 7)
-  remove.experiments(df.rfp) # Remove loaded data (it is not pshifted)
-  remove.experiments(df.rna)
-  RiboQC.plot(df.rfp, BPPARAM = BiocParallel::SerialParam(progressbar = TRUE))
-  remove.experiments(df.rfp)
+  ORFikQC(df, create.ofst = FALSE)
 
-  #¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤#
-  # Create heatmaps (Ribo-seq)
-  #¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤#
-  message("-- Ribo heatmaps")
-  # Pre-pshifting
-  heatMapRegion(df.rfp, region = c("TIS", "TTS"), shifting = "5prime", type = "ofst",
-                outdir = file.path(QCfolder(df.rfp), "heatmaps/pre-pshift/"))
-  remove.experiments(df.rfp)
-  # After pshifting
-  heatMapRegion(df.rfp, region = c("TIS", "TTS"), shifting = "5prime", type = "pshifted",
-                outdir = file.path(QCfolder(df.rfp), "heatmaps/pshifted/"))
+  # PCA
+  ggsave(filename = file.path(QCfolder(df), paste0("PCAplot_", name(df), ".png")),
+         ORFik:::pcaExperiment(df), height = 7, width = 7)
 
+  is_ribo <- identical("RFP", libraryTypes(df))
+  if (is_ribo) {
+    RiboQC.plot(df, BPPARAM = BiocParallel::SerialParam(progressbar = TRUE))
+    message("-- Ribo heatmaps")
+    remove.experiments(df.rfp)
+    # before pshifting
+    heatMapRegion(df, region = c("TIS", "TTS"), shifting = "5prime", type = "ofst",
+                  outdir = file.path(QCfolder(df), "heatmaps/pre-pshift/"))
+    heatMapRegion(df, region = c("TIS", "TTS"), shifting = "5prime", type = "pshifted",
+                  outdir = file.path(QCfolder(df), "heatmaps/pshifted/"))
+  }
+  remove.experiments(df) # Remove loaded data (it is not pshifted)
+}
 
+analysis_pipeline_DTEG <- function(df.rfp = read.experiment("Eleonora-homo_sapiens"),
+                                   df.rna = read.experiment("Eleonora-homo_sapiens_RNA-seq"),
+                                   canonical_isoforms = canonical_isoforms(df.rfp)) {
   #¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤#
-  # Differential translation analysis (condition: WT vs CO)
+  # Differential translation analysis (e.g. condition: WT vs CO)
   #¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤#
+
   message("-- Differential analysis (DESeq2 model)")
   # The design is by default chosen by this factor: The condition column in this case
-  design(df.rfp, multi.factor = FALSE)
+  design <- design(df.rfp, multi.factor = FALSE)
+  symbols <- symbols(df.rfp)
   # We now run, and here get 11 unique DTEG genes
   RFP_counts <- countTable(df.rfp, region = "cds", type = "summarized")
   RNA_counts <- countTable(df.rna, region = "cds", type = "summarized")
+
   RFP_counts_canonical <- RFP_counts[rownames(RFP_counts) %in% canonical_isoforms,]
-  RNA_counts <- countTable(df.rna, region = "cds", type = "summarized")
   RNA_counts_canonical <- RNA_counts[rownames(RNA_counts) %in% canonical_isoforms,]
 
+  if (grep("x_sars_cov2$", name(df.rfp))) {
+
+    mat <- t(as.matrix(colSums(tail(assay(RFP_counts_canonical), 2))))
+    rownames(mat) <- "vaccine"
+    range <- rowRanges(tail(RFP_counts_canonical, 1))
+    names(range) <- "vaccine"
+    RFP_counts_canonical <- SummarizedExperiment(rbind(assay(RFP_counts_canonical), mat), colData = colData(RFP_counts_canonical),
+                                                 rowRanges = c(rowRanges(RFP_counts_canonical), range))
+
+    mat <- t(as.matrix(colSums(tail(assay(RNA_counts_canonical), 2))))
+    rownames(mat) <- "vaccine"
+    RNA_counts_canonical <- SummarizedExperiment(rbind(assay(RNA_counts_canonical), mat), colData = colData(RNA_counts_canonical),
+                                                 rowRanges = c(rowRanges(RNA_counts_canonical), range))
+    symbols <- rbindlist(list(symbols, data.table(ensembl_gene_id = "vaccine", external_gene_name = "vaccine", ensembl_tx_name = "vaccine")), fill = TRUE)
+  }
+
   res <- DTEG.analysis(df.rfp, df.rna, RFP_counts = RFP_counts_canonical, RNA_counts = RNA_counts_canonical)
-  res_extended <- append_gene_symbols(res, symbols(df.rfp), extend_id = FALSE)
+  res_extended <- append_gene_symbols(res, symbols, extend_id = FALSE)
   fwrite(res_extended, file.path(QCfolder(df.rfp), "DTEG_analysis.csv"))
   res_extended <- fread(file.path(QCfolder(df.rfp), "DTEG_analysis.csv"))
-  gg <- DTEG.plot(res_extended, QCfolder(df.rfp), width = 8, height = 6,
-                  plot.ext = ".pdf", plot_to_console = FALSE)
-  gg <- DTEG.plot(res_extended, QCfolder(df.rfp), width = 8, height = 6,
-            plot.ext = ".pdf", plot_to_console = FALSE)
-  gg <- DTEG.plot(res_extended, QCfolder(df.rfp), width = 8, height = 6,
-                  plot.ext = ".png", plot_to_console = FALSE)
-  gg <- DTEG.plot(res_extended, QCfolder(df.rfp), width = 8, height = 6,
-                  plot.ext = ".jpg", plot_to_console = FALSE)
+  sink <- DTEG.plot(res_extended, QCfolder(df.rfp), width = 8, height = 6,
+                    plot.ext = c(".pdf", ".png",".jpg"), plot_to_console = FALSE)
   res_extended[, external_gene_name := NULL]; res_extended[, uniprot_id := NULL]; res_extended[, ensembl_gene_id := NULL]
-  res_extended_id <- append_gene_symbols(res_extended, symbols(df.rfp), extend_id = TRUE)
+  res_extended_id <- append_gene_symbols(res_extended, symbols, extend_id = TRUE)
 
-  canonical_isoforms <- canonical_isoforms(df.rfp)
-  res_extended_id <- res_extended_id[id_original %in% canonical_isoforms,]
 
-  combined_with_box <- DEG_plot(res_extended_id)
-  bs_inlined <- attachDependencies(combined_with_box,
-                                   htmlDependencies(combined_with_box),
-                                   append = TRUE)
+  combined_with_box <- RiboCrypt:::DEG_plot(res_extended_id)
+  bs_inlined <- htmltools::attachDependencies(combined_with_box,
+                                              htmltools::htmlDependencies(combined_with_box),
+                                              append = TRUE)
   htmltools::save_html(htmltools::browsable(bs_inlined), file = file.path(QCfolder(df.rfp), "DTEG_analysis.html"))
   browseURL(file.path(QCfolder(df.rfp), "DTEG_analysis.html"))
   # # Ribo-seq only analysis if no RNA-seq
@@ -88,8 +106,71 @@ analysis_pipeline_ribo_rna <- function(df.rfp = read.experiment("Eleonora-homo_s
   gorilla_output_dir <- file.path(QCfolder(df.rfp), "DTEG_analysis_subsets")
   DEG_gorilla(res_extended_id, gorilla_output_dir, organism(df.rfp))
   DEG_gorilla_copy_to_local(gorilla_output_dir)
+  dt <- DEG_gorilla_local_load_data(gorilla_output_dir)
+  g <- DEG_gorilla_plot(dt)
+
+  # tempfile <- tempfile(fileext = ".jpg")
+  # ggsave(g, file = tempfile, width = 30, height = 20, dpi = 300)
+  # discordr::send_webhook_file(tempfile)
+  go_plot_file <- file.path(gorilla_output_dir, "GO_Enrichment_plot.jpg")
+  ggsave(g, file = go_plot_file, width = 30, height = 20, dpi = 300)
+
+
 
   #sapply(all_gorilla_ids$url, function(x) browseURL(x))
+  return(invisible(NULL))
+}
+
+analysis_pipeline_DEG <- function(df.rfp,
+                                  canonical_isoforms = canonical_isoforms(df.rfp)) {
+  #¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤#
+  # Differential translation analysis (e.g. condition: WT vs CO)
+  #¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤#
+
+  message("-- Differential analysis (DESeq2 model)")
+  # The design is by default chosen by this factor: The condition column in this case
+  design <- design(df.rfp, multi.factor = FALSE)
+  symbols <- symbols(df.rfp)
+  # We now run, and here get 11 unique DTEG genes
+  RFP_counts <- countTable(df.rfp, region = "cds", type = "summarized")
+  RFP_counts_canonical <- RFP_counts[rownames(RFP_counts) %in% canonical_isoforms,]
+  df.rfp$fraction <- NULL
+  RFP_counts_canonical$fraction <- NULL
+
+  pairs <- combn.pairs(unlist(df.rfp[, design]))
+  pairs <- lapply(pairs, function(pair) {
+    should_be_last <- c("WT", "ctrl", "control", "other")
+    if (pair[1] %in% should_be_last) pair <- rev(pair)
+    return(pair)
+  })
+  res <- DEG.analysis(df.rfp, counts = RFP_counts_canonical, pairs = pairs)
+  res_extended <- append_gene_symbols(res, symbols, extend_id = FALSE)
+  fwrite(res_extended, file.path(QCfolder(df.rfp), "DTEG_analysis.csv"))
+  res_extended <- fread(file.path(QCfolder(df.rfp), "DTEG_analysis.csv"))
+  sink <- DEG.plot.static(res_extended, QCfolder(df.rfp), width = 8, height = 6,
+                    plot.ext = c(".pdf", ".png",".jpg"))
+  res_extended[, external_gene_name := NULL]; res_extended[, uniprot_id := NULL]; res_extended[, ensembl_gene_id := NULL]
+  res_extended_id <- append_gene_symbols(res_extended, symbols, extend_id = TRUE)
+
+
+  combined_with_box <- RiboCrypt:::DEG_plot(res_extended_id)
+  bs_inlined <- htmltools::attachDependencies(combined_with_box,
+                                              htmltools::htmlDependencies(combined_with_box),
+                                              append = TRUE)
+  htmltools::save_html(htmltools::browsable(bs_inlined), file = file.path(QCfolder(df.rfp), "DEG_analysis.html"))
+  browseURL(file.path(QCfolder(df.rfp), "DEG_analysis.html"))
+
+  gorilla_output_dir <- file.path(QCfolder(df.rfp), "DEG_analysis_subsets")
+  DEG_gorilla(res_extended_id, gorilla_output_dir, organism(df.rfp))
+  DEG_gorilla_copy_to_local(gorilla_output_dir)
+
+  #sapply(all_gorilla_ids$url, function(x) browseURL(x))
+  return(invisible(NULL))
+}
+
+analysis_pipeline_ribo <- function(df.rfp, canonical_isoforms = canonical_isoforms(df.rfp)) {
+  qc_pipeline_generic(df.rfp)
+
   #¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤#
   # Codon analysis (From WT rep 1 & HSR rep 1)
   #¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤#
@@ -124,9 +205,8 @@ analysis_pipeline_ribo_rna <- function(df.rfp = read.experiment("Eleonora-homo_s
   # Run on 2 first libraries
   message("-- Translon predictions")
   ORFik::detect_ribo_orfs(df.rfp, prediction_output_folder,
-                          c("uORF", "uoORF", "annotated", "NTE", "NTT", "doORF", "dORF"),
+                          c("uORF", "uoORF", "annotated", "NTE", "NTT", "doORF", "dORF", "ncORF"),
                           startCodon = "ATG|CTG|TTG|GTG",
                           mrna = loadRegion(df.rfp, "mrna", names(cds)),
                           cds = cds) # Human also has a lot of ACG uORFs btw
-  message("- Ribo-seq & RNA-seq analysis pipeline done")
 }

@@ -12,6 +12,7 @@ plot_all_versions(
   send_to_discord = FALSE,
   width = 8,
   height = 6,
+  units = c("in", "cm", "mm", "px"),
   dpi = 600,
   discord_connection = discord_connection_default_cached(),
   google_drive_dir = google_drive_dir_links(1),
@@ -36,6 +37,9 @@ plot_all_versions(
 \item{width}{= 8}
 
 \item{height}{= 6}
+
+\item{units}{One of the following units in which the width and height arguments are expressed:
+"in", "cm", "mm" or "px". Default "in".}
 
 \item{dpi}{= 600}
 

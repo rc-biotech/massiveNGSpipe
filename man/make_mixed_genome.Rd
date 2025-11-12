@@ -7,8 +7,8 @@
 make_mixed_genome(
   species,
   custom_sequences,
-  custom_gtfs = NULL,
-  primary_organism = stringr::str_to_title(gsub("_", " ", species[1])),
+  custom_gtfs = make_gtf_from_sequences(custom_sequences),
+  primary_organism = stringr::str_to_sentence(gsub("_", " ", species[1])),
   ref_dir = ORFik::config()["ref"],
   contaminants_sequences = "primary_only",
   gene_symbols = "primary_only"
@@ -19,9 +19,11 @@ make_mixed_genome(
 
 \item{custom_sequences}{character, path to custom fasta sequences}
 
-\item{custom_gtfs}{character, default NULL, path to custom fasta sequences if existing}
+\item{custom_gtfs}{character, default make_gtf_from_sequences(custom_sequences),
+path to custom fasta sequences gtfs if existing, NULL if custom_sequences is length 0.}
 
 \item{primary_organism}{character, scientific name (e.g. "Homo sapiens").
+Default: \code{stringr::str_to_sentence(gsub("_", " ", species[1]))}
 The name of the primary organism, so that biomart can search for symbols etc.}
 
 \item{ref_dir}{location of existing references, default: ORFik::config()\link{"ref"}}
@@ -36,5 +38,18 @@ the fst for species\link{1}}
 invisible(NULL), results saved to disc
 }
 \description{
-Merge genome for mixed genome to align against
+All main species must have valid outputs.rds with gtf and fasta genome defined in
+reference folder. Custom sequences (plasmids etc) requires fasta only, gtf can
+be created for you.
+TODO: Currently it fails if fasta or gtf files does not end with new line
+}
+\examples{
+# Make outputs.rds object
+annotation <- c(genome = "~/livemount/Bio_data/references/influenza/PR8_JWY_RefGenome_v4.fasta",
+gtf = "~/livemount/Bio_data/references/influenza/PR8_JWY_RefGenome_v4.gtf")
+#saveRDS(annotation, file.path(dirname(annotation[1]), "outputs.rds"))
+#indexFa(annotation["genome"])
+# Custom plasmid
+#custom_sequences <- "~/livemount/Bio_data/references/influenza/9SNLucRev_Seg9.fasta"
+#make_mixed_genome(c("homo_sapiens", "influenza"), custom_sequences)
 }

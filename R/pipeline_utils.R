@@ -143,10 +143,23 @@ navigateExp <- function(exp, rel_dir = "aligned") {
   navigate(path)
 }
 
+list.experiments.list <- function(pattern = "*", libtypeExclusive = NULL) {
+  all_exp <- list.experiments(validate = FALSE, pattern = pattern)
+  return(split(all_exp$name, all_exp$name))
+}
+
 navigateRef <- function(exp, rel_dir = "aligned") {
   if (!is.character(exp)) exp <- organism(exp)
   organism <- sub(" |-", "_" , tolower(exp))
   path <- file.path(ORFik::config()["ref"], organism)
 
   navigate(path)
+}
+
+conda_init_env_string <- function(env = "blast", conda = "~/miniconda3/bin/conda") {
+  conda_works <- system(paste(conda, "info"), intern = TRUE)
+  conda_works <- is.null(attr(conda_works, "status"))
+  if (!conda_works) stop("Conda is was not found in path specified!")
+  conda_init_env <- paste(conda, 'run -n', env)
+  return(conda_init_env)
 }

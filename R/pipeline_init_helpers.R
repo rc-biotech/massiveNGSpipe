@@ -41,6 +41,11 @@ init_and_load_complete_metadata <- function(config, complete_metadata = config$c
     complete_genomes_formated <- gsub("_", " ", (stringr::str_to_title(complete_genomes)))
     mixed_genomes <- grep("_x_", complete_genomes)
     complete_genomes_formated[mixed_genomes] <- complete_genomes[mixed_genomes]
+    alternative_mixed_format <- unlist(lapply(strsplit(complete_genomes[mixed_genomes], "_x_"), function(x) {
+      x <- stringr::str_to_title(x)
+      gsub("_", " ", paste(x, collapse = " x "))
+    }))
+    complete_genomes_formated <- c(complete_genomes_formated, alternative_mixed_format)
     final_list <- final_list[ScientificName %in% complete_genomes_formated,]
 
     message("Complete genomes ratio:", round((length(complete_genomes) / total_genomes)*100, 2), "%")

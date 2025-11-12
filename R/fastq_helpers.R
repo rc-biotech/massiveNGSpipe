@@ -39,14 +39,13 @@ fastqc_adapters_info <- function(file, nreads = 2e6,
                                  adapter_manual_dir = dirname(file[1])) {
   manual_defined_adapters <- file.path(adapter_manual_dir, "adapters_manual.csv")
   if (file.exists(manual_defined_adapters)) {
-    message("Using manually defined adapter file")
+    message("Using manually defined adapters from file")
     adapters <- fread(manual_defined_adapters, header = TRUE)
-    index <- which(lengths(lapply(adapters$Run, function(i) grep(i, basename(file)))) > 0)
-    if (length(index) == 0) stop("Manually defined index file did not contain information about sample")
-    accession <- gsub("\\.fastq", "", basename(file))
-    accession_in_adapter_list <- accession %in% adapters$Run
-    if (!accession_in_adapter_list) stop("Could not find Run id matching file: ", file)
-    return(adapters[Run == accession]$adapter)
+    adapters[, LibraryLayout := "SINGLE"]
+    run_to_path <- unlist(run_files_organizer(adapters, dirname(file)))
+    index <- run_to_path == ORFik:::pasteDir(path.expand(file))
+    if (sum(index) != 1) stop("Could not find Run id matching file: ", file)
+    return(adapters[index]$adapter)
   }
   message("- Auto detecting adapter with fastQC candidate list:")
   # Create and save the candidate adapter table.
@@ -130,6 +129,7 @@ adapter_list <- function(candidates_file = fs::path(tempdir(), "adapter_candidat
       list(name = "SOLID Small RNA Adapter",       value = "CGCCTTGGCCGT"),
       list(name = "Ingolia 2012 adapter",          value = "CTGTAGGCACCA"),#CTGTAGGCACCATCAAT
       list(name = "Illumina Uni. Adapter var2",    value = "ATCGTAGATCGG"), #ATCGTAGATCGGAAG
+      list(name = "RiboLace adapter",    value = "TCTCCTTGCATA"), #TCTCCTTGCATAATCACCAACC
       list(name = "polyA",   value = "AAAAAAAAAA"),
       list(name = "polyT",   value = "TTTTTTTTTT"),
       list(name = "polyN",   value = "NNNNNNNNNN"),
@@ -150,88 +150,114 @@ adapter_list <- function(candidates_file = fs::path(tempdir(), "adapter_candidat
   return(candidates)
 }
 
-#' Fastq/fastq file organizer
+#' Get file path from study id
+#' @param runs a data.table of study, with columns Run and LibraryLayout
+#' @param source_dir character path, directory to match study ids
+#' @param exclude formats to exclude, default: c("","json", "html", "md5")
+#' @param format formats to search for, default: c(".fastq", ".fq", ".fa", ".fasta")
+#' @param compressions character, suffixes to allow for formats,
+#' default: c("", ".gz")
+#' @param prefixes a list of length 2: prefixes allowed for files, default
+#' list(c("", "trimmed_", "collapsed_trimmed_"), c("", "trimmed2_", "collapsed_trimmed2_"))
+#' @param paired_end_suffixes a list of length 2: suffixes allowed for files, default
+#' list(c("_1", "_2"), c("_R1_001", "_R2_001"))
+#' @return a list of character vectors (paths)
+#' @export
 run_files_organizer <- function(runs, source_dir, exclude = c("","json", "html", "md5"),
                                 format = c(".fastq", ".fq", ".fa", ".fasta"),
                                 compressions = c("", ".gz"),
+                                prefixes = list(c("", "trimmed_", "collapsed_trimmed_"),
+                                                c("", "trimmed2_", "collapsed_trimmed2_")),
                                 paired_end_suffixes = list(c("_1", "_2"), c("_R1_001", "_R2_001"))) {
+  stopifnot(is(runs, "data.table"))
+  stopifnot(all(c("Run", "LibraryLayout") %in% colnames(runs)))
+
   if (!dir.exists(source_dir)) stop("Input directory of runs does not exist!")
   files <- list.files(source_dir, full.names = TRUE)
   files <- files[!(tools::file_ext(files) %in% exclude)]
-  if (length(files) == 0) stop("There are no files of specified formats in this directory!")
-
-  prefix1 <- c("", "trimmed_")
-  prefix2 <- c("", "trimmed2_")
+  if (length(files) == 0) stop("There are no files of specified formats + compressions
+                               in this directory!")
+  if (length(files) > nrow(runs)) warning("You have additional files of wanted format in the folder,
+                                          please move them!")
 
   all_files <-
-    lapply(seq_len(nrow(runs)), function(i) {
-      # browser()
-      for (paired_end_suffix in paired_end_suffixes) {
-        filenames <-
-          if (runs[i]$LibraryLayout == "PAIRED") {
-            paste0(runs[i]$Run, paired_end_suffix)
-          } else {
-            paste0(runs[i]$Run)
-          }
-
-        file <- grep(filenames[1], files, value = TRUE)
-        file2 <- NULL
-        if (length(file) == 2) {
-          file2 <- file[2]
-          file <- file[1]
-        } else if(!is.na(filenames[2])) {
-          file2 <- grep(filenames[2], files, value = TRUE)
-        }
-        if (length(file) != 0) break
-      }
-
-      if (length(file) != 1) {
-        if (length(file) == 0) {
-          stop("Input File does not exist (both .gz and unzipped): ",
-               runs[i]$Run)
-        } else {
-          read_1_search <- paste0(filenames[1], format,
-                                  rep(compressions, each = length(format)))
-          read_1_search <- paste0(rep(prefix1, each = length(read_1_search)), read_1_search)
-
-          temp_file <- file[basename(file) %in% read_1_search]
-          if (length(temp_file) != 1) {
-            if (length(temp_file) == 0) {
-              file <- runs[i]$Run
-            }
-            stop("File format could not be detected",
-                 file[1])
-          } else file <- temp_file
-        }
-      }
-      if (!is.null(file2) && length(file2) != 1) {
-
-
-        if (length(file2) == 0) {
-          stop("Input File does not exist (both .gz and unzipped): ",
-               runs[i]$Run)
-        } else {
-          read_2_search <- paste0(filenames[1], format,
-                                  rep(compressions, each = length(format)))
-          read_2_search <- paste0(rep(prefix2, each = length(read_2_search)), read_2_search)
-          temp_file <- file2[basename(file2) %in% read_2_search]
-          if (length(temp_file) != 1) {
-            if (length(temp_file) == 0) {
-              file <- rep(runs[i]$Run, 2)
-            }
-            stop("File format could not be detected",
-                 file[2])
-          } else file2 <- temp_file
-        }
-      }
-      return(c(file, file2))
-    })
+    lapply(seq_len(nrow(runs)), function(i)
+      run_files_organizer_internal(i, runs, files, format, compressions,
+                                   prefixes, paired_end_suffixes))
 
   file_vec <- unlist(all_files, use.names = FALSE)
   no_duplicates <- length(unique(file_vec)) == length(file_vec)
   stopifnot(no_duplicates)
   stopifnot(!anyNA(file_vec))
   return(all_files)
+}
+
+run_files_organizer_internal <- function(i, runs, files,
+                                         format = c(".fastq", ".fq", ".fa", ".fasta"),
+                                         compressions = c("", ".gz"),
+                                         prefixes = list(c("", "trimmed_", "collapsed_trimmed_"),
+                                                         c("", "trimmed2_", "collapsed_trimmed2_")),
+                                         paired_end_suffixes = list(c("_1", "_2"), c("_R1_001", "_R2_001"))) {
+  for (paired_end_suffix in paired_end_suffixes) {
+    filenames <-
+      if (runs[i]$LibraryLayout == "PAIRED") {
+        paste0(runs[i]$Run, paired_end_suffix)
+      } else {
+        runs[i]$Run
+      }
+
+    file <- grep(filenames[1], files, value = TRUE)
+    file2 <- NULL
+    if (length(file) == 2 & runs[i]$LibraryLayout == "PAIRED") {
+      file2 <- file[2]
+      file <- file[1]
+    } else if(!is.na(filenames[2])) {
+      file2 <- grep(filenames[2], files, value = TRUE)
+    }
+    if (length(file) != 0) break
+  }
+
+  file_1_single_match <- length(file) == 1
+  if (!file_1_single_match) {
+    if (length(file) == 0) {
+      stop("Input File does not exist (Compressions checked ", paste0(compressions, collapse = ", "), ": ",
+           runs[i]$Run)
+    } else {
+      read_1_search <- paste0(filenames[1], format,
+                              rep(compressions, each = length(format)))
+      read_1_search <- paste0(rep(prefixes[[1]], each = length(read_1_search)), read_1_search)
+
+      temp_file <- file[basename(file) %in% read_1_search]
+      if (length(temp_file) != 1) {
+        if (length(temp_file) == 0) {
+          file <- runs[i]$Run
+        }
+        stop("File format could not be detected",
+             file[1])
+      } else file <- temp_file
+    }
+  }
+
+  file_2_multi_match <- length(file2) > 1
+  if (file_2_multi_match) {
+    if (length(file2) == 0) {
+      stop("Input File does not exist (both .gz and unzipped): ",
+           runs[i]$Run)
+    } else {
+      read_2_search <- paste0(filenames[1], format,
+                              rep(compressions, each = length(format)))
+      read_2_search <- paste0(rep(prefixes[[2]], each = length(read_2_search)), read_2_search)
+      temp_file <- file2[basename(file2) %in% read_2_search]
+      if (length(temp_file) != 1) {
+        if (length(temp_file) == 0) {
+          file <- rep(runs[i]$Run, 2)
+        }
+        stop("File format could not be detected",
+             file[2])
+      } else file2 <- temp_file
+    }
+  }
+  return(c(file, file2))
 }
 
 #' NGS barcode detector
@@ -334,14 +360,14 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
   # Download
   if (!raw_file_exists & redownload_raw_if_needed) {
     massiveNGSpipe:::download_sra(study_sample, fastq_dir, compress = FALSE)
-    file <- try(massiveNGSpipe:::run_files_organizer(study_sample, fastq_dir)[[1]][1], silent = TRUE)
+    file <- try(run_files_organizer(study_sample, fastq_dir)[[1]][1], silent = TRUE)
     raw_file_exists <- !is(file, "try-error")
   }
   # Trim
   if (!trimmed_file_exists) {
     detect_adapter_and_trim(file, process_dir)
   }
-  file_trim <- massiveNGSpipe:::run_files_organizer(study_sample, trimmed_dir)[[1]][1]
+  file_trim <- run_files_organizer(study_sample, trimmed_dir)[[1]][1]
 
   json_file <- sub("/trimmed_", "/report_", sub("\\.fastq$", ".json", file_trim))
   if (!file.exists(json_file)) stop("Json file from fastp does not exist: ", json_file)

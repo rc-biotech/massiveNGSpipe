@@ -466,45 +466,10 @@ add_new_data <- function(accessions, config, organisms = "all",
 }
 
 match_bam_to_metadata <- function(bam_dir, study, paired_end) {
-  bam_files <- ORFik:::findLibrariesInFolder(dir = bam_dir,
-                                             types = c("bam", "bed", "wig", "ofst"),
-                                             pairedEndBam = paired_end)
-
-  bam_files_base <- ORFik:::remove.file_ext(bam_files, basename = T)
-  matches <- match(study$Run, bam_files_base)
-  names_have_info_extensions <- anyNA(matches)
-  if (names_have_info_extensions) {
-    # TODO: Make this all more clear and failproof
-    bam_files_base <- sub("_R1_001_Aligned.*", "", bam_files_base)
-    bam_files_base <- sub("_Aligned.*", "", bam_files_base)
-    bam_files_base <- sub(".*trimmed_", "", bam_files_base)
-    bam_files_base <- sub(".*trimmed2_", "", bam_files_base)
-    bam_files_base <- sub(".*collapsed_", "", bam_files_base)
-    stopifnot(all(bam_files_base != ""))
-    matches <- match(study$Run, bam_files_base)
-    if (anyNA(matches)) {
-      bam_files_base <- gsub("_[0-9]$", "", bam_files_base)
-      matches <- match(study$Run, bam_files_base)
-      if (anyNA(matches)) {
-        bam_files_base <- gsub(".*_", "", bam_files_base)
-        matches <- match(study$Run, bam_files_base)
-      }
-    }
-
-  }
-  bam_files <- bam_files[matches]
-
-  if (nrow(study) != length(bam_files)  | anyNA(bam_files)) {
-    if ((nrow(study) > length(bam_files)) | anyNA(bam_files)) {
-      message("Error: you are missing some bam files compared to study metadata")
-      print(bam_files)
-      stop("Missing bam files!")
-    }  else stop("Not correct number of bam files in folder compared to study metadata")
-  } else if (length(bam_files) != length(bam_files_base)) {
-    warning("you have more bam files in folder compared to study metadata")
-    print(bam_files)
-  }
-  if (length(bam_files) == 0) stop("Could not find SRR runs in aligned folder for: ")
+  bam_files <- run_files_organizer(study, bam_dir,
+                                   format = "_Aligned.sortedByCoord.out.bam")
+  stopifnot(all(lengths(bam_files) == 1))
+  bam_files <- unlist(bam_files)
   return(bam_files)
 }
 
@@ -755,17 +720,37 @@ local_study_csv <- function(dir, exp_name, files = search_for_fasta_files(dir),
   if (auto_detect) {
     dt_temp <- ORFik:::metadata.autnaming(dt_temp)
   }
-  dt_temp[, `:=`(BATCH = batch,
-                 TIMEPOINT = timepoint,
-                 CELL_LINE = cell_line,
-                 TISSUE = tissue,
-                 REPLICATE = replicate,
-                 CONDITION = condition,
-                 FRACTION = fraction)]
+
+  add_meta_columns(dt_temp,
+                   batch, timepoint, cell_line, tissue,
+                   replicate, condition, fraction)
   if (any(is_paired)) {
     dt_temp <- dt_temp[!read_2,]
   }
   stopifnot(!anyDuplicated(dt_temp$Run))
+
+  return(dt_temp)
+}
+
+add_meta_columns <- function(dt_temp,
+                             batch = "",
+                             timepoint = "",
+                             cell_line = "",
+                             tissue = "",
+                             replicate = "",
+                             condition = "",
+                             fraction = "") {
+  # Vectorized way: loop through all args dynamically
+  args <- as.list(environment())  # get all function args
+  args <- args[names(args) != "dt_temp"]  # skip the data.table itself
+
+  for (nm in names(args)) {
+    val <- args[[nm]]
+    if (!(toupper(nm) %in% colnames(dt_temp))) {
+      # assign uppercase column name with value
+      dt_temp[, (toupper(nm)) := val]
+    }
+  }
 
   return(dt_temp)
 }

@@ -15,6 +15,9 @@ pipeline_collapse <- function(pipeline, config) {
                            LibraryLayout != "PAIRED"]
     all_files <- c()
     any_paired_libs <- nrow(runs_paired) > 0
+
+
+
     if (any_paired_libs) {
       # message("Paired end data is now collapsed into 1 file,
       #               and 2nd file is reverse complimented before merging!")
@@ -52,13 +55,19 @@ pipeline_collapse <- function(pipeline, config) {
       outdir <- fs::path(trimmed_dir, "SINGLE")
       fs::dir_create(outdir)
       files <- run_files_organizer(runs_single, trimmed_dir)
+      file_sizes_cumsum_GB <- cumsum(file.size(unlist(files)) / 1e9)
+      system_usage <- get_system_usage()
+      free_memory_GB <- system_usage$Memory_Total_GB - system_usage$Memory_Usage_GB
+      safe_cores <- head(which(file_sizes_cumsum_GB > free_memory_GB), 1) - 2
+      cores_to_use <- max(min(16, safe_cores), 1)
       all_files <- c(all_files, files)
-      BiocParallel::bplapply(files, function(filename) {
+      BiocParallel::bplapply(files, function(filename, outdir) {
         ORFik::collapse.fastq(
           filename, outdir,
           compress = TRUE
         )
-      }, BPPARAM = BiocParallel::MulticoreParam(16))
+      }, outdir = outdir,
+         BPPARAM = BiocParallel::MulticoreParam(cores_to_use, exportglobals = FALSE))
     }
     if (config$delete_trimmed_files) file.remove(unlist(all_files, use.names = FALSE, recursive = TRUE))
     set_flag(config, "collapsed", conf["exp"])
