@@ -102,19 +102,25 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             reuse_shifts_if_existing = TRUE,
                             split_unique_mappers = FALSE,
                             all_mappers = TRUE,
-                            parallel_conf = bpoptions(log =TRUE,
+                            parallel_conf = bpoptions(log = TRUE,
                                                       jobname = "pipeline_step",
                                                       logdir = file.path(project_dir, "log_pipeline"),
                                                       stop.on.error = TRUE),
                             discord_webhook = discord_connection_default_cached(),
                             verbose = TRUE,
-                            BPPARAM_MAIN = MulticoreParam_with_options(length(pipeline_steps), parallel_conf),
-                            BPPARAM_TRIM = BiocParallel::MulticoreParam(min(BiocParallel::bpworkers(), 8)),
-                            BPPARAM = bpparam()) {
+                            thread_type = BiocParallel::MulticoreParam,
+                            threads_default = BiocParallel::bpworkers(),
+                            threads = list(main = length(pipeline_steps),
+                                           default = threads_default,
+                                           trim = min(threads_default, 8),
+                                           pshifted = threads_default,
+                                           valid_pshift = threads_default,
+                                           pcounts = threads_default
+                                           )) {
   if (verbose) {
     message("Setting up mNGSp config..")
     message("- Preset (mode): ", preset, " (", mode, ")")
-    message("- Workers (threads): ", BPPARAM$workers)
+    message("- Workers (threads): ", threads$default, " (", get_fun_name(thread_type, "BiocParallel"), ")")
     message("- Sync to google: ", !is.null(google_url))
     message("- Metadata dir: ", project_dir)
     message("- Output data dir: ", config["bam"])
@@ -137,9 +143,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
     message("You have run local fastq files with delete ",
     paste(names(delete_any_files)[delete_any_files], collapse = " & "), " files,",
             "are you sure this is what you want?")
-  if (!is.null(parallel_conf) && !is.null(parallel_conf$logdir)) {
-    BPPARAM_MAIN <- set_parallel_conf(BPPARAM_MAIN, parallel_conf)
-  }
+
 
 
   return(list(project = project_dir, config = config, flag = flags,
@@ -165,8 +169,9 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               all_mappers = all_mappers,
               preset = preset, parallel_conf = parallel_conf,
               discord_webhook = discord_webhook,
-              BPPARAM_MAIN = BPPARAM_MAIN,
-              BPPARAM_TRIM = BPPARAM_TRIM, BPPARAM = BPPARAM))
+              thread_type = thread_type,
+              threads = threads
+              ))
 }
 
 #' Define which flags are done in each function
@@ -195,4 +200,12 @@ preset_grouping <- function(flags) {
   if (length(flags) != length(grouping)) stop("The grouping attribute must be",
                                               "equal size to number of flags!")
   return(split(names(flags), grouping)[unique(grouping)])
+}
+
+get_fun_name <- function(fun, pkg) {
+  nm <- ls(getNamespace(pkg))
+  nm[vapply(nm, function(n)
+    identical(get(n, envir = getNamespace(pkg)), fun),
+    logical(1)
+  )]
 }

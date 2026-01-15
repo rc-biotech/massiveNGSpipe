@@ -7,7 +7,9 @@
 analysis_pipeline_ribo_rna(
   df.rfp = read.experiment("Eleonora-homo_sapiens"),
   df.rna = read.experiment("Eleonora-homo_sapiens_RNA-seq"),
-  canonical_isoforms = canonical_isoforms(df.rfp)
+  output_dir = "auto",
+  selected_isoforms = canonical_isoforms(df.rfp),
+  exp_design = design(df.rfp, multi.factor = FALSE)
 )
 }
 \arguments{
@@ -15,12 +17,25 @@ analysis_pipeline_ribo_rna(
 
 \item{df.rna}{an ORFik experiment}
 
-\item{canonical_isoforms}{a character vector with tx names,
-default: canonical_isoforms(df.rfp)}
+\item{selected_isoforms}{a character vector with tx names,
+default: canonical_isoforms(df.rfp). For subset of analysis tha can
+subset transcripts, which to use.}
+
+\item{exp_design}{character vector, default design(df.rfp, multi.factor = FALSE).
+Which factors to run DTEG analysis on.}
 }
 \value{
 invisible(NULL), results saved to disc
 }
 \description{
-Analysis of Ribo-seq and RNA-seq
+Result will be saved in respective QC_STATS folders:
+i.e. ribo-seq goes to QCfolder(df.rfp) and rna-seq goes to
+QCfolder(df.rna). Update to your home directory if
+you do not have livemount access, by doing
+\code{df.rna@resultFolder <- "~/my_dir/"}.
+}
+\examples{
+df.rfp <- read.experiment("vaccine_mod_bnt_111024-homo_sapiens_x_sars_cov2")
+df.rna <- read.experiment("vaccine_mod_bnt_111024-homo_sapiens_x_sars_cov2_RNA-seq")
+analysis_pipeline_ribo_rna(df.rfp, df.rna)
 }

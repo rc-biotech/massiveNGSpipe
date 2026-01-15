@@ -63,7 +63,7 @@ get_all_annotation_and_index <- function(final_list, config, gene_symbols = TRUE
                                          dbs = c("ensembl", "refseq"),
                                          verbose = TRUE) {
   message("- Fetching all organism required / Loading valid existing")
-  unique_organisms <- unique(final_list$ScientificName)
+  unique_organisms <- sort(unique(final_list$ScientificName))
   reference_list <- lapply(unique_organisms,
                            function(organism) {
                              get_annotation_and_index(organism,
@@ -235,7 +235,7 @@ update_path_per_sample <- function(df, libtype_df, rel_dir = "pshifted_merged",
                                     rel_dir, paste0(libtype_df, ext))
   df@listData$rep <- seq(nrow(df))
   if (check_exist) {
-    file_paths <- filepath(df, "default")
+    file_paths <- df$filepath
     if (!all(file.exists(file_paths))) {
       stop("Missing ", rel_dir, " tracks for exps:",
            paste(file_paths[!file.exists(file_paths)], collapse = ", "))
@@ -332,11 +332,44 @@ path_config <- function(experiment, assembly_name, config, type = ifelse(config$
   return(conf)
 }
 
-MulticoreParam_with_options <- function(workers, parallel_conf) {
+bpparam_from_config <- function(config, step) {
+  stopifnot(is(config$threads, "list"))
+  stopifnot(step %in% names(config$threads))
+  workers <- config$threads[[step]]
+  stopifnot(length(workers) == 1 && is.numeric(workers))
+  stopifnot(is(config$thread_type, "function"))
+  parallel_conf <- config$parallel_conf
   stopifnot(is.list(parallel_conf) && !is.null(names(parallel_conf)))
   stopifnot(all(names(parallel_conf) %in% c("log", "logdir", "jobname", "stop.on.error")))
-  BiocParallel::MulticoreParam(workers, log = parallel_conf$log,
-                               logdir = parallel_conf$logdir,
-                               jobname = parallel_conf$jobname,
-                               stop.on.error = parallel_conf$stop.on.error)
+
+  if (step != "main") {
+    if (!is.null(parallel_conf$logdir) & !is.na(parallel_conf$logdir)) {
+      parallel_conf$logdir <- file.path(parallel_conf$logdir, step)
+      parallel_conf$jobname <- step
+    }
+  }
+
+  if (!is.null(parallel_conf$logdir) & !is.na(parallel_conf$logdir) &
+      !dir.exists(parallel_conf$logdir)) {
+    dir.create(parallel_conf$logdir, FALSE, TRUE)
+  }
+
+  return(bpparam_with_options(config, workers, func = config$thread_type,
+                              parallel_conf = parallel_conf))
+}
+
+bpparam_with_options <- function(config, workers = config$threads$default,
+                                 func = config$thread_type,
+                                 parallel_conf = config$parallel_conf) {
+  is_serial <- workers == 1 | identical(func, BiocParallel::SerialParam)
+  if (is_serial) return(SerialParam(log = parallel_conf$log,
+                                    logdir = parallel_conf$logdir,
+                                    jobname = parallel_conf$jobname,
+                                    stop.on.error = parallel_conf$stop.on.error,
+                                    progressbar = FALSE))
+
+  func(workers, log = parallel_conf$log,
+       logdir = parallel_conf$logdir,
+       jobname = parallel_conf$jobname,
+       stop.on.error = parallel_conf$stop.on.error)
 }

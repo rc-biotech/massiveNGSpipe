@@ -39,5 +39,5 @@ Create the superset collection of all samples of all organisms
 Also saves a file in pipeline dir called ./metadata_done_samples.csv.
 }
 \examples{
-pipeline_collection_org(config, done_organisms = "Homo sapiens", path_suffix = "10_02_2025")
+#pipeline_collection_master(config = pipeline_config())
 }

@@ -227,6 +227,8 @@ save_report <- function(status_per_study_list) {
   done <- status_per_study_list$done
   total <- status_per_study_list$n_bioprojects
   report_dir <- status_per_study_list$report_dir
+  summary_stats_dir <- file.path(report_dir, "summary_statistics")
+  dir.create(summary_stats_dir, showWarnings = FALSE, recursive = TRUE)
 
   message("- Loading alignment stats for all studies..")
   dt <- rbindlist(lapply(alignment.stats.all, function(f) {
@@ -235,7 +237,8 @@ save_report <- function(status_per_study_list) {
     return(alignment.stats.dt)
   }), fill = TRUE)
   if (nrow(dt)) {
-    aligned_file <- file.path(report_dir, "summary_statistics", "aligned_reads_stats.csv")
+
+    aligned_file <- file.path(summary_stats_dir, "aligned_reads_stats.csv")
     message("-- Saving alignment statistics to: ", aligned_file)
     fwrite(dt, aligned_file)
   }
@@ -247,7 +250,7 @@ save_report <- function(status_per_study_list) {
     return(dt.trim.single)
   }), fill = TRUE)
   if (nrow(dt.trim)) {
-    trimming_file <- file.path(report_dir, "summary_statistics","raw_trimmed_reads_stats.csv")
+    trimming_file <- file.path(summary_stats_dir, "raw_trimmed_reads_stats.csv")
     message("-- Saving trimming statistics to: ", trimming_file)
     fwrite(dt.trim, trimming_file)
   }
@@ -261,8 +264,6 @@ save_report <- function(status_per_study_list) {
       if (nrow(dt_temp) > 0) dt.trim <- dt_temp
     }
   }
-  report_dir <- file.path(report_dir, "summary_statistics")
-  dir.create(report_dir, showWarnings = FALSE, recursive = TRUE)
 
   no_tables_made <- (nrow(dt) == 0 & nrow(dt.trim) == 0)
   if (done == 0) {
@@ -292,7 +293,7 @@ save_report <- function(status_per_study_list) {
   suppressWarnings(print(round((read.dist / sum(read.dist)) * 100, 1)))
 
   # Save
-  mapping_rate_plot(dt, dt.trim, report_dir)
+  mapping_rate_plot(dt, dt.trim, summary_stats_dir)
 
   return(invisible(NULL))
 }

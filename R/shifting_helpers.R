@@ -95,12 +95,12 @@ fft_strength_files <- function(df) {
   return(fft_files)
 }
 
-shift_qc <- function(df) {
+shift_qc <- function(df, BPPARAM = bpparam()) {
   # Plot max 39 libraries!
   subset <- if (nrow(df) >= 40) {seq(39)} else {seq(nrow(df))}
-  invisible(shiftPlots(df[subset,], output = "auto", plot.ext = ".png"))
+  invisible(shiftPlots(df[subset,], output = "auto", plot.ext = ".png", BPPARAM = BPPARAM))
   # Check frame usage
-  frameQC <- orfFrameDistributions(df)
+  frameQC <- orfFrameDistributions(df, BPPARAM = BPPARAM)
   remove.experiments(df)
   zero_frame <- frameQC[frame == 0 & best_frame == FALSE,]
   # Store a flag that says good / bad shifting

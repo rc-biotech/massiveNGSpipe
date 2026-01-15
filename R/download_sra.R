@@ -13,7 +13,7 @@ download_sra <- function(info, outdir, compress = TRUE,
   message("Downloading SRA runs:")
   for (accession in accessions) {
     PAIRED_END <- info$LibraryLayout[info$Run == accession] == "PAIRED"
-    download_raw_srr(accession, outdir, compress, sratoolkit_path, PAIRED_END)
+    download_raw_srr(accession, outdir, compress, sratoolkit_path, PAIRED_END, info)
   }
   delete_existing_preformat_files(outdir, accessions, delete_srr_preformat)
 }
@@ -21,11 +21,11 @@ download_sra <- function(info, outdir, compress = TRUE,
 download_raw_srr <- function(accession, outdir, compress = TRUE,
                              sratoolkit_path =
                                  fs::path_dir(ORFik::install.sratoolkit()),
-                             PAIRED_END) {
+                             PAIRED_END, study_info_dt = NULL) {
   # Check if the run is available on AWS (not always the case, e.g.
   # SRR4000302)
   if (download_sra_aws(accession, outdir) || download_sra_ascp(accession, outdir)) {
-    sra_to_fastq(accession, outdir, compress, sratoolkit_path, PAIRED_END)
+    sra_to_fastq(accession, outdir, compress, sratoolkit_path, PAIRED_END, study_info_dt)
   } else {
     download_sra_ebi(accession, outdir, compress)
   }
@@ -93,9 +93,10 @@ download_sra_ebi <- function(accession, outdir, compress) {
 }
 
 sra_to_fastq <- function(accession, outdir, compress = TRUE,
-                                  sratoolkit_path = fs::path_dir(ORFik::install.sratoolkit()),
-                                  PAIRED_END, progress_bar = TRUE,
-                                  fasterq_temp_dir = check_tempdir_has_space_sra_to_fastq(accession, outdir, tempdir(), PAIRED_END)) {
+                         sratoolkit_path = fs::path_dir(ORFik::install.sratoolkit()),
+                         PAIRED_END, study_info_dt = NULL,
+                         fasterq_temp_dir = check_tempdir_has_space_sra_to_fastq(accession, outdir, tempdir(), PAIRED_END, study_info_dt),
+                         progress_bar = TRUE) {
   message("Extracting SRA run:", accession)
   sra_path <- fs::path_join(c(outdir, accession))
   if (!file.exists(sra_path)) {
@@ -119,6 +120,11 @@ sra_to_fastq <- function(accession, outdir, compress = TRUE,
                    threads, "--split-files", "--skip-technical",
                    "--outdir", fasterq_temp_dir)
   )
+  if (ret != 0) {
+    browser()
+    file.remove(c(out_file_temp, temp_path))
+    stop("Fasterq dump failed!")
+  }
   if (using_temp_dir) {
     message("- Copying file back to main drive..")
     out_file_temp <- paste0(temp_path, if(PAIRED_END) c("_1", "_2"), ".fastq")
@@ -230,14 +236,21 @@ find_ascp_srr_url <- function(run_accession) {
                       convert_to_ascp = TRUE)
 }
 
-check_tempdir_has_space_sra_to_fastq <- function(accession, outdir, tempdir, PAIRED_END) {
+check_tempdir_has_space_sra_to_fastq <- function(accession, outdir, tempdir, PAIRED_END, study_info_dt = NULL) {
   file <- fs::path_join(c(outdir, accession))
-  if (!file.exists(file)) {
+  if (!is.null(study_info_dt)) {
+    if (!(accession %in% study_info_dt$Run)) {
+      stop("accession '", accession, "' was not found in proved study_info_dt!")
+    }
+    dt_row <- study_info_dt[Run == accession]
+    file_extracted_gb <- estimate_fastq_tmp_gb(dt_row)$total_GB
+  } else if (!file.exists(file)) {
     file_extracted_gb <- 5 # Set a guess, TODO: make safe
+    file_extracted_gb <- ifelse(PAIRED_END, file_extracted_gb*2, file_extracted_gb)
   } else {
-    file_extracted_gb <- 3.7*(file.size(file) / (1024^3))
+    file_extracted_gb <- 5*(file.size(file) / (1024^3))
+    file_extracted_gb <- ifelse(PAIRED_END, file_extracted_gb*2, file_extracted_gb)
   }
-  file_extracted_gb <- ifelse(PAIRED_END, file_extracted_gb*2, file_extracted_gb)
 
   tempdir_free_gb <- get_system_usage(drive = ORFik:::detect_drive(tempdir))$Drive_Free
   tempdir_free_gb <- as.numeric(sub("[a-z]+|[A-Z]+", "", tempdir_free_gb))
@@ -246,6 +259,102 @@ check_tempdir_has_space_sra_to_fastq <- function(accession, outdir, tempdir, PAI
   if (is.na(dir_to_use)) dir_to_use <- outdir
   return(dir_to_use)
 }
+
+estimate_fastq_tmp_gb <- function(dt_row,
+                                  read_len = NULL,
+                                  header_template = "{run}.{i} {i} length={L}",
+                                  plus_repeats_header = TRUE,
+                                  newline_bytes = 1L) {
+  # dt_row: 1-row data.table/data.frame with Run, spots, bases, avgLength, LibraryLayout
+  # Returns: list with bytes + human-friendly GB/GiB
+
+  run <- as.character(dt_row[["Run"]])
+  layout <- toupper(as.character(dt_row[["LibraryLayout"]]))
+  spots <- as.numeric(dt_row[["spots"]])
+  bases <- as.numeric(dt_row[["bases"]])
+  avgL <- suppressWarnings(as.numeric(dt_row[["avgLength"]]))
+
+  # Determine read length
+  L <- read_len
+  if (is.null(L) || is.na(L)) {
+    if (!is.na(avgL) && avgL > 0) {
+      L <- avgL
+    } else {
+      # fallback from bases/spots for SINGLE; for PAIRED we approximate per-read length = bases/(2*spots)
+      L <- if (layout == "PAIRED") bases / (2 * spots) else bases / spots
+    }
+  }
+  L <- as.integer(round(L))
+
+  # Determine number of reads
+  n_reads <- if (layout == "PAIRED") 2 * spots else spots
+  n_reads <- as.numeric(n_reads)
+
+  # Average digit count of i from 1..n_reads (fast exact formula, no loops)
+  sum_digits_1_to_n <- function(n) {
+    n <- as.numeric(n)
+    if (n <= 0) return(0)
+    total <- 0
+    # count digits in blocks: 1-9, 10-99, ...
+    k <- 1
+    start <- 1
+    repeat {
+      end <- min(n, 10^k - 1)
+      if (end < start) break
+      total <- total + k * (end - start + 1)
+      if (end == n) break
+      k <- k + 1
+      start <- 10^(k - 1)
+    }
+    total
+  }
+
+  sum_d <- sum_digits_1_to_n(n_reads)
+  avg_d <- sum_d / n_reads
+
+  # Compute fixed part of header length (in chars/bytes) excluding the {i} occurrences.
+  # We assume ASCII for these header fields (true for typical SRA headers), so chars == bytes.
+  # Build a representative header with i replaced by "" and L/run filled in, then measure.
+  header_fixed <- header_template
+  header_fixed <- gsub("\\{run\\}", run, header_fixed, fixed = FALSE)
+  header_fixed <- gsub("\\{L\\}", as.character(L), header_fixed, fixed = FALSE)
+  header_fixed <- gsub("\\{i\\}", "", header_fixed, fixed = FALSE)
+  fixed_chars <- nchar(header_fixed, type = "chars")
+
+  # header bytes per read:
+  # '@' + header + '\n'  => 1 + (fixed + (#i_occurrences * avg_d)) + newline
+  i_occurrences <- lengths(regmatches(header_template, gregexpr("\\{i\\}", header_template)))
+  header_line_bytes <- 1 + (fixed_chars + i_occurrences * avg_d) + newline_bytes
+
+  # plus line bytes:
+  plus_line_bytes <- if (plus_repeats_header) {
+    1 + (fixed_chars + i_occurrences * avg_d) + newline_bytes  # '+' + same header + \n
+  } else {
+    1 + newline_bytes # "+\n"
+  }
+
+  # seq + qual line bytes
+  seq_line_bytes  <- L + newline_bytes
+  qual_line_bytes <- L + newline_bytes
+
+  bytes_per_read <- header_line_bytes + seq_line_bytes + plus_line_bytes + qual_line_bytes
+  total_bytes <- bytes_per_read * n_reads
+
+  list(
+    Run = run,
+    LibraryLayout = layout,
+    reads = n_reads,
+    read_length = L,
+    plus_repeats_header = plus_repeats_header,
+    header_template = header_template,
+    avg_index_digits = avg_d,
+    bytes_per_read = bytes_per_read,
+    total_bytes = total_bytes,
+    total_GB  = total_bytes / 1e9,
+    total_GiB = total_bytes / 1024^3
+  )
+}
+
 
 delete_existing_preformat_files <- function(outdir, accessions, delete_srr_preformat = TRUE) {
   preformat_files <- fs::path(outdir, accessions)

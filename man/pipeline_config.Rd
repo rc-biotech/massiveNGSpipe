@@ -34,9 +34,11 @@ pipeline_config(
     file.path(project_dir, "log_pipeline"), stop.on.error = TRUE),
   discord_webhook = discord_connection_default_cached(),
   verbose = TRUE,
-  BPPARAM_MAIN = MulticoreParam_with_options(length(pipeline_steps), parallel_conf),
-  BPPARAM_TRIM = BiocParallel::MulticoreParam(min(BiocParallel::bpworkers(), 8)),
-  BPPARAM = bpparam()
+  thread_type = BiocParallel::MulticoreParam,
+  threads_default = BiocParallel::bpworkers(),
+  threads = list(main = length(pipeline_steps), default = threads_default, trim =
+    min(threads_default, 8), pshifted = threads_default, valid_pshift = threads_default,
+    pcounts = threads_default)
 )
 }
 \arguments{

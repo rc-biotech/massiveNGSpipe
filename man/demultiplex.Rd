@@ -2,18 +2,62 @@
 % Please edit documentation in R/demultiplex.R
 \name{demultiplex}
 \alias{demultiplex}
-\title{Given ..., demultiplex to fastq}
+\title{Demultiplex illumina lane fastq files to sample fastq}
 \usage{
-demultiplex(path, csv, demultiplex_tool_bin = "~/bin/demultiplexer")
+demultiplex(
+  path,
+  path_out = sub("multiplexed/", "trim/SINGLE", sub("/raw_data/", "/processed_data/",
+    path)),
+  controlfile = file.path(path, "controlfile.csv"),
+  files = list.files(path, "R1_001\\\\.(fastq$|fastq.gz$)"),
+  umi_5p_size = 4,
+  umi_3p_size = 5,
+  minimum_bio_fragment_size = 19,
+  compress = TRUE,
+  compress_collapsed = TRUE,
+  chunk_size = 2e+07,
+  bpparam = MulticoreParam(8, exportglobals = FALSE, log = FALSE)
+)
 }
 \arguments{
-\item{path}{path to directory of}
+\item{path}{path to directory of multiplexed files, subfolder of raw_data dir
+as . Files must be lane names like: /raw_data/study/multiplexed/L1_R1_001.fastq.gz.
+Demultiplexed files will go to directory dirname(path)}
 
-\item{csv}{path to csv file of}
+\item{path_out}{path to output directory for collapsed files}
+
+\item{controlfile}{path to csv file of demultiplex info of samples for all lanes.
+Default: file.path(path, "controlfile.csv"). Must contain at least
+3 columns: c("LANE", "BARCODE", "sample").}
+
+\item{files}{character, relative path to all files. Default:
+\code{list.files(path, "R1_001\\.(fastq$|fastq.gz$)")}}
+
+\item{umi_5p_size}{numeric, default 4. Size of 5' end UMI.}
+
+\item{umi_3p_size}{numeric, default 5. Size of 3' end UMI.}
+
+\item{minimum_bio_fragment_size}{numeric, default 19. Minimum size of biological fragment,
+i.e. when can the barcode start for a read that has a biological signal,
+it will then only use reads that has first adapter hit starting on position >=
+minimum_bio_fragment_size + umi_5p_size + umi_3p_size + barcode_size.}
+
+\item{compress}{logical, default TRUE, compress fastq output files}
+
+\item{chunk_size}{numeric, default 2e7. Number of reads to process per stream
+repeat.}
+
+\item{bpparam}{MulticoreParam(8, exportglobals = FALSE, log = FALSE),
+parallel processing setup for writing split fastq by barcodes.}
 }
 \value{
 invisible(NULL), files saved to disc
 }
 \description{
-Given ..., demultiplex to fastq
+Using a csv controlfile
+}
+\examples{
+# multiplexed is subfolder of raw_data study dir
+path <- "~/livemount/Bio_data/raw_data/vaccine_mod_bnt_1225-homo_sapiens_x_sars_cov2/multiplexed/"
+#devtools::load_all(); demultiplex(path)
 }

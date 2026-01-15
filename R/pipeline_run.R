@@ -11,9 +11,9 @@
 #' \code{MulticoreParam(3)}, which gives 3 threads.
 #' @return invisible(NULL)
 #' @export
-run_pipeline <- function(pipelines, config, wait = 100, BPPARAM = config$BPPARAM) {
+run_pipeline <- function(pipelines, config, wait = 100) {
 
-  config <- run_pipeline_set_up_session(pipelines, config, BPPARAM)
+  config <- run_pipeline_set_up_session(pipelines, config)
 
   # Run pipeline
   BiocParallel::bplapply(seq_along(config$pipeline_steps),
@@ -45,11 +45,12 @@ parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100) {
   message("Done for step pipeline:\n", steps_merged)
 }
 
-run_pipeline_set_up_session <- function(pipelines, config, BPPARAM = config$BPPARAM) {
+run_pipeline_set_up_session <- function(pipelines, config) {
   stopifnot(length(pipelines) > 0 & is(pipelines, "list"))
   stopifnot(!anyNA(names(pipelines)) & all(lengths(pipelines) == 3))
   message("---- Starting pipline:")
-  message("Number of workers: ", BPPARAM$workers)
+  config$BPPARAM_MAIN <- bpparam_from_config(config, "main")
+  message("Number of workers: ", config$threads$default)
   message("Number of studies to run: ", length(pipelines))
   message("Steps to run: ", paste(names(config$flag), collapse = ", "))
   init_time <- Sys.time()

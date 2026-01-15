@@ -168,17 +168,18 @@ run_files_organizer <- function(runs, source_dir, exclude = c("","json", "html",
                                 compressions = c("", ".gz"),
                                 prefixes = list(c("", "trimmed_", "collapsed_trimmed_"),
                                                 c("", "trimmed2_", "collapsed_trimmed2_")),
-                                paired_end_suffixes = list(c("_1", "_2"), c("_R1_001", "_R2_001"))) {
+                                paired_end_suffixes = list(c("_1", "_2"), c("_R1_001", "_R2_001")),
+                                extra_files_warning = TRUE) {
   stopifnot(is(runs, "data.table"))
   stopifnot(all(c("Run", "LibraryLayout") %in% colnames(runs)))
 
-  if (!dir.exists(source_dir)) stop("Input directory of runs does not exist!")
+  if (!all(dir.exists(source_dir))) stop("Input directory of runs does not exist!")
   files <- list.files(source_dir, full.names = TRUE)
   files <- files[!(tools::file_ext(files) %in% exclude)]
   if (length(files) == 0) stop("There are no files of specified formats + compressions
                                in this directory!")
-  if (length(files) > nrow(runs)) warning("You have additional files of wanted format in the folder,
-                                          please move them!")
+  if (length(files) > sum(ifelse(runs$LibraryLayout == "SINGLE", 1, 2)) & extra_files_warning)
+    warning("You have additional files of wanted format in the folder, please move them!")
 
   all_files <-
     lapply(seq_len(nrow(runs)), function(i)
@@ -624,17 +625,10 @@ adapters_manual_assign_table <- function(trimmed_dir, run_ids, adapters) {
 
 remove_adapter_ORFik <- function(fastq_raw, adapter, max.mismatch = 2,
                                  fixed = TRUE, add_statistics = TRUE) {
-  hits <- vmatchPattern(DNAString(adapter), fastq_raw,
-                        max.mismatch = max.mismatch,
-                        fixed = fixed)
-  hits <- start(IRangesList(hits))
-  hits <- hits[hits > 0]
-  empty <- lengths(hits) == 0
-  h <- hits[!empty] - 1
-  h <- unlist(heads(h, 1))
-  whole_read_trimmed <- h == 0
-  fastq_raw_trimmed <- fastq_raw
-  fastq_raw_trimmed[!empty] <- subseqSafe(fastq_raw_trimmed[!empty], 1, h)
+
+  hits <- find_adapter_start_pos(fastq_raw, adapter, max.mismatch, fixed)
+
+  fastq_raw_trimmed <- subseqSafeNonEmptyTrim3p(fastq_raw, hits)
 
   if (add_statistics) {
     original_widths <- width(fastq_raw)
@@ -682,16 +676,65 @@ trim_flanks_ORFik <- function(fastq, left = 0, right = 0) {
   return(fastq_cut)
 }
 
-subseqSafe <- function(x, start = NA, end = NA) {
+subseqSafeNonEmptyTrim3p <- function(fastq_raw, hits) {
+  empty <- lengths(hits) == 0
+  h <- hits[!empty] - 1
+  h <- unlist(heads(h, 1))
+  whole_read_trimmed <- h == 0
+  fastq_raw_trimmed <- fastq_raw
+  fastq_raw_trimmed[!empty] <- subseqSafe(fastq_raw_trimmed[!empty], 1, h)
+  attr(fastq_raw_trimmed, "empty") <- empty
+  return(fastq_raw_trimmed)
+}
+
+subseqSafe <- function(x, start = NA, end = NA, include_invalid = TRUE) {
   stopifnot(length(start) == 1 | length(start) == length(x))
   stopifnot(length(end) == 1 | length(end) == length(x))
   if (identical(start, NA) & identical(end, NA)) return(subseq(x, start, end))
   width_x <- width(x)
+  if (identical(start, NA)) start <- rep(1, length(x))
+  if (identical(end, NA)) end <- width_x
   valid <- width_x >= start & width_x >= end & end != 0 & end >= start
   if (length(start) != 1) start <- start[valid]
   if (length(end) != 1) end <- end[valid]
 
-  if (any(!valid)) x[!valid] <- ""
-  x[valid] <- subseq(x[valid], start, end)
+  if (include_invalid) {
+    if (any(!valid)) x[!valid] <- ""
+    x[valid] <- subseq(x[valid], start, end)
+  } else x <- subseq(x[valid], start, end)
+
   return(x)
+}
+
+find_adapter_start_pos <- function(reads, adapter, max.mismatch = 2, fixed = TRUE,
+                                   minimum_adapter_start = NA, maximum_adapter_start = NA,
+                                   bpparam = MulticoreParam(8, exportglobals = FALSE, log = FALSE)) {
+  # if (!all(is.na(c(minimum_adapter_start, maximum_adapter_start)))) {
+  #   reads <- subseqSafe(reads, minimum_adapter_start, maximum_adapter_start)
+  # }
+  adapter_time <- Sys.time()
+  message("-- Detecting start positions of 3' adapter")
+  if (is.na(minimum_adapter_start)) minimum_adapter_start <- 1
+
+  hits <- bpvec(
+    reads,
+    FUN = function(chunk_reads, adapter_dna, max.mismatch, fixed) {
+      start(IRangesList(vmatchPattern(adapter_dna,
+                    chunk_reads,
+                    max.mismatch = max.mismatch,
+                    fixed = fixed)))
+    },
+    adapter_dna = DNAString(adapter),
+    max.mismatch = max.mismatch,
+    fixed = fixed,
+    BPPARAM = bpparam
+  )
+  # vmatchPattern(DNAString(adapter), reads, max.mismatch = max.mismatch, fixed = fixed)
+  message("---- Adapters detected per read before minimum pos filter:")
+  print(table(lengths(hits)))
+  hits <- hits[hits >= minimum_adapter_start]
+  message("---- Adapters detected per read after minimum pos filter:")
+  print(table(lengths(hits)))
+  cat("--- Done Detecting adapter start positions "); print(round(Sys.time() - adapter_time, 1))
+  return(hits)
 }

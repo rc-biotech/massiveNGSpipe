@@ -466,8 +466,9 @@ add_new_data <- function(accessions, config, organisms = "all",
 }
 
 match_bam_to_metadata <- function(bam_dir, study, paired_end) {
+  study$LibraryLayout <- "SINGLE"
   bam_files <- run_files_organizer(study, bam_dir,
-                                   format = "_Aligned.sortedByCoord.out.bam")
+                                   format = c("_Aligned.sortedByCoord.out.bam", ".bam"))
   stopifnot(all(lengths(bam_files) == 1))
   bam_files <- unlist(bam_files)
   return(bam_files)
@@ -521,7 +522,7 @@ add_backup <- function(dt, backup_file) {
   return(invisible(NULL))
 }
 
-metadata_columns_cleanup <- function(files) {
+metadata_columns_cleanup <- function(files, show_current_fill_stats = FALSE) {
   # TODO: Split into cleanup and info
   # Check authors
   a <- unlist(files[, table(AUTHOR)])
@@ -532,19 +533,23 @@ metadata_columns_cleanup <- function(files) {
   files[INHIBITOR == "CHX", INHIBITOR := "chx"]
   files[INHIBITOR == "LTM", INHIBITOR := "ltm"]
   files[INHIBITOR == "Harringtonine", INHIBITOR := "harr"]
-  a <- unlist(files[, table(INHIBITOR)])
-  stopifnot(length(a[names(a) == ""]) == 0)
-  files[INHIBITOR == "", INHIBITOR := "chx"]
-  cat("# of Samples by Authors:\n")
-  sort(table(files$AUTHOR), decreasing = TRUE) #unique(files[AUTHOR == "",]$BioProject)
-  cat("# of Samples by Inhibitor:\n")
-  table(files$INHIBITOR)
-  cat("# of Samples by Condition:\n")
-  table(files$CONDITION)
-  table(files$FRACTION)
-  table(files$TISSUE)#unique(files[TISSUE == "",]$BioProject)
-  table(files$CELL_LINE)#unique(files[CELL_LINE == "Huh",]$BioProject)
-  table(files$BATCH)
+  # a <- unlist(files[, table(INHIBITOR)])
+  # stopifnot(length(a[names(a) == ""]) == 0)
+  # files[INHIBITOR == "", INHIBITOR := "chx"]
+
+
+  if (show_current_fill_stats) {
+    cat("# of Samples by Authors:\n")
+    sort(table(files$AUTHOR), decreasing = TRUE) #unique(files[AUTHOR == "",]$BioProject)
+    cat("# of Samples by Inhibitor:\n")
+    table(files$INHIBITOR)
+    cat("# of Samples by Condition:\n")
+    table(files$CONDITION)
+    table(files$FRACTION)
+    table(files$TISSUE)#unique(files[TISSUE == "",]$BioProject)
+    table(files$CELL_LINE)#unique(files[CELL_LINE == "Huh",]$BioProject)
+    table(files$BATCH)
+  }
   return(files)
 }
 
@@ -622,7 +627,7 @@ organism_name_cleanup <- function(organisms) {
 }
 
 search_for_fasta_files <- function(dir, full.names = TRUE) {
-  grep("\\.md5$", list.files(dir, "\\.(fa|fna|fasta|fastq(\\.gz)?)$", full.names = full.names),
+  grep("\\.md5$", list.files(dir, "\\.(fa|fna|fasta|fastq)(\\.gz)?$", full.names = full.names),
        invert = TRUE, value = TRUE)
 }
 
@@ -718,6 +723,7 @@ local_study_csv <- function(dir, exp_name, files = search_for_fasta_files(dir),
   auto_detect <- TRUE # Always TRUE for now
 
   if (auto_detect) {
+    dt_temp[grepl("^(monosome_|monosomes_)", sample_title) == TRUE, sample_title := paste0("RFP_", sample_title)]
     dt_temp <- ORFik:::metadata.autnaming(dt_temp)
   }
 

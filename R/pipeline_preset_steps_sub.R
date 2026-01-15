@@ -28,7 +28,7 @@ pipeline_download <- function(pipeline, config) {
 #' @inheritParams pipeline_download
 pipeline_trim <- function(pipeline, config) {
     study <- pipeline$study
-    config$BPPARAM_TRIM <- SerialParam()
+    config$BPPARAM_TRIM <- bpparam_from_config(config, "trim")
     for (organism in names(pipeline$organisms)) {
         conf <- pipeline$organisms[[organism]]$conf
         if (!step_is_next_not_done(config, "trim", conf["exp"])) next
@@ -86,93 +86,87 @@ pipeline_align <- function(pipeline, config) {
   steps <- if(can_use_raw) {"tr"} else NULL
   steps <- c(steps, if(did_contamint_removal) {"co"} else NULL)
   steps <- paste(c(steps, "ge"), collapse = "-")
+
+  star.path <- STAR.install()
+  fastp.path <- install.fastp()
   for (organism in names(pipeline$organisms)) {
     conf <- pipeline$organisms[[organism]]$conf
     if (!step_is_next_not_done(config, "aligned", conf["exp"])) next
     index <- pipeline$organisms[[organism]]$index
     runs <- study[ScientificName == organism]
+    browser()
     trimmed_dir <- fs::path(conf["bam"], "trim")
+    raw_fastq_dir <- conf["fastq"]
     output_dir <- conf["bam"]
 
     keep.unaligned.genome <- config$keep.unaligned.genome
-    if (any(runs$LibraryLayout == "SINGLE")) {
-      input_dir <- ifelse(did_collapse,
-                          fs::path(trimmed_dir, "SINGLE"),
-                          trimmed_dir)
-      stopifnot(dir.exists(input_dir))
 
-      ORFik::STAR.align.folder(
-        input.dir = input_dir,
-        output.dir = output_dir, multiQC = FALSE,
-        keep.unaligned.genome = keep.unaligned.genome,
-        index.dir = index, steps = "ge", paired.end = FALSE
-      )
-      STAR.allsteps.multiQC(output_dir, steps = steps)
-      for (stage in c("aligned")) {
-        new_dir <- fs::path(output_dir, stage, "LOGS_SINGLE")
-        if (dir.exists(new_dir)) {
-          fs::dir_delete(new_dir)
-        }
-        fs::file_move(
-          fs::path(output_dir, stage, "LOGS"),
-          fs::path(output_dir, stage, "LOGS_SINGLE")
-        )
-      }
-      for (filename in c("full_process.csv", "runCommand.log")) {
-        fs::file_move(
-          fs::path(output_dir, filename),
-          fs::path(output_dir, paste0(
-            fs::path_ext_remove(filename), "_SINGLE.",
-            fs::path_ext(filename)
-          ))
-        )
-      }
-    }
-    if (any(runs$LibraryLayout == "PAIRED")) {
-      input_dir <- ifelse(did_collapse,
-                          fs::path(trimmed_dir, "PAIRED"),
-                          ifelse(can_use_raw, conf["fastq"], trimmed_dir))
-      stopifnot(dir.exists(input_dir))
-      # message("Paired end ignored for now, running collapsed pair mode only!")
-      paired_end_ribo <- any(runs[LibraryLayout == "PAIRED"]$LIBRARYTYPE == "RFP")
-      if (paired_end_ribo) message("Aligning only read 1 of ribo-seq!")
-      collapsed_paired_end_mode <- !paired_end_ribo
-      ORFik::STAR.align.folder(
-        input.dir = input_dir,
-        output.dir = output_dir,
-        index.dir = index, steps = steps,
-        resume = "ge",
-        keep.unaligned.genome = keep.unaligned.genome,
-        paired.end = collapsed_paired_end_mode
-      )
-      # for (stage in c("contaminants_depletion", "aligned")) {
-      #     fs::file_move(
-      #         fs::path(output_dir, stage, "LOGS"),
-      #         fs::path(output_dir, stage, "LOGS_PAIRED")
-      #     )
-      # }
-      # for (filename in c("full_process.csv", "runCommand.log")) {
-      #     fs::file_move(
-      #         fs::path(output_dir, filename),
-      #         fs::path(output_dir, paste0(
-      #             fs::path_ext_remove(filename), "_PAIRED.",
-      #             fs::path_ext(filename)
-      #         ))
-      #     )
-      # }
+    # Alignment
+    input_dir <- if (did_collapse) {
+      c(fs::path(trimmed_dir, "SINGLE"), fs::path(trimmed_dir, "PAIRED"))
+    } else ifelse(did_trim, trimmed_dir, raw_fastq_dir)
+    pairs <- run_files_organizer(runs, input_dir)
+
+    first_pair_index <- which(lengths(pairs) == 2)[1]
+    any_paired <- !is.na(first_pair_index)
+    strandMode <- 1
+    if (any_paired) {
+      if (!file.exists(file.path(output_dir, "strandMode.rds"))) {
+        message("Paired end ignored for now, detecting forward direction read file and
+            using that only!")
+        genomeDir <- file.path(index, "genomeDir")
+        strandMode <- detect_strand_mode(pairs[[first_pair_index]][1],
+                                         pairs[[first_pair_index]][2],
+                                         genomeDir, star = star.path,
+                                         keepGenomeLoaded = "LoadAndKeep")
+
+        saveRDS(strandMode, file.path(output_dir, "strandMode.rds"))
+      } else strandMode <- readRDS(file.path(output_dir, "strandMode.rds"))
     }
 
-    dir_info <- as.data.table(fs::dir_info(file.path(output_dir, "aligned"), type = "file"))
-    dir_info <- dir_info[grep(paste(runs$Run, collapse = "|"), path)][grep("\\.bam$", path)]
-    if (nrow(dir_info) < nrow(runs)) {
-        stop("You have missing bam files in your aligned folder!")
+    pair_index <- 1
+    cat("Total number of files are:\n")
+    cat(length(pairs)); cat("\n")
+    for (R1_R2 in pairs) {
+      cat("Single end mode\n")
+      cat("File ", pair_index, " / ", length(pairs), "\n")
+      single_end <- lengths(pairs[pair_index]) == 1
+      pair_index <- pair_index + 1
+      keep.index.in.memory <- !identical(R1_R2, tail(pairs, 1)[[1]])
+      file1 <- R1_R2[ifelse(single_end, 1, strandMode)]
+      file2 <- if (!is.na(R1_R2[2]) & FALSE) {R1_R2[ifelse(strandMode == 1, 2, 1)]}
+      ORFik::STAR.align.single(file1, file2,
+                               output.dir = output_dir,
+                               index.dir = index, steps = steps,
+                               resume = "ge",
+                               keep.index.in.memory = keep.index.in.memory,
+                               keep.unaligned.genome = keep.unaligned.genome,
+                               star.path = star.path, fastp = fastp.path
+      )
+      #TODO: Now _1 and _2 will be kept, but fixed in cleanup, do I want it like that ?
     }
-    if (any(dir_info$size == 0)) {
-      stop("You have empty bam files in your aligned folder!")
-    }
-    if (config$delete_collapsed_files)
-      fs::dir_delete(input_dir)
+
+    alignment_final_checks(input_dir, output_dir, runs, config, steps)
     set_flag(config, "aligned", conf["exp"])
+  }
+}
+
+alignment_final_checks <- function(input_dir, output_dir, runs, config, steps) {
+  cleanup_script <- system.file("STAR_Aligner", "cleanup_folders.sh",
+                                package = "ORFik")
+  system2("/bin/bash", c(cleanup_script, output_dir))
+  STAR.allsteps.multiQC(output_dir, steps = steps)
+
+  dir_info <- as.data.table(fs::dir_info(file.path(output_dir, "aligned"), type = "file"))
+  dir_info <- dir_info[grep(paste(runs$Run, collapse = "|"), path)][grep("\\.bam$", path)]
+  if (nrow(dir_info) < nrow(runs)) {
+    stop("You have missing bam files in your aligned folder!")
+  }
+  if (any(dir_info$size == 0)) {
+    stop("You have empty bam files in your aligned folder!")
+  }
+  if (config$delete_collapsed_files) {
+    fs::dir_delete(input_dir)
   }
 }
 
@@ -333,7 +327,7 @@ pipeline_create_ofst <- function(df_list, config) {
 pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_lengths_rpf,
                             reuse_shifts_if_existing = config$reuse_shifts_if_existing,
                             allowed_hard12_species = c("Escherichia coli", "Sars cov2"),
-                            BPPARAM = config$BPPARAM) {
+                            BPPARAM = bpparam_from_config(config, "pshifted")) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "pshifted", name(df))) next
     res <- 1
@@ -374,11 +368,12 @@ pipeline_validate_shifts <- function(df_list, config) {
   # TODO: This function can be improved, especially how we detect bad shifts!
   for (df in df_list) {
     if (!step_is_next_not_done(config, "valid_pshift", name(df))) next
+    BPPARAM <- bpparam_from_config(config, "valid_pshift")
     if (config$all_mappers)
-      shift_qc(df)
+      shift_qc(df, BPPARAM)
     if (config$split_unique_mappers) {
       uniqueMappers(df) <- TRUE
-      shift_qc(df)
+      shift_qc(df, BPPARAM)
     }
     set_flag(config, "valid_pshift", name(df))
   }
@@ -416,11 +411,15 @@ pipeline_convert_bigwig <- function(df_list, config) {
 pipeline_count_table_psites <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "pcounts", name(df))) next
+    BPPARAM <- bpparam_from_config(config, "pcounts")
     if (config$all_mappers)
-      ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE)
+      ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE,
+                                BPPARAM = BPPARAM)
     if (config$split_unique_mappers) {
       uniqueMappers(df) <- TRUE
-      ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE)
+      if (config$all_mappers) remove.experiments(df)
+      ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE,
+                                BPPARAM = BPPARAM)
     }
     set_flag(config, "pcounts", name(df))
   }

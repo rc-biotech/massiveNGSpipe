@@ -158,7 +158,7 @@ pipe_counts <- function(pipelines, config) {
 #' @return invisible(NULL)
 #' @export
 #' @examples
-#' pipeline_collection_org(config, done_organisms = "Homo sapiens", path_suffix = "10_02_2025")
+#' #pipeline_collection_master(config = pipeline_config())
 pipeline_collection_master <- function(config, pipelines = pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE),
                                     done_experiments = step_is_done_pipelines(config, "pcounts", pipelines),
                                     done_organisms = unique(names(done_experiments)),
@@ -213,7 +213,9 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
     if (any(!dt_complete$is_pshifted)) {
       warning("Some samples are not pshifted even though they are flagged as 'complete', they are listed below:")
       print(dt_complete[is_pshifted == FALSE,])
-    }
+    } else (
+      message("All samples had existing pshifted files")
+    )
   }
   fwrite(dt_complete, file.path(config$project, "metadata_done_samples.csv"))
   message("Saved all complete studies metadata to: ", file.path(config$project, "metadata_done_samples.csv"))
@@ -299,7 +301,7 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
       }, region = region, BPPARAM = BPPARAM)
       count_list <- do.call(BiocGenerics::cbind, count_lists)
       saveName <- file.path(count_folder, paste0("countTable_", region, ".qs"))
-      qs::qsave(count_list, file = saveName, nthreads = 5)
+      qs2::qs_save(count_list, file = saveName, nthreads = 5)
       saveName <- file.path(count_folder, paste0("totalCounts_", region, ".rds"))
       saveRDS(colSums(assay(count_list)), file = saveName)
     }
@@ -432,7 +434,9 @@ make_additional_formats_internal <- function(df, libtype_df_ref =
     message("-- Bigwig reverse")
     rtracklayer::export.bw(object = r(covrle), bw_files[2])
   }
-  ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE)
+  ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE,
+                            BPPARAM = SerialParam())
+  suppressWarnings(remove.experiments(df))
   return(invisible(NULL))
 }
 

@@ -24,7 +24,7 @@ sync_sheet_safe <- function(config, validate_to_complete_local = FALSE,
   stopifnot(!is.null(config$temp_metadata) & file.exists(config$temp_metadata))
   sheet <- read_sheet_safe(config$google_url, gargle_email)
   fwrite(sheet, config$temp_metadata)
-  message("Google sheet synced to file: \n", config$temp_metadata)
+  message("Synced local temp metadata file from Google sheet: \n", config$temp_metadata)
   if (validate_to_complete_local) curate_metadata(NULL, config, google_url = NULL)
   return(invisible(NULL))
 }
@@ -71,6 +71,7 @@ write_sheet_safe_new <- function(file, google_url, sheet = 0,
   # Token + email setup
   googlesheets4::gs4_auth(email = gargle_email)
   googledrive::drive_auth(email = gargle_email)
+
   # One token with BOTH Drive + Sheets scopes
   tok <- gargle::token_fetch(scopes = c(
     "https://www.googleapis.com/auth/drive",
@@ -217,6 +218,8 @@ default_sheets <- function(project_dir, id = 1,
     new_sheet <- googlesheets4::gs4_create(sheet_name)
     new_sheet <- paste0("https://docs.google.com/spreadsheets/d/",
                         as.character(new_sheet))
+    fwrite(data.table(id = new_sheet), url_table)
+    new_sheet
   } else fread(url_table)[id,]$id
 }
 
@@ -281,6 +284,26 @@ google_drive_list_files <- function(drive_url, email = gargle_mail_safe(),
   if (is(files, "try-error")) stop("Folder does not exists on given google drive!")
   if (is.null(files) && nrow(files) == 0) stop("No files found in drive")
   return(files)
+}
+
+google_drive_dir_links <- function(id = 1, id_file = "~/livemount/.cache/gargle/drive_folder_links") {
+  stopifnot(length(id) > 0)
+
+  dt <- fread(id_file)
+  ids <- id
+  if (is.numeric(id)) {
+    if (!(id %in% seq_along(dt$id))) stop("numeric id > max ids")
+    res <- dt[ids,]$link
+    names(res) <- dt[ids,]$id
+    return(res)
+  }
+  if (is.character(id)) {
+    if (!(id %in% dt$id)) {
+      print(dt$id)
+      stop("ID given is not in list, valid ids given above")
+      return(dt[id == ids,])
+    }
+  } else stop("id must be numeric (index) or character (id name)!")
 }
 
 
@@ -392,27 +415,4 @@ export_discord_cache_file <- function(filepath = "~/.cache/discordr/r_to_discord
   discordr::export_discord_connection(discordr::create_discord_connection(),
   filepath = filepath)
   return(filepath)
-}
-
-
-
-
-google_drive_dir_links <- function(id = 1, id_file = "~/livemount/.cache/gargle/drive_folder_links") {
-  stopifnot(length(id) > 0)
-
-  dt <- fread(id_file)
-  ids <- id
-  if (is.numeric(id)) {
-    if (!(id %in% seq_along(dt$id))) stop("numeric id > max ids")
-    res <- dt[ids,]$link
-    names(res) <- dt[ids,]$id
-    return(res)
-  }
-  if (is.character(id)) {
-    if (!(id %in% dt$id)) {
-      print(dt$id)
-      stop("ID given is not in list, valid ids given above")
-      return(dt[id == ids,])
-    }
-  } else stop("id must be numeric (index) or character (id name)!")
 }

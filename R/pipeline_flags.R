@@ -9,7 +9,7 @@
 #' STAR index during genome preparation step.
 #' @return a character vector with names being the grouping in functions
 libtype_flags <- function(preset, mode = "online", contam = FALSE) {
-  valid_presets <- c("Ribo-seq", "RNA-seq", "disome", "empty")
+  valid_presets <- c("Ribo-seq", "RNA-seq", "disome", "SSU","empty")
 
   download_flags <- if (mode == "online") {
     c(fetch = "start", fetch = "fetch")
@@ -24,11 +24,14 @@ libtype_flags <- function(preset, mode = "online", contam = FALSE) {
 
   lib_type_flags <- if (preset == "Ribo-seq") {
     c(pshift_and_validate = "pshifted", pshift_and_validate = "valid_pshift")
-  } else if (preset %in% c("RNA-seq", "disome")) {
-    trim_flags <- trim_flags[1]
+  } else if (preset %in% c("RNA-seq")) {
+    trim_flags <- c()
     c(cigar_collapse = "cigar_collapse")
+  } else if (preset %in% c("SSU", "disome", "empty")) {
+    c()
   } else stop(paste("Currently valid preset pipelines are of types:",
-                    valid_presets))
+                    valid_presets, collapse = ", " ))
+
   format_processing <- c(convert = "covrle", convert = "bigwig")
   count_tables <- c(counts = "pcounts")
 

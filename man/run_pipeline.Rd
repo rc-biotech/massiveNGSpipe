@@ -4,7 +4,7 @@
 \alias{run_pipeline}
 \title{Run massive_NGS_pipe}
 \usage{
-run_pipeline(pipelines, config, wait = 100, BPPARAM = config$BPPARAM)
+run_pipeline(pipelines, config, wait = 100)
 }
 \arguments{
 \item{pipelines}{list, output of pipeline_init_all}

@@ -61,6 +61,7 @@ docker_copy_done_experiments <- function(config,
       csv_names <- csv_names[merged_is_made]
       res <- c(res, copy_experiments_to(csv_names, old_exp_dir, new_exp_dir, docker_conversion))
     }
+
     if (all_by_organism) {
       message("- All by organism")
       csv_names <- paste0(organism_collection_exp_name(done_organisms), ".csv")
@@ -118,7 +119,7 @@ name_of_function <- function(...) unlist(purrr:::map(rlang::ensyms(...) , as.cha
 #' @export
 navigate <- rstudioapi::filesPaneNavigate
 
-#' Navigate to a Directory in the Files Pane
+#' Navigate to a experiment Directory in the Files Pane
 #'
 #' Navigate to a directory in the Files pane.
 #' The contents of that directory will be listed and shown in the Files pane.
@@ -128,32 +129,63 @@ navigate <- rstudioapi::filesPaneNavigate
 #' @return invisible(NULL)
 #' @export
 navigateExp <- function(exp, rel_dir = "aligned") {
+  navigate(dirExp(exp, rel_dir))
+}
+
+#' @inherit navigateExp
+#' @title Get path to dir type of exp
+#' @return a character path
+#' @export
+dirExp <- function(exp, rel_dir = "aligned") {
   if (!is.character(exp)) exp <- name(exp)
+  sub_dir <- if(grepl("_SSU$|_RNA-seq$|_disome$", exp)) {
+    sub <- sub(".*_", "", exp)
+    exp <- sub(paste0("_", sub), "", exp)
+    sub
+  } else ""
+
+  main_dir <- file.path(ORFik::config()["bam"], sub_dir)
   path <-
-  if (rel_dir == "aligned") {
-    file.path(ORFik::config()["bam"], exp, "aligned")
-  } else if (rel_dir == "trim") {
-    file.path(ORFik::config()["bam"], exp, "trim")
-  } else if (rel_dir %in% c("", "processed")) {
-    file.path(ORFik::config()["bam"], exp)
-  } else {
-    file.path(ORFik::config()["fastq"], exp)
-  }
-
-  navigate(path)
+    if (rel_dir == "aligned") {
+      file.path(main_dir, exp, "aligned")
+    } else if (rel_dir == "trim") {
+      file.path(main_dir, exp, "trim")
+    } else if (rel_dir %in% c("", "processed")) {
+      file.path(main_dir, exp)
+    } else if (rel_dir %in% c("collapsed")) {
+      file.path(main_dir, exp, "trim", "SINGLE")
+    } else {
+      file.path(ORFik::config()["fastq"], sub_dir, exp)
+    }
+  return(path)
 }
 
-list.experiments.list <- function(pattern = "*", libtypeExclusive = NULL) {
-  all_exp <- list.experiments(validate = FALSE, pattern = pattern)
-  return(split(all_exp$name, all_exp$name))
-}
-
-navigateRef <- function(exp, rel_dir = "aligned") {
+#' Navigate to a reference Directory in the Files Pane
+#'
+#' Navigate to a directory in the Files pane.
+#' The contents of that directory will be listed and shown in the Files pane.
+#' @inheritParams navigateExp
+#' @param rel_dir character, relative directory, default: ""
+#' @return invisible(NULL)
+#' @export
+navigateRef <- function(exp, rel_dir = "") {
   if (!is.character(exp)) exp <- organism(exp)
   organism <- sub(" |-", "_" , tolower(exp))
   path <- file.path(ORFik::config()["ref"], organism)
 
   navigate(path)
+}
+
+#' Get all experiment names to search with auto completion
+#' @inheritParams ORFik::list.experiments
+#' @return a named list of characters,
+#'  so you can search experiment names with auto completion
+#' @export
+list.experiments.list <- function(pattern = "*", libtypeExclusive = NULL,
+                                  dir = ORFik::config()["exp"]) {
+  all_exp <- list.experiments(dir = dir, validate = FALSE, pattern = pattern,
+                              libtypeExclusive = libtypeExclusive)
+  return(split(all_exp$name, all_exp$name))
 }
 
 conda_init_env_string <- function(env = "blast", conda = "~/miniconda3/bin/conda") {
