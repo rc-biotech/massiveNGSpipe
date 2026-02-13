@@ -219,6 +219,8 @@ remove_flag_all <- function(config, steps = names(config$flag), pipelines) {
 #' @return invisible(NULL)
 #' @export
 remove_flag_all_exp <- function(config, steps = names(config$flag), exps) {
+  stopifnot(is_config(config))
+  stopifnot(is.character(steps) & is.character(exps))
   if (length(steps) == 1 && steps == "all") {
     steps <- names(config$flag)
   }

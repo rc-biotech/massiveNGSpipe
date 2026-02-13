@@ -386,6 +386,13 @@ libtype_long_to_short <- function(long) {
   return(short)
 }
 
+libtype_short_to_long <- function(short) {
+  long <- short
+  long[long == "RFP"] <- "Ribo-seq"
+  long[long == "RNA"] <-  "RNA-seq"
+  return(long)
+}
+
 #' Make additional formats for an experiment
 #'
 #' Creates a new experiment and new file formats.

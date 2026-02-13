@@ -98,30 +98,28 @@ fft_strength_files <- function(df) {
 shift_qc <- function(df, BPPARAM = bpparam()) {
   # Plot max 39 libraries!
   subset <- if (nrow(df) >= 40) {seq(39)} else {seq(nrow(df))}
-  invisible(shiftPlots(df[subset,], output = "auto", plot.ext = ".png", BPPARAM = BPPARAM))
+  has_leaders <- length(filterTranscripts(df, 5, 0, 0, stopOnEmpty = FALSE))
+  upstream <- ifelse(has_leaders, 5, 0)
+  message("- Shift barplots")
+  invisible(shiftPlots(df[subset,], output = "auto", plot.ext = ".png",
+                       upstream = upstream, BPPARAM = BPPARAM))
   # Check frame usage
+  message("- Frame distributions")
   frameQC <- orfFrameDistributions(df, BPPARAM = BPPARAM)
   remove.experiments(df)
   zero_frame <- frameQC[frame == 0 & best_frame == FALSE,]
-  # Store a flag that says good / bad shifting
+
   QCFolder <- QCfolder(df)
   data.table::fwrite(frameQC, file = file.path(QCFolder, "Ribo_frames_all.csv"))
   data.table::fwrite(zero_frame, file = file.path(QCFolder, "Ribo_frames_badzero.csv"))
-  status_flag_files <- file.path(QCFolder, paste0(c("warning", "good"), ".rds"))
-  names(status_flag_files) <- c("warning", "good")
-  status <- "good"
-  any_wrong_frame <- any(zero_frame$percent_length < 25) | nrow(zero_frame) == 0
-  if (any_wrong_frame) {
-    warning("Some libraries contain shift that is < 25% of CDS coverage")
-    status <- "warning"
-  }
-  saveRDS(TRUE, status_flag_files[status])
-  suppressWarnings(file.remove(status_flag_files[names(status_flag_files) != status]))
+
+  # Store a flag that says good / bad shifting
+  periodicity_check_flag(zero_frame, QCFolder)
 }
 
 orfFrameDistributions <- function(df, type = "pshifted", weight = "score",
                                   orfs = loadRegion(df, part = "cds"),
-                                  libraries = outputLibs(df, type = type, output.mode = "envirlist"),
+                                  libraries = outputLibs(df, type = type, output.mode = "envirlist", BPPARAM = BPPARAM),
                                   BPPARAM = BiocParallel::bpparam()) {
   frame_sum_per <- regionPerReadLengthPerLib(orfs, libraries, scoring = "frameSumPerL",
                                              weight, BPPARAM)
@@ -170,4 +168,18 @@ template_shift_table_exps <- function(exps, accepted.lengths = c(20, 21, 25:33))
     shifts_save(l, file.path(libFolder(df), "pshifted"))
   })
   return(invisible(TRUE))
+}
+
+periodicity_check_flag <- function(zero_frame, QCFolder) {
+  status_flag_files <- file.path(QCFolder, paste0(c("warning", "good"), ".rds"))
+  names(status_flag_files) <- c("warning", "good")
+  status <- "good"
+  any_wrong_frame <- any(zero_frame$percent_length < 25) | nrow(zero_frame) == 0
+  if (any_wrong_frame) {
+    warning("Some libraries contain shift that is < 25% of CDS coverage")
+    status <- "warning"
+  }
+  saveRDS(TRUE, status_flag_files[status])
+  suppressWarnings(file.remove(status_flag_files[names(status_flag_files) != status]))
+  return(status)
 }

@@ -105,6 +105,8 @@ copy_experiments_to <- function(csv_names, old_exp_dir = ORFik::config()["exp"],
   return(res == 0)
 }
 
+is_config <- function(config) return(is(config, "list") && !is.null(config$preset))
+
 #' Get name of function
 #' @importFrom rlang ensyms
 #' @importFrom purrr map
@@ -186,6 +188,81 @@ list.experiments.list <- function(pattern = "*", libtypeExclusive = NULL,
   all_exp <- list.experiments(dir = dir, validate = FALSE, pattern = pattern,
                               libtypeExclusive = libtypeExclusive)
   return(split(all_exp$name, all_exp$name))
+}
+
+#' Get massiveNGSpipe related file counts and total drive usage
+#' @param config config = ORFik::config()
+#' @return a data.table
+#' @export
+#' @examples
+#' config <- ORFik::config()
+#' config_RNA <- file.path(config, "RNA-seq")
+#' config_SSU <- file.path(config, "SSU")
+#' config_disome <- file.path(config, "disome")
+#' names(config_RNA) <- names(config_SSU) <- names(config_disome) <- names(config)
+#' info_dt <- rbindlist(
+#' list(RFP =    file_statistics_all_types(config),
+#'      RNA =    file_statistics_all_types(config_RNA, FALSE),
+#'      SSU =    file_statistics_all_types(config_SSU, FALSE),
+#'      disome = file_statistics_all_types(config_disome, FALSE)), idcol = TRUE)
+#'  info_dt[, sum(total_size_GB), by = .id]
+file_statistics_all_types <- function(config = ORFik::config(), include_references = TRUE) {
+  stopifnot(!is.null(names(config)))
+  rbindlist(list(file_statistics_processed(config),
+                 file_statistics_raw(config),
+                 if (include_references) {file_statistics_references(config)}))
+}
+
+file_statistics_processed <- function(config = ORFik::config(), processed_dir = config["bam"]) {
+  l_main <- list.files(processed_dir, full.names = T)
+  types <- c("aligned", "trim")
+  res <- lapply(types, function(type) {
+    l <- file.path(l_main, type)
+    l <- l[dir.exists(l)]
+
+    if (type == "aligned") {
+      dir_types <- c("", "ofst", "pshifted", "cov_RLE", "cov_RLE_List","bigwig")
+      formats <- c("bam", "ofst", "ofst", "covqs", "covqs","bigWig")
+    } else {
+      dir_types <- c("", "SINGLE", "PAIRED")
+      formats <- c("fastq", "fasta", "fasta")
+    }
+    file_statistics_internal(dir_types, formats, type, l)
+  })
+  return(rbindlist(res))
+}
+
+file_statistics_references <- function(config = ORFik::config(),
+                                       reference_dir = config["ref"]) {
+  l <- list.files(reference_dir, full.names = T)
+  type <- "reference"
+  dir_types <- c("", "", "", "STAR_index/genomeDir/")
+  formats <- c("(fasta|fa|fna)", "(gtf|gff|gff2|gff3)", "(db)", "")
+
+  file_statistics_internal(dir_types, formats, type, l)
+}
+
+file_statistics_raw <- function(config = ORFik::config(),
+                                raw_dir = config["fastq"]) {
+  l <- list.files(raw_dir, full.names = T)
+  type <- "raw"
+  dir_types <- c("", "multiplexed")
+  formats <- c("(fasta|fastq)(\\.gz)?", "(fasta|fastq)(\\.gz)?")
+
+  file_statistics_internal(dir_types, formats, type, l)
+}
+
+file_statistics_internal <- function(dir_types, formats, type, l) {
+  res <- mapply(function(dir_type, format) {
+    d <- file.path(l, dir_type)
+    d <- d[dir.exists(d)]
+    if (dir_type == "") dir_type <- format
+    format <- paste0(ifelse(format != "", "\\.", ""), format, "$")
+    all_files <- list.files(d, format, full.names = TRUE)
+    info <- as.data.table(file.info(all_files))
+    data.table(type, dir_type, n_dirs = length(d), n_files = length(all_files), total_size_GB = round(sum(info$size) / 1e9))
+  }, dir_types, formats, SIMPLIFY = FALSE)
+  rbindlist(res)
 }
 
 conda_init_env_string <- function(env = "blast", conda = "~/miniconda3/bin/conda") {

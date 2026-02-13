@@ -140,7 +140,8 @@ analysis_pipeline_DTEG <- function(df.rfp = read.experiment("Eleonora-homo_sapie
 }
 
 analysis_pipeline_ribo <- function(df.rfp, output_dir = QCfolder(df.rfp),
-                                   selected_isoforms = canonical_isoforms(df.rfp)) {
+                                   selected_isoforms = canonical_isoforms(df.rfp),
+                                   BPPARAM = bpparam()) {
   # qc_pipeline_generic(df.rfp, output_dir)
 
   #¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤#
@@ -152,13 +153,41 @@ analysis_pipeline_ribo <- function(df.rfp, output_dir = QCfolder(df.rfp),
   cds <- cds[names(cds) %in% selected_isoforms]
   stopifnot(length(cds) > 0)
 
-  pshifted_libs <- outputLibs(df.rfp, type = "cov", output.mode = "envirlist")
+  pshifted_libs <- outputLibs(df.rfp, type = "cov", output.mode = "envirlist", BPPARAM = BPPARAM)
+  groups_no_rep <- bamVarName(df, skip.replicate = TRUE)
+  groups <- match(groups_no_rep, unique(groups_no_rep))
+  groups <- split(seq_along(groups), groups)
+  message("Merging replicates")
+  lapply(groups, function(group) {
+    first_in_group <- group[1]
+    message("- ", groups_no_rep[first_in_group])
+    for (i in group[-1]) {
+      f <- f(pshifted_libs[[first_in_group]]) + f(pshifted_libs[[i]])
+      r <- r(pshifted_libs[[first_in_group]]) + r(pshifted_libs[[i]])
+      seqinfo(f) <- seqinfo(r) <- seqinfo(df.rfp)
+      pshifted_libs[[first_in_group]] <- covRle(f, r)
+    }
+  })
+  pshifted_libs <- pshifted_libs[match(unique(groups_no_rep), (groups_no_rep))]
+  df.rfp <- df.rfp[match(unique(groups_no_rep), (groups_no_rep)),]
+  names(pshifted_libs) <- unique(groups_no_rep)
+
+
+
   codon_table <- codon_usage_exp(df.rfp, pshifted_libs, cds = cds)
   fwrite(codon_table, file.path(output_dir, "codon_dwell_times_table.csv"))
   ggsave(file = file.path(output_dir, "codon_dwell_time_with_start_stop.png"),
          codon_usage_plot(codon_table), width = 5, height = 10) # There is an increased dwell time on (R:CGC) of A-sites in both conditions
   ggsave(file = file.path(output_dir, "codon_dwell_time_without_start_stop.png"),
          codon_usage_plot(codon_table, ignore_start_stop_codons = TRUE), width = 5, height = 10)
+
+  background <- if ("RFP_WT" %in% codon_table$variable) "RFP_WT"
+  dt_diff_exp <- ORFik::diff_exp_codon(codon_table, exclude_start_stop = TRUE,
+                                       background = background)
+  fwrite(dt_diff_exp, file.path(output_dir, "codon_dwell_times_diff_exp_table.csv"))
+  p <- plotly::ggplotly(ORFik::diff_exp_codon_plot(dt_diff_exp[type == "A"]), tooltip = "text")
+  htmlwidgets::saveWidget(p, file.path(output_dir, "codon_dwell_times_diff_exp_plotly.html"),
+                          selfcontained = TRUE)
   # There is an increased dwell time on (R:CGG) of A-sites of HSP condition, why ?
 
   #¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤#
@@ -178,6 +207,7 @@ analysis_pipeline_ribo <- function(df.rfp, output_dir = QCfolder(df.rfp),
   message("-- Translon predictions")
   prediction_output_folder <- file.path(output_dir, "translon_predictions")
   ORFik::detect_ribo_orfs(df.rfp, prediction_output_folder,
+                          libraries = pshifted_libs,
                           c("uORF", "uoORF", "annotated", "NTE", "NTT", "doORF", "dORF", "ncORF"),
                           startCodon = "ATG|CTG|TTG|GTG",
                           mrna = loadRegion(df.rfp, "mrna", names(cds)),

@@ -27,7 +27,7 @@ run_pipeline <- function(pipelines, config, wait = 100) {
 }
 
 parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100) {
-  steps_merged <- paste(steps, collapse = " ,", sep = " ,")
+  steps_merged <- paste(steps, collapse = ", ", sep = ", ")
   message("Start step pipeline:\n", steps_merged)
   exps <- pipelines_names(pipelines)
   idle_round <- 0

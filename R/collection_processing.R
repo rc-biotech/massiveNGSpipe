@@ -69,11 +69,14 @@ UMAP_by_gene_counts <- function(all_exp = list.experiments(validate = FALSE, pat
   return(invisible(NULL))
 }
 
+#' Create megafst by coverage tiles
+#'
+#' Read + or - strand covRle over all libraries and process
 save_coverage_tiles <- function(filepath, chromosomes, chromosome_lengths,
                                 output_dir, tile_size, colnames, verbose = TRUE,
                                 remake = FALSE, BPPARAM) {
   message("-- Loading file: ", basename(filepath))
-  covrle_list_by_strand <- qs::qread(filepath, nthreads = 5)
+  covrle_list_by_strand <- read_RDSQS(filepath, nthread = 5)
   message("-- Processing all chromosomes: ", basename(filepath))
   index_dt <- rbindlist(lapply(chromosomes, function(chr) {
     fst::threads_fst(5, reset_after_fork = FALSE)
@@ -95,9 +98,9 @@ save_coverage_tiles <- function(filepath, chromosomes, chromosome_lengths,
       IRanges(idx_from, idx_to)
     }))
     chr_subset <- List(lapply(covrle_list_by_strand, function(covrle) covrle[[chr]]))
-    if (verbose) cat("Tile Page:")
+    if (verbose & n_tiles > 1) cat("Tile Page:")
     lapply(indices, function(i) {
-      if (verbose) cat(" ", i, ", ", sep = "")
+      if (verbose & n_tiles > 1) cat(" ", i, ", ", sep = "")
       if (!file.exists(file_paths[i]) | remake) {
         # TODO: resolutions go here ->
         write_fst(setnames(setDT(lapply(chr_subset, function(x) as.integer(x[irl[[i]]]))), colnames),
@@ -105,6 +108,7 @@ save_coverage_tiles <- function(filepath, chromosomes, chromosome_lengths,
       }
       return(invisible(NULL))
     })
+    if (verbose & n_tiles > 1) cat("\n")
 
     data.table(
       chr = chr,
@@ -125,8 +129,11 @@ fst_megaformat_make <- function(all_exp = list.experiments(validate = FALSE, pat
                                 fst_threads = 5,
                                 bp2 = 5, BPPARAM = BiocParallel::MulticoreParam(2, exportglobals = FALSE, log = FALSE)) {
   fst::threads_fst(fst_threads, reset_after_fork = FALSE)
+  force_remake_megacovrle_original <- force_remake_megacovrle
+  exp_paths <- config()["exp"]
   for (organism in organisms) {
     # ---- PARAMETERS ----
+    force_remake_megacovrle <- force_remake_megacovrle_original
     # df <- read.experiment("all_samples-Homo_sapiens_1_9_2025", validate = FALSE)
     df <- read.experiment(organism, validate = FALSE)
     # df <- read.experiment("all_samples-Saccharomyces_cerevisiae", validate = FALSE)
@@ -134,13 +141,31 @@ fst_megaformat_make <- function(all_exp = list.experiments(validate = FALSE, pat
     # df <- df[sample(nrow(df), 20, replace = FALSE),]
     output_dir <- file.path(resFolder(df), "collection_tables_indexed")
     index_path <- file.path(output_dir, "coverage_index.fst")
-    if (file.exists(index_path)) next
     dir.create(output_dir, showWarnings = FALSE)
 
+    exp_creation_time <- file.info(file.path(exp_paths, paste0(organism, ".csv")))$mtime
     file_paths <- file.path(resFolder(df), "megalist_covrle", paste0("all_covrles_", sub(" ", "_", organism(df)), c("_forward", "_reverse"), ".qs"))
-    if (!all(file.exists(file_paths))) {
+    if (all(file.exists(file_paths))) {
+      covrle_creation_time <- file.info(file_paths)$mtime
+      force_remake_megacovrle <- (all(exp_creation_time > covrle_creation_time)) | force_remake_megacovrle
+      if (all(exp_creation_time > covrle_creation_time)) {
+        message("Organism experiment is older than covRLE, so will recompute covRles!")
+      }
+    }
+
+    if (file.exists(index_path)) {
+      index_newer_than_exp <- file.info(index_path)$mtime > exp_creation_time
+      if (index_newer_than_exp) {
+        fst_files <- list.files(dirname(index_path), "\\.fst$", full.names = TRUE)
+        all_fst_files_newer <- all(file.info(fst_files)$mtime > exp_creation_time)
+        if (all_fst_files_newer) next
+      }
+    }
+
+    if (!all(file.exists(file_paths)) | force_remake_megacovrle) {
       message("- Creating megalist covrle")
       covrle_collection_path <- file.path(resFolder(df), "megalist_covrle", "all_covrles.qs")
+
       if (!file.exists(covrle_collection_path) | force_remake_megacovrle) {
         message("-- Loading all covrles..")
         cov_paths <- try(filepath(df, "cov", suffix_stem = c("", "_pshifted"), base_folders = libFolder(df, mode = "all")), silent = TRUE)
@@ -185,7 +210,7 @@ fst_megaformat_make <- function(all_exp = list.experiments(validate = FALSE, pat
                                             output_dir, tile_size, colnames,
                                             save_coverage_tiles, bp, verbose) {
       save_coverage_tiles(filepath, chromosomes, chromosome_lengths,
-                          output_dir, tile_size, colnames, verbose,
+                          output_dir, tile_size, colnames, verbose, remake = TRUE,
                           BPPARAM = BiocParallel::MulticoreParam(bp, exportglobals = FALSE, log = FALSE))
     },
     chromosomes = chromosomes,
@@ -209,7 +234,7 @@ meta_meta_motif_motif <- function(all_exp = list.experiments(validate = FALSE, p
                                   lib_type = "RFP",
                                   organisms = unique(all_exp[!(organism %in% "all_species")][samples > 10][order(samples, decreasing = TRUE)]$name),
                                   force_remake_megacovrle = TRUE,
-                                  letters_vec = c("P", "R")) {
+                                  letters_vec = c("P", "R"), BPPARAM = bpparam()) {
   remake <- force_remake_megacovrle
   for (org in organisms) {
     df <- read.experiment(org, validate = FALSE)
@@ -308,7 +333,8 @@ meta_meta_motif_motif <- function(all_exp = list.experiments(validate = FALSE, p
           d <-
             data.table(library = factor(lib_name),
                        count = coverageScorings(coveragePerTiling(windows_all, fimport(file), as.data.table = TRUE, is.sorted = TRUE), "transcriptNormalized")$score)
-        }, windows_all = windows_all, filepaths = filepaths, lib_names = lib_names))
+        }, windows_all = windows_all, filepaths = filepaths, lib_names = lib_names,
+           BPPARAM = BPPARAM))
       print(Sys.time())
       fst::write_fst(dt, files[anchor_site])
     }

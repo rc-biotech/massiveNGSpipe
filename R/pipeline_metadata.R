@@ -465,10 +465,9 @@ add_new_data <- function(accessions, config, organisms = "all",
   return(invisible(NULL))
 }
 
-match_bam_to_metadata <- function(bam_dir, study, paired_end) {
+match_bam_to_metadata <- function(bam_dir, study, paired_end, format = c("_Aligned.sortedByCoord.out.bam", ".bam")) {
   study$LibraryLayout <- "SINGLE"
-  bam_files <- run_files_organizer(study, bam_dir,
-                                   format = c("_Aligned.sortedByCoord.out.bam", ".bam"))
+  bam_files <- run_files_organizer(study, bam_dir, format = format)
   stopifnot(all(lengths(bam_files) == 1))
   bam_files <- unlist(bam_files)
   return(bam_files)

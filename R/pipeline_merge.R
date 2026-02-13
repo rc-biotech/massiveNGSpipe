@@ -79,8 +79,6 @@ make_mixed_genome <- function(species, custom_sequences, custom_gtfs = make_gtf_
   stopifnot(all(dir.exists(species_dirs)))
   genome_config <- lapply(file.path(species_dirs, "outputs.rds") , function(x) readRDS(x))
 
-
-
   contaminants_index <- NULL
   if (contaminants_sequences == "primary_only") {
     contaminants_index <- file.path(primary_dir, "STAR_index", "contaminants_genomeDir")
@@ -190,7 +188,9 @@ first_non_metadata_line_annotation <- function(path) {
 #' length 1 or length of fasta files.
 #' @return paths to gtfs, or NULL if length of fasta_files is 0.
 #' @export
-make_gtf_from_sequences <- function(fasta_files, type = "cds_only", strand = "+") {
+make_gtf_from_sequences <- function(fasta_files, type = "cds_only", strand = "+",
+                                    cds_starts = 1L, cds_ends = "end",
+                                    tx_starts = 1L, tx_ends = "end") {
   if (length(fasta_files) == 0) return(NULL)
   stopifnot(all(tools::file_ext(fasta_files) == "fasta"))
   stopifnot(type %in% c("cds_only"))
@@ -200,7 +200,7 @@ make_gtf_from_sequences <- function(fasta_files, type = "cds_only", strand = "+"
     message("Making gtf of fasta file: \n", fasta_file)
     indexFa(fasta_file)
     ranges <- scanFaIndex(fasta_file)
-    strand(ranges) <- "+"
+    strand(ranges) <- strand
     seqnames = as.character(seqnames(ranges))
     gene_index <- seq_along(seqnames)
     mcols(ranges) <- DataFrame(source = "mNGSp", type = "gene",
@@ -208,7 +208,7 @@ make_gtf_from_sequences <- function(fasta_files, type = "cds_only", strand = "+"
                                gene_id = paste0(seqnames, "_Gene_", gene_index),
                                transcript_id = paste0(seqnames, "_tx_", gene_index))
     ranges <- rep(ranges, each = 4)
-    ranges$type <- c("gene", "transcript", "exon", "cds")
+    ranges$type <- c("gene", "transcript", "exon", "CDS")
     gtf <- sub("fasta$", "gtf", fasta_file)
     rtracklayer::export(ranges, gtf, format = "gtf")
     gtfs <- c(gtfs, gtf)

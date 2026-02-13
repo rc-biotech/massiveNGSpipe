@@ -94,7 +94,7 @@ pipeline_align <- function(pipeline, config) {
     if (!step_is_next_not_done(config, "aligned", conf["exp"])) next
     index <- pipeline$organisms[[organism]]$index
     runs <- study[ScientificName == organism]
-    browser()
+    # browser()
     trimmed_dir <- fs::path(conf["bam"], "trim")
     raw_fastq_dir <- conf["fastq"]
     output_dir <- conf["bam"]
@@ -105,6 +105,7 @@ pipeline_align <- function(pipeline, config) {
     input_dir <- if (did_collapse) {
       c(fs::path(trimmed_dir, "SINGLE"), fs::path(trimmed_dir, "PAIRED"))
     } else ifelse(did_trim, trimmed_dir, raw_fastq_dir)
+    input_dir <- input_dir[dir.exists(input_dir)]
     pairs <- run_files_organizer(runs, input_dir)
 
     first_pair_index <- which(lengths(pairs) == 2)[1]
@@ -129,7 +130,7 @@ pipeline_align <- function(pipeline, config) {
     cat(length(pairs)); cat("\n")
     for (R1_R2 in pairs) {
       cat("Single end mode\n")
-      cat("File ", pair_index, " / ", length(pairs), "\n")
+      cat("Run ", pair_index, " / ", length(pairs), "\n")
       single_end <- lengths(pairs[pair_index]) == 1
       pair_index <- pair_index + 1
       keep.index.in.memory <- !identical(R1_R2, tail(pairs, 1)[[1]])
@@ -247,13 +248,14 @@ pipeline_cleanup <- function(pipeline, config) {
             glob = "**/*.out.*"
           ))
         }
-        new_file_names <- fs::path(bam_dir, study_org$Run, ext = "bam")
-        old_file_names <- match_bam_to_metadata(bam_dir, study_org, FALSE)
+        old_file_names <- match_bam_to_metadata(bam_dir, study_org, FALSE,
+                                                format = c("_Aligned.sortedByCoord.out.bam"))
 
+        new_file_names <- fs::path(bam_dir, study_org$Run, ext = "bam")
         file_names_to_delete <- new_file_names[new_file_names != old_file_names]
         file_names_to_delete <- file_names_to_delete[file.exists(file_names_to_delete)]
         if (length(file_names_to_delete) > 0) try(file.remove(file_names_to_delete), silent = TRUE)
-        old_file_names <- match_bam_to_metadata(bam_dir, study_org, FALSE)
+
         stopifnot(length(old_file_names) == length(new_file_names))
         for (i in seq_along(old_file_names)) {
           fs::file_move(old_file_names[i], new_file_names[i])
