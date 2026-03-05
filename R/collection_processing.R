@@ -32,7 +32,10 @@ UMAP_by_gene_counts <- function(all_exp = list.experiments(validate = FALSE, pat
     sce <- runPCA(sce, ncomponents = min(50, nrow(df_all)-1))
     sce <- runUMAP(sce, dimred = "PCA", n_neighbors = min(30, nrow(df_all)-1), min_dist = 2)
 
-    # Fix metadata
+    dt_umap <- as.data.table(reducedDim(sce, "UMAP"))
+    colnames(dt_umap) <- c("UMAP 1", "UMAP 2")
+
+    # Add metadata
     srrs <- ORFik:::runIDs(df_all)
     rc_m <- meta_rc[match(srrs, Run),]
     stopifnot(nrow(rc_m) > 0)
@@ -49,8 +52,6 @@ UMAP_by_gene_counts <- function(all_exp = list.experiments(validate = FALSE, pat
     author <- m$AUTHOR
     studies <- m$BioProject
 
-    dt_umap <- as.data.table(reducedDim(sce, "UMAP"))
-    colnames(dt_umap) <- c("UMAP 1", "UMAP 2")
     dt_umap[, `:=`(sample = m$Run,
                    cell_line = tolower(cell_lines),
                    tissue = tolower(tissues),
@@ -59,6 +60,7 @@ UMAP_by_gene_counts <- function(all_exp = list.experiments(validate = FALSE, pat
                    BioProject = studies,
                    author = m$AUTHOR,
                    studies = m$BioProject)]
+    # Save results
     dir <- file.path(refFolder(df_all), "UMAP")
     dir.create(dir, FALSE, TRUE)
     type <- ifelse(lib_type == "RFP", "", paste0("_", lib_type))
@@ -326,17 +328,21 @@ meta_meta_motif_motif <- function(all_exp = list.experiments(validate = FALSE, p
 
 
       print(Sys.time())
-      dt <- rbindlist(
-        bplapply(seq_along(filepaths), function(i, windows_all, filepaths, lib_names) {
-          file <- filepaths[i]
-          lib_name <- lib_names[i]
-          d <-
-            data.table(library = factor(lib_name),
-                       count = coverageScorings(coveragePerTiling(windows_all, fimport(file), as.data.table = TRUE, is.sorted = TRUE), "transcriptNormalized")$score)
-        }, windows_all = windows_all, filepaths = filepaths, lib_names = lib_names,
-           BPPARAM = BPPARAM))
+      if (bpworkers(BPPARAM) > 1) {
+        bpprogressbar(BPPARAM) <- TRUE
+        bpexportglobals(BPPARAM) <- FALSE
+        bpexportvariables(BPPARAM) <- FALSE
+      }
+      cov_list <- bplapply(seq_along(filepaths), function(i, windows_all, filepaths, lib_names) {
+        cat(i, " / ", length(filepaths), "\n")
+        file <- filepaths[i]
+        ORFik::coverageScorings(ORFik::coveragePerTiling(windows_all, fimport(file), as.data.table = TRUE, is.sorted = TRUE), "sum")$score
+      }, windows_all = windows_all, filepaths = filepaths, lib_names = lib_names,
+      BPPARAM = BPPARAM)
+      names(cov_list) <- runIDs(df)
+
+      fst::write_fst(as.data.table(cov_list), files[anchor_site])
       print(Sys.time())
-      fst::write_fst(dt, files[anchor_site])
     }
   }
 }

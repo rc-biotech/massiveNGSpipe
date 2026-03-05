@@ -192,6 +192,7 @@ list.experiments.list <- function(pattern = "*", libtypeExclusive = NULL,
 
 #' Get massiveNGSpipe related file counts and total drive usage
 #' @param config config = ORFik::config()
+#' @param include_references = TRUE
 #' @return a data.table
 #' @export
 #' @examples

@@ -12,7 +12,8 @@ run_files_organizer(
   compressions = c("", ".gz"),
   prefixes = list(c("", "trimmed_", "collapsed_trimmed_"), c("", "trimmed2_",
     "collapsed_trimmed2_")),
-  paired_end_suffixes = list(c("_1", "_2"), c("_R1_001", "_R2_001"))
+  paired_end_suffixes = list(c("_1", "_2"), c("_R1_001", "_R2_001")),
+  extra_files_warning = TRUE
 )
 }
 \arguments{

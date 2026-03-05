@@ -231,17 +231,7 @@ save_report <- function(status_per_study_list) {
   dir.create(summary_stats_dir, showWarnings = FALSE, recursive = TRUE)
 
   message("- Loading alignment stats for all studies..")
-  dt <- rbindlist(lapply(alignment.stats.all, function(f) {
-    alignment.stats.dt <- try(fread(f, header = TRUE), silent = TRUE)
-    if (is(alignment.stats.dt, "try-error")) alignment.stats.dt <- data.table()
-    return(alignment.stats.dt)
-  }), fill = TRUE)
-  if (nrow(dt)) {
-
-    aligned_file <- file.path(summary_stats_dir, "aligned_reads_stats.csv")
-    message("-- Saving alignment statistics to: ", aligned_file)
-    fwrite(dt, aligned_file)
-  }
+  dt <- pipeline_summary_alignment(alignment.stats.all, summary_stats_dir)
 
   message("- Loading trimming stats for all studies..")
   dt.trim <- rbindlist(lapply(trimmed.out.all, function(f) {
@@ -296,6 +286,20 @@ save_report <- function(status_per_study_list) {
   mapping_rate_plot(dt, dt.trim, summary_stats_dir)
 
   return(invisible(NULL))
+}
+
+pipeline_summary_alignment <- function(paths, output_dir) {
+  dt <- rbindlist(lapply(paths, function(f) {
+    alignment.stats.dt <- try(fread(f, header = TRUE), silent = TRUE)
+    if (is(alignment.stats.dt, "try-error")) alignment.stats.dt <- data.table()
+    return(alignment.stats.dt)
+  }), fill = TRUE)
+  if (nrow(dt)) {
+    aligned_file <- file.path(output_dir, "aligned_reads_stats.csv")
+    message("-- Saving alignment statistics to: ", aligned_file)
+    fwrite(dt, aligned_file)
+  }
+  return(dt)
 }
 
 current_step_table <- function(progress_index, steps) {

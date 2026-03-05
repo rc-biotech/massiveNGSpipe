@@ -39,6 +39,8 @@ of samples. Will use a random increasing wait time between study attempts.}
 \item{max_attempts_loop}{numeric, default 7. How many attempts for full download loop beforing
 failing? This call flood SRA with calls, so set it higher if you use a lot
 of studies. Will use a random increasing wait time between study attempts. See log files for more error info.}
+
+\item{BPPARAM}{= bpparam(), number of cores/threads to use.}
 }
 \value{
 a data.table of all metadata for all accessions

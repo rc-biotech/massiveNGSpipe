@@ -10,12 +10,15 @@ add_new_data(
   organisms = "all",
   google_url = config$google_url,
   complete_metadata = config$complete_metadata,
-  LibraryStrategy = c("RNA-Seq", "miRNA-Seq", "OTHER"),
+  LibraryStrategy = library_strategies_allowed(),
   LibraryLayouts = c("SINGLE", "PAIRED"),
   Platforms = "ILLUMINA",
   open_editor = interactive(),
   open_google_sheet = interactive(),
-  organism_name_cleanup = TRUE
+  organism_name_cleanup = TRUE,
+  BPPARAM = if (length(accessions) > 5) {
+     bpparam()
+ } else SerialParam()
 )
 }
 \description{

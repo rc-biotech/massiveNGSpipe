@@ -51,12 +51,13 @@ curate_metadata <- function(accessions, config, organisms = "all",
                             google_url = config$google_url,
                             complete_metadata = config$complete_metadata,
                             LibraryLayouts = c("SINGLE", "PAIRED"),
-                            LibraryStrategy = c("Ribo-seq","RNA-Seq", "miRNA-Seq", "OTHER"),
+                            LibraryStrategy = library_strategies_allowed(),
                             libtypes = libtype_long_to_short(config$preset),
                             Platforms = "ILLUMINA",
                             step_mode = FALSE, open_editor = interactive(),
                             fix_loop = TRUE, only_curated = FALSE,
-                            update_google_sheet = TRUE) {
+                            update_google_sheet = TRUE,
+                            BPPARAM = if (length(accessions) > 5) {bpparam()} else SerialParam()) {
   stopifnot(length(fix_loop) == 1); stopifnot(is(fix_loop, "logical"))
   stopifnot(length(update_google_sheet) == 1); stopifnot(is(update_google_sheet, "logical"))
   stopifnot(length(only_curated) == 1); stopifnot(is(only_curated, "logical"))
@@ -75,7 +76,7 @@ curate_metadata <- function(accessions, config, organisms = "all",
                  google_url, complete_metadata,
                  LibraryStrategy,
                  LibraryLayouts, Platforms,
-                 open_editor)
+                 open_editor, BPPARAM = BPPARAM)
   }
   curation_loop_until_valid(fix_loop, config, google_url,
                             accessions, only_curated,
@@ -186,7 +187,7 @@ pipeline_metadata <- function(accessions, config, force = FALSE, max_attempts = 
 
 pipeline_metadata_filter <- function(all_SRA_metadata, organisms = "all",
                                      LibraryLayouts = "SINGLE",
-                                     LibraryStrategy = c("RNA-Seq", "miRNA-Seq", "OTHER"),
+                                     LibraryStrategy = library_strategies_allowed(),
                                      Platforms = "ILLUMINA",
                                      removeAllNACols = TRUE) {
   stopifnot(all(LibraryLayouts %in% c("SINGLE", "PAIRED")))
@@ -197,7 +198,8 @@ pipeline_metadata_filter <- function(all_SRA_metadata, organisms = "all",
   } else if (!all(organisms %in% unique_organisms)) stop("You subseted to an organism not in existing in any study!")
   # Some experiments have mixed organisms:
   cat("-- Total samples to begin with", "\n")
-  print(nrow(all_metadata_RFP))
+  samples_to_begin_with <- nrow(all_metadata_RFP)
+  print(samples_to_begin_with)
   cat("-- All organisms to begin with", "\n")
   print(table(all_metadata_RFP$ScientificName))
   # Row filters:
@@ -205,6 +207,9 @@ pipeline_metadata_filter <- function(all_SRA_metadata, organisms = "all",
   filtered_RFP <- all_metadata_RFP[ScientificName %in% organisms &
                                      LibraryLayout %in% LibraryLayouts &
                                      Platform %in% Platforms,]
+  if (nrow(filtered_RFP) != samples_to_begin_with) {
+    message("Filtered out ", samples_to_begin_with - nrow(filtered_RFP), " samples by organism, layout or platform")
+  }
 
   if (length(grep("is currently private", filtered_RFP$sample_title)) > 0) {
     message("Private (not open for public) samples detected, they were removed!")
@@ -212,10 +217,15 @@ pipeline_metadata_filter <- function(all_SRA_metadata, organisms = "all",
   }
 
   invalid_library_strategy <- !(filtered_RFP$LibraryStrategy %in% LibraryStrategy)
-  if (any(invalid_library_strategy))
+  if (any(invalid_library_strategy)) {
+
+    message("Filtering out ", sum(invalid_library_strategy), " samples by library strategy, invalid are: ",
+            paste(unique(filtered_RFP[invalid_library_strategy]$LibraryStrategy), collapse = ", "))
     filtered_RFP <- filtered_RFP[!invalid_library_strategy,]
+  }
+
   cat("-- Numer of samples filtered out", "\n")
-  print(nrow(all_metadata_RFP) - nrow(filtered_RFP))
+  print(samples_to_begin_with - nrow(filtered_RFP))
   if (nrow(filtered_RFP) == 0) stop("all metadata got filtered out! Check filtering conditions and try again.")
 
   # Now remove columns not wanted
@@ -237,6 +247,7 @@ pipeline_metadata_filter <- function(all_SRA_metadata, organisms = "all",
 
 pipeline_metadata_annotate <- function(filtered_RFP) {
   # Use ORFik auto detection of library type:
+  input_rows <- nrow(filtered_RFP)
   # First check from sample
   filtered_RFP$LIBRARYTYPE <- ORFik:::findFromPath(filtered_RFP$sample_title,
                                                    ORFik:::libNames(), "auto")
@@ -300,7 +311,8 @@ pipeline_metadata_annotate <- function(filtered_RFP) {
   cat("Studies kept:", "\n")
   cat(length(unique(filtered_RFP$Submission)), "\n")
   cat("Library types detected", "\n")
-  print(table(filtered_RFP$LIBRARYTYPE)) # It can't find all (bad info)
+  print(table(filtered_RFP$LIBRARYTYPE)) # It can't find all (missing lib type info)
+  stopifnot(input_rows == nrow(filtered_RFP))
   filtered_RFP[]
   return(filtered_RFP)
 }
@@ -396,11 +408,12 @@ metadata_is_valid <- function(files) {
 add_new_data <- function(accessions, config, organisms = "all",
                          google_url = config$google_url,
                          complete_metadata = config$complete_metadata,
-                         LibraryStrategy = c("RNA-Seq", "miRNA-Seq", "OTHER"),
+                         LibraryStrategy = library_strategies_allowed(),
                          LibraryLayouts = c("SINGLE", "PAIRED"), Platforms = "ILLUMINA",
                          open_editor = interactive(),
                          open_google_sheet = interactive(),
-                         organism_name_cleanup = TRUE) {
+                         organism_name_cleanup = TRUE,
+                         BPPARAM = if (length(accessions) > 5) {bpparam()} else SerialParam()) {
   if (file.exists(config$blacklist)) {
     blacklist <- fread(config$blacklist)
     if (any(blacklist$id %in% accessions)) {
@@ -409,13 +422,14 @@ add_new_data <- function(accessions, config, organisms = "all",
     }
   }
   # Step1: Get all metadata
-  all_SRA_metadata <- pipeline_metadata(accessions, config)
+  all_SRA_metadata <- pipeline_metadata(accessions, config, BPPARAM = BPPARAM)
   # Step2: Filter out what you do not want
   filtered_SRA_metadata <- pipeline_metadata_filter(all_SRA_metadata, organisms,
                                                     LibraryLayouts, LibraryStrategy,
                                                     Platforms)
   # Step3: Try to auto annotate
   all_SRA_metadata_RFP <- pipeline_metadata_annotate(filtered_SRA_metadata)
+  browser()
   # Step4: Fix organism names
   if (organism_name_cleanup) {
     all_SRA_metadata_RFP[, ScientificName := organism_name_cleanup(ScientificName)]
@@ -430,12 +444,19 @@ add_new_data <- function(accessions, config, organisms = "all",
     new_studies <- !(paste0(all_SRA_metadata_RFP$study_accession, "___",
                           all_SRA_metadata_RFP$ScientificName) %in%
                    paste0(complete_metadata_dt$study_accession, "___",
-                          complete_metadata_dt$ScientificName))
+                          complete_metadata_dt$ScientificName)) &
+                  !(paste0(all_SRA_metadata_RFP$BioProject, "___",
+                           all_SRA_metadata_RFP$ScientificName) %in%
+                      paste0(complete_metadata_dt$BioProject, "___",
+                             complete_metadata_dt$ScientificName))
     new_studies_count <- sum(new_studies)
     suppressWarnings(all_SRA_metadata_RFP[, STAGE := NULL])
     suppressWarnings(all_SRA_metadata_RFP[, Sex := NULL])
     all_SRA_metadata_RFP <- suppressWarnings(rbindlist(list(complete_metadata_dt,
                               all_SRA_metadata_RFP[new_studies,]), fill = TRUE))
+    if (sum(!new_studies) > 0) {
+      message("Filtering out ", sum(!new_studies), " samples from study_species ids that already exist")
+    }
   }
   message("Total samples before saving: ", nrow(all_SRA_metadata_RFP))
   message("New samples to annotate: ", new_studies_count)
@@ -445,7 +466,7 @@ add_new_data <- function(accessions, config, organisms = "all",
   #google_url <- gs4_create(name = "RFP_next_round_manual2.csv")
   google_url_defined <- !is.null(google_url)
   if (google_url_defined) {
-    if (sum(new_studies) > 0) {
+    if (new_studies_count > 0) {
       local_google_copy <- file.path(config$project, "temp_google_local.csv")
       fwrite(all_SRA_metadata_RFP, local_google_copy)
       write_sheet_safe(local_google_copy, google_url, sheet = 1)

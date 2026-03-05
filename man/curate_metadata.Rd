@@ -11,14 +11,17 @@ curate_metadata(
   google_url = config$google_url,
   complete_metadata = config$complete_metadata,
   LibraryLayouts = c("SINGLE", "PAIRED"),
-  LibraryStrategy = c("Ribo-seq", "RNA-Seq", "miRNA-Seq", "OTHER"),
+  LibraryStrategy = library_strategies_allowed(),
   libtypes = libtype_long_to_short(config$preset),
   Platforms = "ILLUMINA",
   step_mode = FALSE,
   open_editor = interactive(),
   fix_loop = TRUE,
   only_curated = FALSE,
-  update_google_sheet = TRUE
+  update_google_sheet = TRUE,
+  BPPARAM = if (length(accessions) > 5) {
+     bpparam()
+ } else SerialParam()
 )
 }
 \arguments{
@@ -77,6 +80,8 @@ inserted accessions (not the full list). Ignored if accessions is NULL.}
 
 \item{update_google_sheet}{logical TRUE, Ignored if google_url is NULL.
 If FALSE, will not update sheet after check. This}
+
+\item{BPPARAM}{= bpparam(), number of cores/threads to use.}
 }
 \value{
 logical, TRUE if you had unique rows per accession per organism

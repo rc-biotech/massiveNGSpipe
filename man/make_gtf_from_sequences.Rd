@@ -4,7 +4,15 @@
 \alias{make_gtf_from_sequences}
 \title{Make gtf from fasta sequence files}
 \usage{
-make_gtf_from_sequences(fasta_files, type = "cds_only", strand = "+")
+make_gtf_from_sequences(
+  fasta_files,
+  type = "cds_only",
+  strand = "+",
+  cds_starts = 1L,
+  cds_ends = "end",
+  tx_starts = 1L,
+  tx_ends = "end"
+)
 }
 \arguments{
 \item{fasta_files}{character, paths to fasta files}

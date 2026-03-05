@@ -159,11 +159,12 @@ pipe_counts <- function(pipelines, config) {
 #' @export
 #' @examples
 #' #pipeline_collection_master(config = pipeline_config())
-pipeline_collection_master <- function(config, pipelines = pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE),
+pipeline_collection_master <- function(config, pipelines = pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE,
+                                                                             show_status_per_exp = FALSE, verbose_load_annotation = FALSE),
                                     done_experiments = step_is_done_pipelines(config, "pcounts", pipelines),
                                     done_organisms = unique(names(done_experiments)),
                                     path_suffix = "", BPPARAM = MulticoreParam(workers = bpparam()$workers,
-                                                                               exportglobals = FALSE,
+                                                                               exportglobals = FALSE, progressbar = TRUE,
                                                                                log = FALSE, force.GC = FALSE, fallback = T)) {
   message("- Collection of all samples of all organism")
   done_organisms <- unique(done_organisms)
@@ -171,6 +172,7 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
 
   exps_species <- done_experiments[names(done_experiments) %in% done_organisms]
   message("-- Organism: ", length(done_organisms), " (", length(exps_species), " studies)")
+  message("Loading studies..")
   df_list <- bplapply(exps_species, function(e)
     read.experiment(e, validate = FALSE), BPPARAM = BPPARAM)
   df <- do.call(rbind, df_list)
@@ -199,7 +201,7 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
                     libtype = df$libtype,
                     condition = df$condition, rep = df$rep,
                     stage = df$stage, fraction = fraction,
-                    files = df$filepath, result_folder = out_dir)
+                    files = df$filepath, result_folder = out_dir, runIDs = runIDs(df))
   message("Saved collection as: ", exp_name)
   message("--- Trying to load created collection")
   df <- read.experiment(exp_name, output.env = new.env())
@@ -391,6 +393,10 @@ libtype_short_to_long <- function(short) {
   long[long == "RFP"] <- "Ribo-seq"
   long[long == "RNA"] <-  "RNA-seq"
   return(long)
+}
+
+library_strategies_allowed <- function() {
+  c("RNA-Seq", "Ribo-seq","ssRNA-seq", "ncRNA-Seq", "miRNA-Seq", "OTHER")
 }
 
 #' Make additional formats for an experiment
