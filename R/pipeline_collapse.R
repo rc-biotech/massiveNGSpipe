@@ -77,11 +77,23 @@ pipeline_collapse <- function(pipeline, config) {
 pipe_cigar_collapse_single <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "cigar_collapse", name(df))) next
-    files <- filepath(df, "ofst")
-    for (f in files) {
-      ofst <- fimport(f)
-      ORFik:::export.ofst(collapseDuplicatedReads(ofst), f)
+    if (config$all_mappers) {
+      files <- filepath(df, "ofst")
+      for (f in files) {
+        ofst <- fimport(f)
+        ORFik:::export.ofst(collapseDuplicatedReads(ofst), f)
+      }
     }
+
+    if (config$split_unique_mappers) {
+      uniqueMappers(df) <- TRUE
+      files <- filepath(df, "ofst")
+      for (f in files) {
+        ofst <- fimport(f)
+        ORFik:::export.ofst(collapseDuplicatedReads(ofst), f)
+      }
+    }
+
     set_flag(config, "cigar_collapse", name(df))
   }
 }

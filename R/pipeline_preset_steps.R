@@ -272,6 +272,7 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
     exp_name <- organism_collection_exp_name(org)
     if (libtype_df != "RFP") exp_name <- paste0(exp_name, "_", libtype_df)
     exp_name <- paste0(exp_name, path_suffix)
+    if (config$mode == "local") exp_name <- paste0("local", "_", exp_name)
     out_dir <- file.path(config$config["bam"], exp_name)
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
     fraction <- df$fraction
@@ -301,13 +302,43 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
                                 if (is(res, "try-error")) stop(paste("Failed loading counts for exp ", name(e)))
                                 return(res)
       }, region = region, BPPARAM = BPPARAM)
-      count_list <- do.call(BiocGenerics::cbind, count_lists)
+      names(count_lists) <- exps_species
+      count_list <- safe_se_cbind(count_lists)
       saveName <- file.path(count_folder, paste0("countTable_", region, ".qs"))
       qs2::qs_save(count_list, file = saveName, nthreads = 5)
       saveName <- file.path(count_folder, paste0("totalCounts_", region, ".rds"))
       saveRDS(colSums(assay(count_list)), file = saveName)
     }
   }
+}
+
+safe_se_cbind <- function(count_lists) {
+  out <- try(do.call(BiocGenerics::cbind, count_lists), silent = TRUE)
+
+  if (!inherits(out, "try-error")) {
+    return(out)
+  }
+
+  nr <- sapply(count_lists, nrow)
+  tab <- sort(table(nr), decreasing = TRUE)
+  common_nrow <- as.integer(names(tab)[1])
+
+  bad <- which(nr != common_nrow)
+
+  msg <- paste0(
+    "cbind failed: row ranges are not compatible.\n",
+    "Most common nrow: ", common_nrow, "\n",
+    "Non-matching elements:\n",
+    paste(
+      paste0(
+        names(count_lists)[bad], "(", bad, ")",
+        " -> nrow=", nr[bad]
+      ),
+      collapse = "\n"
+    )
+  )
+
+  stop(msg, call. = FALSE)
 }
 
 #' Merge all studies per organism
@@ -376,6 +407,7 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
       ORFik::mergeLibs(df_unique, out_dir_unique, "all", "default", FALSE,
                        paths = paths)
       make_additional_formats_internal(df_unique_merged[1,])
+      # fwrite(data.table(Run = runIDs(df)))
     }
   }
   return(invisible(NULL))

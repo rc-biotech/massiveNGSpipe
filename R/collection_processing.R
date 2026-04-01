@@ -151,7 +151,7 @@ fst_megaformat_make <- function(all_exp = list.experiments(validate = FALSE, pat
       covrle_creation_time <- file.info(file_paths)$mtime
       force_remake_megacovrle <- (all(exp_creation_time > covrle_creation_time)) | force_remake_megacovrle
       if (all(exp_creation_time > covrle_creation_time)) {
-        message("Organism experiment is older than covRLE, so will recompute covRles!")
+        message("Organism experiment is newer than covRLE, so will recompute covRles!")
       }
     }
 

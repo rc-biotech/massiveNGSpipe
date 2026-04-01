@@ -235,6 +235,43 @@ remove_flag_all_exp <- function(config, steps = names(config$flag), exps) {
   return(invisible(NULL))
 }
 
+#' Remove flags for all pipelines specified
+#'
+#' Set all flags specified as not done for all experiments in
+#' for all pipeline objects specified. Remember this is exp subset of pipelines!
+#' @inheritParams set_flag_all_exp
+#' @param from_step, which flag to set to FALSE (not done)
+#'  for given exp objects (i.e. a subset of pipelines), and all steps higher
+#'  than this one.
+#' @return invisible(NULL)
+#' @export
+remove_flag_all_exp_from <- function(config, from_step, exps) {
+  stopifnot(is_config(config))
+  stopifnot(is.character(from_step), length(from_step) == 1)
+  stopifnot(is.character(exps))
+
+  all_steps <- names(config$flag)
+
+  if (!from_step %in% all_steps) {
+    stop("from_step is not a valid pipeline step!")
+  }
+
+  from_idx <- match(from_step, all_steps)
+  steps <- all_steps[from_idx:length(all_steps)]
+
+  for (e in exps) {
+    for (step in steps) {
+      remove_flag(config, step, e)
+    }
+  }
+
+  message("- Removed flags for pipeline subset from step: ", from_step)
+  message("- Steps reset: ", paste(steps, collapse = ", "))
+  message("- Experiments: ", paste(exps, collapse = ", "))
+
+  invisible(NULL)
+}
+
 #' Add additional step to pipeline
 #'
 #' @param config list, a NGS pipeline object

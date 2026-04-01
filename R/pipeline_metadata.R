@@ -33,10 +33,12 @@
 #' @param Platforms character vector, default: "ILLUMINA". The sequencer technologies allowed.
 #' @param step_mode logical, default FALSE. If TRUE, actives browser() and lets you go through
 #' each step in debug mode for full control.
-#' @param fix_loop logical, default TRUE. If TRUE, will create a loop in
+#' @param validate_correctness logical, default TRUE. If TRUE, will create a loop in
 #' the end that runs until your metadata is valid. If you
-#' only want to updata csv / google docs with new data and not try to complete
-#' now, set this to FALSE.
+#' only want to updata csv / google docs with new data and not try to validate
+#' complete set now, set this to FALSE.
+#' @param fix_loop logical, default TRUE. If FALSE will only run validation loop once and
+#' not ask if you are ready. Ignored if validate_correctess is FALSE.
 #' @param open_editor logical default TRUE. If google URL is defined, open the
 #' sheet. If not, open the DataEditR bord.
 #' @param only_curated logical FALSE, if TRUE. Only validate (or fail) based on
@@ -55,8 +57,8 @@ curate_metadata <- function(accessions, config, organisms = "all",
                             libtypes = libtype_long_to_short(config$preset),
                             Platforms = "ILLUMINA",
                             step_mode = FALSE, open_editor = interactive(),
-                            fix_loop = TRUE, only_curated = FALSE,
-                            update_google_sheet = TRUE,
+                            validate_correctness = TRUE, fix_loop = TRUE,
+                            only_curated = FALSE, update_google_sheet = TRUE,
                             BPPARAM = if (length(accessions) > 5) {bpparam()} else SerialParam()) {
   stopifnot(length(fix_loop) == 1); stopifnot(is(fix_loop, "logical"))
   stopifnot(length(update_google_sheet) == 1); stopifnot(is(update_google_sheet, "logical"))
@@ -78,19 +80,20 @@ curate_metadata <- function(accessions, config, organisms = "all",
                  LibraryLayouts, Platforms,
                  open_editor, BPPARAM = BPPARAM)
   }
-  curation_loop_until_valid(fix_loop, config, google_url,
-                            accessions, only_curated,
+  curation_loop_until_valid(fix_loop, validate_correctness, config,
+                            google_url, accessions, only_curated,
                             libtypes, update_google_sheet)
 
   return(fix_loop)
 }
 
-curation_loop_until_valid <- function(fix_loop, config, google_url,
-                                      accessions, only_curated,
+curation_loop_until_valid <- function(fix_loop, validate_correctness, config,
+                                      google_url, accessions, only_curated,
                                       libtypes, update_google_sheet) {
   # Step6: Now, Check if it is valid (if not repeat step with new csv)
-  while(fix_loop) {
-    readline(prompt = "You think metadata is ready?\n Press enter when ready: ")
+
+  while(validate_correctness) {
+    if (fix_loop) readline(prompt = "You think metadata is ready?\n Press enter when ready: ")
     if (!is.null(google_url)) {
       message("- Reading google sheet")
       sheet <- read_sheet_safe(google_url)
@@ -101,7 +104,7 @@ curation_loop_until_valid <- function(fix_loop, config, google_url,
     if (!is.null(google_url) & update_google_sheet) {
       write_sheet_safe(config$temp_metadata, google_url)
     } else message("Updated your local csv metadata file")
-    if (finished) break
+    if (finished | !fix_loop) break
   }
 }
 

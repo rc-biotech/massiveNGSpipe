@@ -16,6 +16,7 @@ curate_metadata(
   Platforms = "ILLUMINA",
   step_mode = FALSE,
   open_editor = interactive(),
+  validate_correctness = TRUE,
   fix_loop = TRUE,
   only_curated = FALSE,
   update_google_sheet = TRUE,
@@ -70,10 +71,13 @@ each step in debug mode for full control.}
 \item{open_editor}{logical default TRUE. If google URL is defined, open the
 sheet. If not, open the DataEditR bord.}
 
-\item{fix_loop}{logical, default TRUE. If TRUE, will create a loop in
+\item{validate_correctness}{logical, default TRUE. If TRUE, will create a loop in
 the end that runs until your metadata is valid. If you
-only want to updata csv / google docs with new data and not try to complete
-now, set this to FALSE.}
+only want to updata csv / google docs with new data and not try to validate
+complete set now, set this to FALSE.}
+
+\item{fix_loop}{logical, default TRUE. If FALSE will only run validation loop once and
+not ask if you are ready. Ignored if validate_correctess is FALSE.}
 
 \item{only_curated}{logical FALSE, if TRUE. Only validate (or fail) based on
 inserted accessions (not the full list). Ignored if accessions is NULL.}

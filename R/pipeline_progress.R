@@ -39,7 +39,8 @@ progress_report <- function(pipelines, config,
     organism_report(all_organism, config, progress_index)
   }
   if (system_usage_stats) {
-    usage <- get_system_usage(one_liner = TRUE)
+    usage <- get_system_usage(detect_drive(path.expand(config$config["ref"])),
+                              one_liner = TRUE)
   }
   cat(status_per_study_list$message, "\n")
 

@@ -16,16 +16,22 @@ read_sheet_safe <- function(google_url, gargle_email = gargle_mail_safe()) {
 #' Sync your local temp to google sheet
 #' @param config a mNGSp config with defined google_url and existing
 #'  temp_metadata file
+#' @param validate_to_complete_local logical, default TRUE. Try to validate
+#' metadata and save the new FINAL_LIST.csv
+#' @param fix_loop logical, default TRUE. If FALSE, will only try once to validate and
+#' not ask if you are ready.
 #' @return invisible(NULL)
 #' @export
 sync_sheet_safe <- function(config, validate_to_complete_local = FALSE,
+                            fix_loop = TRUE,
                             gargle_email = gargle_mail_safe()) {
   stopifnot(!is.null(config$google_url))
   stopifnot(!is.null(config$temp_metadata) & file.exists(config$temp_metadata))
   sheet <- read_sheet_safe(config$google_url, gargle_email)
   fwrite(sheet, config$temp_metadata)
   message("Synced local temp metadata file from Google sheet: \n", config$temp_metadata)
-  if (validate_to_complete_local) curate_metadata(NULL, config, google_url = NULL)
+  if (validate_to_complete_local) curate_metadata(NULL, config, google_url = NULL,
+                                                  fix_loop = fix_loop)
   return(invisible(NULL))
 }
 
@@ -303,6 +309,9 @@ google_drive_dir_links <- function(id = 1, id_file = "~/livemount/.cache/gargle/
       stop("ID given is not in list, valid ids given above")
       return(dt[id == ids,])
     }
+    res <- dt[id == ids,]$link
+    names(res) <- dt[id == ids,]$id
+    return(res)
   } else stop("id must be numeric (index) or character (id name)!")
 }
 

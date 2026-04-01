@@ -255,7 +255,7 @@ finalize_pipeline_objects <- function(final_list, config, reference_list) {
       error=function(e) {warning(e); return(NULL)}))
   names(pipelines) <- accessions
 
-  crashed_studies <- pipelines %in% list(NULL)
+  crashed_studies <- lengths(pipelines) == 0
   if (any(crashed_studies)) {
     warning("Some studies aborted on init, will subset to working studies")
     pipelines <- pipelines[!crashed_studies]
@@ -328,7 +328,9 @@ path_config <- function(experiment, assembly_name, config, type = ifelse(config$
   conf <- gsub("//", "/", conf); conf <- gsub("_$", "", conf)
   names(conf) <- gsub(" .*", "", names(conf))
   names(conf) <- gsub(" $", "", names(conf))
-  sapply(conf[1:3], fs::dir_create)
+  conf_not_exist <- conf[1:3]
+  conf_not_exist <- conf_not_exist[!file.exists(conf_not_exist)]
+  sapply(conf_not_exist, fs::dir_create)
   return(conf)
 }
 

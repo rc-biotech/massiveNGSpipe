@@ -88,7 +88,6 @@ Hardware
 Running with many cores will use more memory, we have seen
 cases of a 800 sample study using up to 120GB memory on a large server when using > 50 cores.
 
-
 ### Local pipeline (Data from personal hard drive / local server)
 
 To run your local data, you run the pipeline, but skips the steps of 
@@ -412,6 +411,26 @@ Config Call: preset = "Ribo-seq"
 - Faster formats are then created (bigwig and covRLE) for faster visualization
 - Count tables are made with ORFik as Summarized experiments objects, for fast count loading later.
 
+### Add unique mappers when multimappers already exist
+
+A problem currently, is that the user can decide to run samples through without splitting unique mappers, and later want to add them in. 
+The pipeline will then have the flag checked as done, but you want to reset it.
+
+Lets show an example to restart the yeast samples from the study autophagy_timecourse
+at the ofst step and run the unique mappers only
+
+```r
+library(massiveNGSpipe)
+config <- pipeline_config(mode = "local", preset = "Ribo-seq",
+                          split_unique_mappers = TRUE, all_mappers = FALSE)
+pipelines <- pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = FALSE)
+
+exp_flag <- "autophagy_timecourse-saccharomyces_cerevisiae"
+remove_flag_all_exp_from(config, "ofst", exp_flag)
+# Run only autophagy, to ignore other unfinished studies.
+exp <- "autophagy_timecourse"
+run_pipeline(pipelines[exp], config, wait = 20)
+```
 
 ### The genome download failed
 

@@ -7,12 +7,19 @@
 sync_sheet_safe(
   config,
   validate_to_complete_local = FALSE,
+  fix_loop = TRUE,
   gargle_email = gargle_mail_safe()
 )
 }
 \arguments{
 \item{config}{a mNGSp config with defined google_url and existing
 temp_metadata file}
+
+\item{validate_to_complete_local}{logical, default TRUE. Try to validate
+metadata and save the new FINAL_LIST.csv}
+
+\item{fix_loop}{logical, default TRUE. If FALSE, will only try once to validate and
+not ask if you are ready.}
 }
 \value{
 invisible(NULL)
