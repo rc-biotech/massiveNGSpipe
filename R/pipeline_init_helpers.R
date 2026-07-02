@@ -2,7 +2,12 @@
 #' @inheritParams curate_metadata
 #' @param simple_progress_report logical, default TRUE. Display current progress.
 #' @param only_complete_genomes logical, default FALSE. If TRUE, will only init the subset
-#' with complete genome/annotation directories. Will fail if 0 species are done.
+#' with existing and complete genome/annotation directories. Will still run STAR index if not existing.
+#' Mixed speces must have directory with all lowercase and "_" seperator. While in the sheet
+#' each organism start with capital letter (e.g. Homo sapiens x Mus musculus), directory would be
+#' homo_sapiens_x_mus_musculus. Will fail if 0 species are done.
+#' @param only_complete_indices logical, default FALSE. If TRUE will only use complete index species,
+#' ignored if only_complete_genomes is FALSE.
 #' @param dbs character, prioritized order of genome databases to search, default:
 #' c("ensembl", "refseq"). Options are c("ensembl", "refseq", "genbank") in any wanted
 #' priority order.
@@ -11,11 +16,13 @@
 #' @export
 pipeline_init_all <- function(config, complete_metadata = config$complete_metadata,
                               progress_report = TRUE, gene_symbols = TRUE,
-                              only_complete_genomes = FALSE, dbs = c("ensembl", "refseq"),
+                              only_complete_genomes = FALSE, only_complete_indices = FALSE,
+                              dbs = c("ensembl", "refseq"),
                               show_status_per_exp = TRUE, verbose_load_annotation = TRUE) {
   # Load all valid metadata
   final_list <- init_and_load_complete_metadata(config, complete_metadata,
-                                                only_complete_genomes)
+                                                only_complete_genomes,
+                                                only_complete_indices)
   # Fetch all organism references ++
   reference_list <- get_all_annotation_and_index(final_list, config,
                                                  gene_symbols, dbs,
@@ -29,13 +36,18 @@ pipeline_init_all <- function(config, complete_metadata = config$complete_metada
 }
 
 init_and_load_complete_metadata <- function(config, complete_metadata = config$complete_metadata,
-                                            only_complete_genomes = FALSE) {
+                                            only_complete_genomes = FALSE, only_complete_indices = FALSE) {
   if (!file.exists(complete_metadata)) stop("You have not create a successful metadata table yet!")
   final_list <- fread(complete_metadata)[KEEP == TRUE,]
 
   if (only_complete_genomes) {
     message("- Subsetting to only complete genomes")
-    complete_genomes <- list.genomes(reference.folder = config$config["ref"])$name
+    genomes <- list.genomes(reference.folder = config$config["ref"])
+    if (only_complete_indices) {
+      message("-- Subsetting to only complete STAR indices")
+      genomes <- genomes[STAR_index == TRUE,]
+    }
+    complete_genomes <- genomes$name
     total_genomes <- length(unique(final_list$ScientificName))
     total_samples <- nrow(final_list)
     complete_genomes_formated <- gsub("_", " ", (stringr::str_to_title(complete_genomes)))

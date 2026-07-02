@@ -453,7 +453,19 @@ get_annotation(organism, GTF = path_to_gtf, genome = path_to_genome, gene_symbol
 
 This should now work. If it still fails, contact us on github.
 
+### Study fails to p-shift
 
+The pipeline uses ORFik read length and offset calculation. 
+Most likely reasons this can fail:
 
+1. A sample in the study is RNA-seq, not Ribo-seq (misclassified)
+2. The automatic barcode / adapter detector failed (if so specify manually by inspecting the processed_data/<study-organism>/trim/adapter_barcode_table.csv). 
+A proper Ribo-seq sample should have total adapter + barcode shrink average trimmed reads down to <= 37. 
+A common case are lets say you have 20 libraries and 2 of them are low quality outliers, it will find correct for 
+the 18 and fail both adapter and barcode for the 2 etc.
 
+### Tempdrive optimization for .sra -> .fastq extraction
+
+During download of .sra files, the extraction to .fastq is very hard drive intensive, we therefor implemented a tempdrive system to only run this step on the tempdrive (which is usually a scratch ssd on servers, i.e. much faster I/O).
+A potential crash that can happen is that the temp is filed by another user during the extraction, if so, restart the pipeline. 
 

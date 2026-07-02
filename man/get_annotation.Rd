@@ -20,26 +20,28 @@ for full list of supported organisms.}
 
 \item{output.dir}{path, default: reference_folder_name(organism, TRUE)}
 
-\item{genome}{logical, default: TRUE, download genome of organism
-specified in "organism" argument. If FALSE, check if the downloaded
-file already exist. If you want to use a custom gtf from you hard drive,
-set \code{GTF = FALSE},
-and assign: \cr \code{annotation <- getGenomeAndAnnotation(genome = FALSE)}\cr
+\item{genome}{logical, default: TRUE. Download the genome for the organism
+given in `organism`. If `FALSE`, ORFik checks whether the file is already
+available locally. To use a custom genome from disk, set
+\code{genome = FALSE} and then assign:\cr
+\code{annotation <- getGenomeAndAnnotation(genome = FALSE)}\cr
 \code{annotation["genome"] = "path/to/genome.fasta"}.\cr
-Will download the primary assembly from Ensembl.}
+For Ensembl, the primary assembly is downloaded.}
 
-\item{GTF}{logical, default: TRUE, download gtf of organism specified
-in "organism" argument. If FALSE, check if the downloaded
-file already exist. If you want to use a custom gtf from you hard drive,
-set GTF = FALSE,
-and assign: \cr annotation <- getGenomeAndAnnotation(gtf = FALSE)\cr
+\item{GTF}{logical, default: TRUE. Download the annotation file for the
+organism given in `organism`. If `FALSE`, ORFik checks whether the file is
+already available locally. To use a custom annotation from disk, set
+`GTF = FALSE` and then assign:\cr
+annotation <- getGenomeAndAnnotation(gtf = FALSE)\cr
 annotation["gtf"] = "path/to/gtf.gtf".\cr
-If db is not "ensembl", you will instead get a gff file.}
+If `db` is not `"ensembl"`, the downloaded annotation will be GFF instead
+of GTF.}
 
-\item{db}{database to use for genome and GTF,
-default adviced: "ensembl" (remember to set assembly_type to "primary_assembly",
-else it will contain haplotypes, very large file!).
-Alternatives: "refseq" (reference assemblies) and "genbank" (all assemblies)}
+\item{db}{database to use for the genome and annotation. The recommended
+choice is `"ensembl"`. When using Ensembl, remember to set
+\code{assembly_type = "primary_assembly"} unless you want haplotypes
+included, which can make the files much larger. Alternatives are `"refseq"`
+for reference assemblies and `"genbank"` for all available assemblies.}
 
 \item{gene_symbols}{logical default FALSE. If TRUE, will download
 and store all gene symbols for all transcripts (coding and noncoding)-

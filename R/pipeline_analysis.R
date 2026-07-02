@@ -20,9 +20,10 @@
 #' analysis_pipeline_ribo_rna(df.rfp, df.rna)
 analysis_pipeline_ribo_rna <- function(df.rfp = read.experiment("Eleonora-homo_sapiens"),
                                        df.rna = read.experiment("Eleonora-homo_sapiens_RNA-seq"),
-                                       output_dir = "auto",
+                                       output_dir = QCfolder(df.rfp),
                                        selected_isoforms = canonical_isoforms(df.rfp),
-                                       exp_design = design(df.rfp, multi.factor = FALSE)) {
+                                       exp_design = design(df.rfp, multi.factor = FALSE),
+                                       BPPARAM = bpparam()) {
   message("- Ribo-seq & RNA-seq analysis_pipeline starting")
   if (identical(QCfolder(df.rfp), QCfolder(df.rna))) {
     stop("QCfolder of ribo-seq and rna-seq must be different!")
@@ -30,19 +31,18 @@ analysis_pipeline_ribo_rna <- function(df.rfp = read.experiment("Eleonora-homo_s
   #¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤#
   # Run Annotation and alignment QC
   #¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤#
-  output_dir <- QCfolder(df.rfp)
   qc_pipeline_generic(df.rna)
-  analysis_pipeline_ribo(df.rfp, output_dir, selected_isoforms)
+  analysis_pipeline_ribo(df.rfp, output_dir, selected_isoforms, BPPARAM = BPPARAM)
   analysis_pipeline_DTEG(df.rfp, df.rna, output_dir, selected_isoforms, exp_design)
   message("- Ribo-seq & RNA-seq analysis pipeline done")
 }
 
-qc_pipeline_generic <- function(df, output_dir = QCfolder(df)) {
+qc_pipeline_generic <- function(df, output_dir = QCfolder(df), BPPARAM = bpparam()) {
 
   message("-- QC..")
   # General QC
   ORFikQC(df, out.dir = dirname(output_dir), create.ofst = FALSE,
-          use_simplified_reads = FALSE)
+          use_simplified_reads = FALSE, BPPARAM = BPPARAM)
 
   # PCA
   ggsave(filename = file.path(output_dir, paste0("PCAplot_", name(df), ".png")),
@@ -55,9 +55,9 @@ qc_pipeline_generic <- function(df, output_dir = QCfolder(df)) {
     remove.experiments(df)
     # before pshifting
     heatMapRegion(df, region = c("TIS", "TTS"), shifting = "5prime", type = "ofst",
-                  outdir = file.path(output_dir, "heatmaps/pre-pshift/"))
+                  outdir = file.path(output_dir, "heatmaps/pre-pshift/"), BPPARAM = BPPARAM)
     heatMapRegion(df, region = c("TIS", "TTS"), shifting = "5prime", type = "pshifted",
-                  outdir = file.path(output_dir, "heatmaps/pshifted/"))
+                  outdir = file.path(output_dir, "heatmaps/pshifted/"), BPPARAM = BPPARAM)
   }
   remove.experiments(df) # Remove loaded data (it is not pshifted)
 }
@@ -79,8 +79,10 @@ analysis_pipeline_DTEG <- function(df.rfp = read.experiment("Eleonora-homo_sapie
 
   RFP_counts_canonical <- RFP_counts[rownames(RFP_counts) %in% selected_isoforms,]
   RNA_counts_canonical <- RNA_counts[rownames(RNA_counts) %in% selected_isoforms,]
-
-  custom_for_sars_cov2 <- grep("x_sars_cov2$", name(df.rfp))
+  message("--- PCA validation plot")
+  ORFik:::pcaPlot(table = assay(safe_se_cbind(list(RFP_counts, RNA_counts))),
+                  file.path(output_dir, paste0("PCA_", df.rfp$libtype[1], "_", df.rna$libtype[1], ".png")))
+  custom_for_sars_cov2 <- grepl("x_sars_cov2$", name(df.rfp))
   if (custom_for_sars_cov2) {
 
     mat <- t(as.matrix(colSums(tail(assay(RFP_counts_canonical), 2))))
@@ -142,7 +144,7 @@ analysis_pipeline_DTEG <- function(df.rfp = read.experiment("Eleonora-homo_sapie
 analysis_pipeline_ribo <- function(df.rfp, output_dir = QCfolder(df.rfp),
                                    selected_isoforms = canonical_isoforms(df.rfp),
                                    BPPARAM = bpparam()) {
-  # qc_pipeline_generic(df.rfp, output_dir)
+  qc_pipeline_generic(df.rfp, output_dir)
 
   #¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤#
   # Codon analysis (From WT rep 1 & HSR rep 1)
@@ -154,7 +156,7 @@ analysis_pipeline_ribo <- function(df.rfp, output_dir = QCfolder(df.rfp),
   stopifnot(length(cds) > 0)
 
   pshifted_libs <- outputLibs(df.rfp, type = "cov", output.mode = "envirlist", BPPARAM = BPPARAM)
-  groups_no_rep <- bamVarName(df, skip.replicate = TRUE)
+  groups_no_rep <- bamVarName(df.rfp, skip.replicate = TRUE)
   groups <- match(groups_no_rep, unique(groups_no_rep))
   groups <- split(seq_along(groups), groups)
   message("Merging replicates")

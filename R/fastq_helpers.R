@@ -42,7 +42,13 @@ fastqc_adapters_info <- function(file, nreads = 2e6,
     message("Using manually defined adapters from file")
     adapters <- fread(manual_defined_adapters, header = TRUE)
     adapters[, LibraryLayout := "SINGLE"]
-    run_to_path <- unlist(run_files_organizer(adapters, dirname(file)))
+    run_to_path <- try(unlist(run_files_organizer(adapters, dirname(file))), silent = TRUE)
+    if (is(run_to_path, "try-error")) {
+      # TODO: make this more failsafe
+      adapters[, LibraryLayout := "PAIRED"]
+      run_to_path <- unlist(heads(run_files_organizer(adapters, dirname(file)), 1))
+    }
+
     index <- run_to_path == ORFik:::pasteDir(path.expand(file))
     if (sum(index) != 1) stop("Could not find Run id matching file: ", file)
     return(adapters[index]$adapter)
@@ -233,7 +239,7 @@ run_files_organizer_internal <- function(i, runs, files,
         if (length(temp_file) == 0) {
           file <- runs[i]$Run
         }
-        stop("File format could not be detected",
+        stop("File format could not be detected ",
              file[1])
       } else file <- temp_file
     }
@@ -253,7 +259,7 @@ run_files_organizer_internal <- function(i, runs, files,
         if (length(temp_file) == 0) {
           file <- rep(runs[i]$Run, 2)
         }
-        stop("File format could not be detected",
+        stop("File format could not be detected ",
              file[2])
       } else file2 <- temp_file
     }
@@ -385,30 +391,31 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
 
   reads_no_adapter_removed_ORFik <- NA
   fastq_cut <- NULL
-  if (max_size_after >= check_at_mean_size) {
-    manual_specified_barcodes_file <- file.path(trimmed_dir, "barcodes_manual.csv")
-    manual_specified_barcodes_exists <- file.exists(manual_specified_barcodes_file)
-    if (manual_specified_barcodes_exists) {
-      dt_barcode <- fread(manual_specified_barcodes_file)
-      stopifnot(ncol(dt_barcode) == 3 &&
-                  all(colnames(dt_barcode) == c("Run", "barcode5p_size", "barcode3p_size")))
-      stopifnot(sample %in% dt_barcode$Run)
-      barcode_sizes <- unlist(dt_barcode[Run == sample, 2:3])
-    } else { # Detect them
-      curves <- a$read1_after_filtering[c("quality_curves", "content_curves")]
-      curves$content_curves$max <- rowMaxs(as.matrix(setDT(curves$content_curves)), useNames = FALSE)
+  manual_specified_barcodes_file <- file.path(trimmed_dir, "barcodes_manual.csv")
+  manual_specified_barcodes_exists <- file.exists(manual_specified_barcodes_file)
+  if (manual_specified_barcodes_exists) {
+    dt_barcode <- fread(manual_specified_barcodes_file)
+    stopifnot(ncol(dt_barcode) == 3 &&
+                all(colnames(dt_barcode) == c("Run", "barcode5p_size", "barcode3p_size")))
+    stopifnot(sample %in% dt_barcode$Run)
+    barcode_sizes <- unlist(dt_barcode[Run == sample, 2:3], use.names = TRUE)
+  }
 
+  auto_detect_barcodes <- (max_size_after >= check_at_mean_size) & !manual_specified_barcodes_exists
+  if (auto_detect_barcodes) {
+    # Detect them
+    curves <- a$read1_after_filtering[c("quality_curves", "content_curves")]
+    curves$content_curves$max <- rowMaxs(as.matrix(setDT(curves$content_curves)), useNames = FALSE)
+
+    barcode_sizes <- barcode_change_point(curves, max_barcode_left_size, max_size_before,
+                                          max_size_after, minimum_size, z_score_normalize = FALSE)
+    if (max(barcode_sizes) == 0) {
       barcode_sizes <- barcode_change_point(curves, max_barcode_left_size, max_size_before,
-                                            max_size_after, minimum_size, z_score_normalize = FALSE)
-      if (max(barcode_sizes) == 0) {
-        barcode_sizes <- barcode_change_point(curves, max_barcode_left_size, max_size_before,
-                                              max_size_after, minimum_size, z_score_normalize = TRUE)
-      }
+                                            max_size_after, minimum_size, z_score_normalize = TRUE)
     }
 
     barcode5p_size <- barcode_sizes["barcode5p_size"]
     barcode3p_size <- barcode_sizes["barcode3p_size"]
-
 
     if (raw_file_exists) { # Internal fastq validations
       # Adapter checker

@@ -7,9 +7,10 @@
 analysis_pipeline_ribo_rna(
   df.rfp = read.experiment("Eleonora-homo_sapiens"),
   df.rna = read.experiment("Eleonora-homo_sapiens_RNA-seq"),
-  output_dir = "auto",
+  output_dir = QCfolder(df.rfp),
   selected_isoforms = canonical_isoforms(df.rfp),
-  exp_design = design(df.rfp, multi.factor = FALSE)
+  exp_design = design(df.rfp, multi.factor = FALSE),
+  BPPARAM = bpparam()
 )
 }
 \arguments{

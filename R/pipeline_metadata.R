@@ -432,7 +432,6 @@ add_new_data <- function(accessions, config, organisms = "all",
                                                     Platforms)
   # Step3: Try to auto annotate
   all_SRA_metadata_RFP <- pipeline_metadata_annotate(filtered_SRA_metadata)
-  browser()
   # Step4: Fix organism names
   if (organism_name_cleanup) {
     all_SRA_metadata_RFP[, ScientificName := organism_name_cleanup(ScientificName)]
@@ -596,20 +595,22 @@ export_sucessful_metadata <- function(files, libtypes, output_file,
   return(invisible(NULL))
 }
 
-fill_with_random <- function(table_in, config, libtypes_keep = "all", checked_by = "auto",
+fill_with_random <- function(config, table_in = fread(config$temp_metadata), libtypes_keep = "all", checked_by = "auto",
                              start_auto_at_frac = max(suppressWarnings(max(as.integer(gsub("^auto_", "", grep("^auto_", table$FRACTION, value = TRUE)))) + 1), 1),
                              start_auto_at_time = max(suppressWarnings(max(as.integer(gsub("^auto_", "", grep("^auto_", table$TIMEPOINT, value = TRUE)))) + 1), 1),
                              upload_to_google = !is.null(config$google_url)) {
+  stopifnot(is(table_in, "data.table"))
   stopifnot(("KEEP" %in% colnames(table_in)) && is(table_in$KEEP, "logical"))
   if (libtypes_keep == "all") libtypes_keep <- unique(table_in$LIBRARYTYPE)
   table <- copy(table_in)
-  message("Samples that will be auto-named: ", nrow(table[LIBRARYTYPE %in% libtypes_keep & is.na(KEEP),]))
+  message("Sample candidaes for auto-naming: ", nrow(table[LIBRARYTYPE %in% libtypes_keep & is.na(KEEP),]))
   table[LIBRARYTYPE %in% libtypes_keep & is.na(KEEP), CHECKED := checked_by]
   table[LIBRARYTYPE %in% libtypes_keep & is.na(KEEP), KEEP := TRUE]
 
 
   table <- metadata_is_valid(table)
   non_unique <- nrow(table[KEEP == TRUE & not_unique,]); non_unique
+  message("Sample that will be auto-named: ", non_unique)
 
   if (non_unique > 0)
     suppressWarnings(table[LIBRARYTYPE %in% libtypes_keep & CHECKED == "auto" & not_unique & (is.na(FRACTION) || FRACTION == ""), FRACTION := paste0("auto_", seq(.N) + start_auto_at_frac)])

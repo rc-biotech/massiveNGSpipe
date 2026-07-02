@@ -124,14 +124,14 @@ psite_reshift_app <- function(config, exp_names = reshift_app_exp_names(config),
       info <- input$table_ui_cell_edit
       rv$flat_table[info$row, info$col] <- info$value
       rv$history <- c(rv$history, list(copy(rv$flat_table))) # save after edit
-      replaceData(proxy, rv$flat_table, resetPaging = FALSE)
+      DT::replaceData(proxy, rv$flat_table, resetPaging = FALSE)
     })
 
     observeEvent(input$undo, {
       if (length(rv$history) > 1) {
         rv$history <- rv$history[-length(rv$history)] # drop latest
         rv$flat_table <- copy(rv$history[[length(rv$history)]])
-        replaceData(proxy, rv$flat_table, resetPaging = FALSE)
+        DT::replaceData(proxy, rv$flat_table, resetPaging = FALSE)
         showNotification("Undid last change", type = "message")
       } else {
         showNotification("Nothing to undo", type = "warning")
@@ -192,7 +192,7 @@ psite_reshift_app <- function(config, exp_names = reshift_app_exp_names(config),
 
       rv$history <- c(rv$history, list(copy(rv$flat_table))) # save before shift
       rv$flat_table[rows_to_shift, offsets_start := offsets_start + input$relative_shift]
-      replaceData(proxy, rv$flat_table, resetPaging = FALSE)
+      DT::replaceData(proxy, rv$flat_table, resetPaging = FALSE)
 
       showNotification(paste("Shifted", n, "rows for fraction",
                              paste(input$fractions_to_shift, collapse = ", "),

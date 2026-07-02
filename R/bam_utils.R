@@ -118,6 +118,7 @@ get_qname <- function(bam, yieldSize = 1e6) {
   return(qnames)
 }
 
+#' Recreate alignment report for the decollapsed reads
 get_expanded_alignment_metrics <- function(fasta_file, bam_file) {
   message(basename(bam_file))
   fasta_headers <- names(readDNAStringSet(fasta_file, use.names = TRUE))
@@ -160,6 +161,12 @@ get_expanded_alignment_metrics <- function(fasta_file, bam_file) {
   return(res)
 }
 
+#' Recreate alignment report for the decollapsed reads for whole exp
+#' @param df ORFik experiment
+#' @param fasta_dir path of collapsed files
+#' @param BPPARAM a BPPARAM object
+#' @return a data.table, with uncollapsed alignment statistics
+#' @export
 get_expanded_alignment_metrics_exp <- function(df, fasta_dir = file.path(dirname(libFolder(df)), "trim", "SINGLE"),
                                                BPPARAM = MulticoreParam(8, exportglobals = FALSE)) {
   stopifnot(is(df, "experiment"))
@@ -211,43 +218,52 @@ detect_strand_mode <- function(R1, R2,
   stopifnot(file.exists(R1) & length(R1) == 1)
   stopifnot(file.exists(R2) & length(R2) == 1)
   stopifnot(file.exists(genomeDir) & length(genomeDir) == 1)
-  stopifnot(dir.exists(td) & length(td) == 1)
+  stopifnot(is.character(td) & length(td) == 1)
   stopifnot(is(tx, "GRangesList"))
   star_load_options <- c("LoadAndRemove", "LoadAndKeep", "NoSharedMemory")
   stopifnot(is.character(keepGenomeLoaded) & keepGenomeLoaded %in% star_load_options)
   if (!dir.exists(td)) dir.create(td)
-  nlines <- nreads*4
+  bam <- file.path(td, "Aligned.out.bam")
+  if (file.exists(bam)) file.remove(bam)
+  is_compressed <- grepl(".gz$", R1)
 
-
-
+  # Compression check
+  cmd_read <- ifelse(is_compressed, "zcat", "-")
 
   bash_script <- sprintf(
     '%s \\
   --genomeDir %s \\
   --readFilesIn %s %s \\
-  --readFilesCommand head -n %d \\
+  --readFilesCommand %s \\
+  --readMapNumber %d \\
   --runThreadN %d \\
   --outSAMtype BAM Unsorted \\
   --genomeLoad %s \\
-  --outFileNamePrefix %s/',
+  --outFileNamePrefix %s',
     shQuote(star),
     shQuote(normalizePath(genomeDir)),
     shQuote(normalizePath(R1)),
     shQuote(normalizePath(R2)),
-    nlines,
+    cmd_read,
+    as.integer(nreads),
     threads,
     keepGenomeLoaded,
-    shQuote(normalizePath(td))
+    shQuote(paste0(normalizePath(td), "/"))
   )
+
+
   star_status <- system(bash_script)
   if (star_status != 0) stop("STAR failed to finish without errors!")
-  bam <- file.path(td, "Aligned.out.bam")
-  if (!file.exists(bam) || file.info(bam)$size == 0) {
-    stop("STAR did not produce BAM at: ", bam, "\n\nSTAR output:\n", paste(star_out, collapse = "\n"))
+
+  if (!file.exists(bam)) {
+    stop("STAR did not produce a BAM file at: ", bam, "\n\nSTAR output:\n", paste(star_status, collapse = "\n"))
+  }
+
+  if (file.info(bam)$size == 0) {
+    stop("STAR produced empty BAM at: ", bam, "\n\nSTAR output:\n", paste(star_status, collapse = "\n"))
   }
 
   aln <- readGAlignmentPairs(bam)
-
   counts <- c(sum(countOverlaps(tx, aln@first, ignore.strand = FALSE)),
               sum(countOverlaps(tx, aln@last, ignore.strand = FALSE)))
 

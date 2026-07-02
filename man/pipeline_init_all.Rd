@@ -10,6 +10,7 @@ pipeline_init_all(
   progress_report = TRUE,
   gene_symbols = TRUE,
   only_complete_genomes = FALSE,
+  only_complete_indices = FALSE,
   dbs = c("ensembl", "refseq"),
   show_status_per_exp = TRUE,
   verbose_load_annotation = TRUE
@@ -23,7 +24,13 @@ fastq, bam, references and ORFik experiments go}
 The list of final candidates that are checked and have unique rows per bioproject}
 
 \item{only_complete_genomes}{logical, default FALSE. If TRUE, will only init the subset
-with complete genome/annotation directories. Will fail if 0 species are done.}
+with existing and complete genome/annotation directories. Will still run STAR index if not existing.
+Mixed speces must have directory with all lowercase and "_" seperator. While in the sheet
+each organism start with capital letter (e.g. Homo sapiens x Mus musculus), directory would be
+homo_sapiens_x_mus_musculus. Will fail if 0 species are done.}
+
+\item{only_complete_indices}{logical, default FALSE. If TRUE will only use complete index species,
+ignored if only_complete_genomes is FALSE.}
 
 \item{dbs}{character, prioritized order of genome databases to search, default:
 c("ensembl", "refseq"). Options are c("ensembl", "refseq", "genbank") in any wanted

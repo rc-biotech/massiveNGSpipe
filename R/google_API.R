@@ -36,7 +36,6 @@ sync_sheet_safe <- function(config, validate_to_complete_local = FALSE,
 }
 
 write_sheet_safe <- function(file, google_url, sheet = 1) {
-  message("Uploading updated version to google sheet:")
   write_sheet_safe_new(file, google_url, sheet = sheet - 1)
 }
 
