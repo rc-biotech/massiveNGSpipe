@@ -86,7 +86,14 @@ docker_copy_done_experiments <- function(config,
 }
 
 #' Copy done experiment csvs to new directory
+#'
+#' @param csv_names copy_experiments_to("PRJNA324380-saccharomyces_cerevisiae.csv")
+#' @return logical, TRUE if successful.
+#' @export
 #' @examples
+#' Single csv
+#' copy_experiments_to("PRJNA324380-saccharomyces_cerevisiae.csv")
+#'
 #' csvs <- list.files(ORFik::config()["exp"], pattern = "modalities\\.csv$")
 #' copy_experiments_to(csvs)
 copy_experiments_to <- function(csv_names, old_exp_dir = ORFik::config()["exp"],

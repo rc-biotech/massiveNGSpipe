@@ -21,16 +21,32 @@ download_sra <- function(info, outdir, compress = TRUE,
 download_raw_srr <- function(accession, outdir, compress = TRUE,
                              sratoolkit_path =
                                  fs::path_dir(ORFik::install.sratoolkit()),
-                             PAIRED_END, study_info_dt = NULL) {
-  # Check if the run is available on AWS (not always the case, e.g.
-  # SRR4000302)
-  if (download_sra_aws(accession, outdir) || download_sra_ascp(accession, outdir)) {
-    sra_to_fastq(accession, outdir, compress, sratoolkit_path, PAIRED_END, study_info_dt)
-  } else {
+                             PAIRED_END, study_info_dt = NULL,
+                             attempt_fast_sra_format = sra_or_direct_fastq_format(study_info_dt, accession) ) {
+  # Check if the run is available on AWS / ASCP (not always the case, e.g.
+  # SRR627627)
+  fast_sra_format_exist_and_downloaded <- attempt_fast_sra_format &&
+    (download_sra_aws(accession, outdir) || download_sra_ascp(accession, outdir))
+
+  fastq_done <- FALSE
+  if (fast_sra_format_exist_and_downloaded) {
+    fast_try <- try(sra_to_fastq(accession, outdir, compress, sratoolkit_path, PAIRED_END, study_info_dt))
+    fastq_done <- !is(fast_try, "try-error")
+  }
+  if (!fastq_done) {
     download_sra_ebi(accession, outdir, compress)
   }
   return(cleanup_and_validate_fastq_download(accession, outdir, PAIRED_END,
                                              compress))
+}
+
+sra_or_direct_fastq_format <- function(study_info_dt, accession) {
+  attempt_fast_sra_format <- TRUE
+  valid_study_info <- (!is.null(study_info_dt) && !is.null(study_info_dt$Run) &&
+                         !is.null(study_info_dt$size_MB) && nrow(study_info_dt[Run == accession,]) == 1 &&
+                         !is.na(study_info_dt[Run == accession,]$size_MB))
+  if (valid_study_info) attempt_fast_sra_format <- study_info_dt[Run == accession,]$size_MB > 100
+  return(attempt_fast_sra_format)
 }
 
 download_sra_aws <- function(run_accession, outdir, aws_bin = "aws",
@@ -51,8 +67,7 @@ download_sra_aws <- function(run_accession, outdir, aws_bin = "aws",
     ))
     succesful_download_aws <- download_status == 0
     stopifnot("Run found on aws, but awscli exited with non-zero exit code" = succesful_download_aws)
-    run_exists_on_aws <- succesful_download_aws
-    # TODO: Add file is downloaded check too (this is not enough)
+    run_exists_on_aws <- succesful_download_aws & file.exists(file.path(outdir, run_accession))
   }
   return(run_exists_on_aws)
 }
@@ -66,6 +81,9 @@ download_sra_ascp <- function(run_accession, outdir,
                               ebi_server_run_path = find_ascp_srr_url(run_accession)) {
   # EBI servers via Aspera.
   message("Falling back to ascp")
+  no_aspera_sra_url <- length(ebi_server_run_path) == 0
+  if (no_aspera_sra_url) return(FALSE)
+
   out_path <- fs::path_join(c(outdir, run_accession))
   ret <- system2(ascp_bin, c(
     "-T",
@@ -76,6 +94,7 @@ download_sra_ascp <- function(run_accession, outdir,
     ebi_server_run_path, out_path
   ))
   stopifnot("ascp exited with non-zero exit code" = ret == 0)
+  return(TRUE)
 }
 
 download_sra_ebi <- function(accession, outdir, compress) {
@@ -120,6 +139,9 @@ sra_to_fastq <- function(accession, outdir, compress = TRUE,
                    threads, "--split-files", "--skip-technical",
                    "--outdir", fasterq_temp_dir)
   )
+
+  out_file_temp <- paste0(temp_path, if(PAIRED_END) c("_1", "_2"), ".fastq")
+
   if (ret != 0) {
     browser()
     file.remove(c(out_file_temp, temp_path))
@@ -127,7 +149,6 @@ sra_to_fastq <- function(accession, outdir, compress = TRUE,
   }
   if (using_temp_dir) {
     message("- Copying file back to main drive..")
-    out_file_temp <- paste0(temp_path, if(PAIRED_END) c("_1", "_2"), ".fastq")
     stopifnot(all(file.exists(out_file_temp)))
     out_file <- paste0(sra_path, if(PAIRED_END) c("_1", "_2"), ".fastq")
     file.copy(out_file_temp, out_file, overwrite = TRUE)

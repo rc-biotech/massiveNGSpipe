@@ -11,10 +11,19 @@ copy_experiments_to(
   docker_conversion = "'s/livemount\\\\///g'"
 )
 }
+\arguments{
+\item{csv_names}{copy_experiments_to("PRJNA324380-saccharomyces_cerevisiae.csv")}
+}
+\value{
+logical, TRUE if successful.
+}
 \description{
 Copy done experiment csvs to new directory
 }
 \examples{
+Single csv
+copy_experiments_to("PRJNA324380-saccharomyces_cerevisiae.csv")
+
 csvs <- list.files(ORFik::config()["exp"], pattern = "modalities\\\\.csv$")
 copy_experiments_to(csvs)
 }
