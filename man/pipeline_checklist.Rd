@@ -11,11 +11,8 @@ pipeline_checklist(pipelines, config, print = TRUE)
 
 \item{config}{the mNGSp config object}
 
-\item{print}{logical, default TRUE. If TRUE, render via message() (not
-cat() -- under MulticoreParam, cat() would write straight to the shared
-real stdout and interleave with other concurrently-running stage-group
-workers; message() is what BiocParallel's own logdir= already diverts
-per-worker, same as the pre-existing "Sleep"/"Stopped sleeping" messages).}
+\item{print}{logical, default TRUE. If TRUE, also render via message()
+(see Details above for why this alone is not enough in production).}
 }
 \value{
 invisible(data.table) with columns: stage, done, total, state
@@ -26,4 +23,20 @@ invisible(data.table) with columns: stage, done, total, state
 Read-only: reports on experiment-level flags (existing) and sample-level
 markers (new, only available for stages with a plain per-sample loop --
 see stage_marker_step()). Never downloads, mutates config, or blocks.
+}
+\details{
+Always writes a plain-text snapshot to checklist_path(config) via a direct
+file write (not message()/cat() to the R stdout/message streams). This
+matters in production: run_pipeline()'s outer bplapply always runs with
+config$parallel_conf's logdir set, and BiocParallel's own log=TRUE/logdir=
+capture buffers \emph{all} stdout/message output from a task and only flushes
+it to disk once that whole task (one stage-group, potentially hours)
+completes -- verified directly (SerialParam, MulticoreParam, both via
+plain Rscript). message()/cat() calls made from inside parallel_wrap()
+are therefore invisible, live, both on the console and in that per-task
+log file, no matter which of the two is used. A direct file() write does
+not go through that capture at all, so it is the only thing that actually
+updates live; message() below is kept only as a best-effort extra for
+contexts where parallel_wrap() is called outside of that bplapply
+wrapping (e.g. directly, interactively).
 }

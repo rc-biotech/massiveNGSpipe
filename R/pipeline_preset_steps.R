@@ -21,7 +21,7 @@ pipe_fetch <- function(pipelines, config) {
     exp <- pipeline$accession
     if (file.exists(report_failed_pipe_path(config, exp))) next
     try <- try(
-      pipeline_download(pipeline, config)
+      pipeline_download(pipeline, config, pipelines)
     )
     report_failed_pipe(try, config, "fetch", exp)
   }

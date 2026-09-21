@@ -1,7 +1,8 @@
 download_sra <- function(info, outdir, compress = TRUE,
                          sratoolkit_path =
                            fs::path_dir(ORFik::install.sratoolkit()),
-                         delete_srr_preformat = TRUE) {
+                         delete_srr_preformat = TRUE,
+                         after_run = NULL) {
   fs::dir_create(outdir)
   outdir <- fs::path_real(outdir)
 
@@ -14,6 +15,7 @@ download_sra <- function(info, outdir, compress = TRUE,
   for (accession in accessions) {
     PAIRED_END <- info$LibraryLayout[info$Run == accession] == "PAIRED"
     download_raw_srr(accession, outdir, compress, sratoolkit_path, PAIRED_END, info)
+    if (!is.null(after_run)) after_run(accession)
   }
   delete_existing_preformat_files(outdir, accessions, delete_srr_preformat)
 }
@@ -61,7 +63,7 @@ download_sra_aws <- function(run_accession, outdir, aws_bin = install_aws(),
 
   if (run_exists_on_aws) {
     download_status <- system2(aws_bin, c(
-      "--no-sign-request", "s3", "sync",
+      "--no-sign-request", "s3", "sync", "--no-progress",
       file_aws_url,
       outdir
     ))
@@ -86,7 +88,7 @@ download_sra_ascp <- function(run_accession, outdir,
 
   out_path <- fs::path_join(c(outdir, run_accession))
   ret <- system2(ascp_bin, c(
-    "-T",
+    "-T", "-q",
     "-k", resume_level,
     "-l", max_transfer_rate,
     "-P", ssh_port,
@@ -115,7 +117,7 @@ sra_to_fastq <- function(accession, outdir, compress = TRUE,
                          sratoolkit_path = fs::path_dir(ORFik::install.sratoolkit()),
                          PAIRED_END, study_info_dt = NULL,
                          fasterq_temp_dir = check_tempdir_has_space_sra_to_fastq(accession, outdir, tempdir(), PAIRED_END, study_info_dt),
-                         progress_bar = TRUE) {
+                         progress_bar = FALSE) {
   message("Extracting SRA run:", accession)
   sra_path <- fs::path_join(c(outdir, accession))
   if (!file.exists(sra_path)) {

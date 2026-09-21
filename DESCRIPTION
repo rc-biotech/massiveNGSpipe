@@ -38,6 +38,7 @@ Imports:
     htmlwidgets,
     httr,
     jsonlite,
+    MatrixGenerics,
     methods,
     openssl,
     plotly,

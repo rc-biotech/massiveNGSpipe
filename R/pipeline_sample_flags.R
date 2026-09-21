@@ -4,7 +4,7 @@
 # R/pipeline_flags.R. Existing flags only track completion at (study
 # accession x organism) = "experiment" granularity; these give finer
 # sample/run-level detail for the stages that process samples in a plain
-# in-process loop (currently: trim, align), so the checklist in
+# in-process loop (currently: fetch, trim, align), so the checklist in
 # R/pipeline_checklist.R can show "M/K samples done" for whichever
 # experiment a stage is currently working on.
 #

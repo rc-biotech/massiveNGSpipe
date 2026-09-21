@@ -314,6 +314,7 @@ barcode_detector_pipeline <- function(pipeline, redownload_raw_if_needed = TRUE)
 }
 
 #' Internal barcode detector
+#' @import Biostrings IRanges
 #' @noRd
 #' @examples
 #' library(massiveNGSpipe)
@@ -409,7 +410,7 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
   if (auto_detect_barcodes) {
     # Detect them
     curves <- a$read1_after_filtering[c("quality_curves", "content_curves")]
-    curves$content_curves$max <- rowMaxs(as.matrix(setDT(curves$content_curves)), useNames = FALSE)
+    curves$content_curves$max <- MatrixGenerics::rowMaxs(as.matrix(setDT(curves$content_curves)), useNames = FALSE)
 
     barcode_sizes <- barcode_change_point(curves, max_barcode_left_size, max_size_before,
                                           max_size_after, minimum_size, z_score_normalize = FALSE)

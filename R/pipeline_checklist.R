@@ -8,6 +8,7 @@
 #' @return character step id (e.g. "trim") or NA_character_
 stage_marker_step <- function(stage_name) {
   switch(stage_name,
+        pipe_fetch = "fetch",
         pipe_trim_collapse = "trim",
         pipe_align_clean = "aligned",
         NA_character_)
@@ -29,19 +30,36 @@ experiment_sample_counts <- function(pipelines) {
   unlist(counts)
 }
 
+#' Path to the live checklist snapshot file for one project
+#' @param config the mNGSp config object
+#' @return character, file.path(config$project, "log_pipeline", "checklist.txt")
+checklist_path <- function(config) file.path(config$project, "log_pipeline", "checklist.txt")
+
 #' Nextflow-style stage checklist
 #'
 #' Read-only: reports on experiment-level flags (existing) and sample-level
 #' markers (new, only available for stages with a plain per-sample loop --
 #' see stage_marker_step()). Never downloads, mutates config, or blocks.
 #'
+#' Always writes a plain-text snapshot to checklist_path(config) via a direct
+#' file write (not message()/cat() to the R stdout/message streams). This
+#' matters in production: run_pipeline()'s outer bplapply always runs with
+#' config$parallel_conf's logdir set, and BiocParallel's own log=TRUE/logdir=
+#' capture buffers *all* stdout/message output from a task and only flushes
+#' it to disk once that whole task (one stage-group, potentially hours)
+#' completes -- verified directly (SerialParam, MulticoreParam, both via
+#' plain Rscript). message()/cat() calls made from inside parallel_wrap()
+#' are therefore invisible, live, both on the console and in that per-task
+#' log file, no matter which of the two is used. A direct file() write does
+#' not go through that capture at all, so it is the only thing that actually
+#' updates live; message() below is kept only as a best-effort extra for
+#' contexts where parallel_wrap() is called outside of that bplapply
+#' wrapping (e.g. directly, interactively).
+#'
 #' @param pipelines the pipelines list
 #' @param config the mNGSp config object
-#' @param print logical, default TRUE. If TRUE, render via message() (not
-#' cat() -- under MulticoreParam, cat() would write straight to the shared
-#' real stdout and interleave with other concurrently-running stage-group
-#' workers; message() is what BiocParallel's own logdir= already diverts
-#' per-worker, same as the pre-existing "Sleep"/"Stopped sleeping" messages).
+#' @param print logical, default TRUE. If TRUE, also render via message()
+#' (see Details above for why this alone is not enough in production).
 #' @return invisible(data.table) with columns: stage, done, total, state
 #' ("done"/"running"/"queued"), active_experiment, active_done, active_total
 #' (the latter three NA when no marker evidence is available/applicable)
@@ -79,7 +97,13 @@ pipeline_checklist <- function(pipelines, config, print = TRUE) {
                            active_done = active_done, active_total = active_total)
   })
   tab <- data.table::rbindlist(rows)
-  if (print) message(format_checklist(tab))
+  txt <- format_checklist(tab)
+
+  path <- checklist_path(config)
+  dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
+  cat(sprintf("Pipeline status as of %s\n\n%s\n", Sys.time(), txt), file = path)
+
+  if (print) message(txt)
   invisible(tab)
 }
 

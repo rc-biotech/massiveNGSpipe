@@ -190,6 +190,7 @@ get_expanded_alignment_metrics_exp <- function(df, fasta_dir = file.path(dirname
 }
 
 #' Detect if R1 or R2 of read pair is primary read direction
+#' @import GenomicAlignments GenomicRanges
 #' @param R1 path to R1 fasta/fastq file
 #' @param R2 path to R2 fasta/fastq file
 #' @param genomeDir path to STAR index of genome, default:

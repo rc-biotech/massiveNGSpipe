@@ -36,7 +36,10 @@ arguments.}
 whatever \code{func} returns. Re-raises the child's error as a
 normal R condition in the caller if \code{func} errored (matches
 \code{callr::r()} semantics already relied on elsewhere), so existing
-\code{try()}-based error handling one level up is unaffected.
+\code{try()}-based error handling one level up is unaffected. Before
+returning (success, error, or interruption alike), both log files are
+passed through \code{sanitize_progress_log()} to collapse any bare
+carriage-return progress-bar spam a wrapped tool wrote into them.
 }
 \description{
 Wraps \code{callr::r_bg()} so that external-tool console output (fastp,

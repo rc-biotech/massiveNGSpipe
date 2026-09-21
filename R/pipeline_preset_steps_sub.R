@@ -5,19 +5,37 @@
 #'
 #' Extract them into \verb{<accession>.fastq.gz} or \verb{<accession>_\{1,2\}.fastq.gz}
 #' for SE/PE reads respectively.
+#'
+#' The per-run downloads run in a subprocess (aws s3 sync / ascp /
+#' fasterq-dump's own console output does not otherwise get captured, see
+#' run_experiment_subprocess()) that this function polls for progress,
+#' rendering the checklist on each tick.
 #' @param pipeline a pipeline object
 #' @param config the mNGSp config object from [pipeline_config]
+#' @param pipelines the full pipelines list, used only to render the
+#' checklist (study-level context beyond this one pipeline/organism);
+#' defaults to just this pipeline if called standalone.
 #' @return invisible(NULL)
-pipeline_download <- function(pipeline, config) {
+pipeline_download <- function(pipeline, config, pipelines = list(pipeline)) {
     study <- pipeline$study
     for (organism in names(pipeline$organisms)) {
         conf <- pipeline$organisms[[organism]]$conf
         if (step_is_done(config, "fetch", conf["exp"])) next
         set_flag(config, "start", conf["exp"])
-        download_sra(
-            study[ScientificName == organism],
-            conf["fastq"],
-            compress = config$compress_raw_data
+        experiment <- conf["exp"]
+        reset_sample_flags(config, "fetch", experiment)
+        run_experiment_subprocess(
+          func = function(info, outdir, compress, config, experiment) {
+            download_sra(
+              info, outdir, compress = compress,
+              after_run = function(run) set_sample_flag(config, "fetch", experiment, run)
+            )
+          },
+          args = list(info = study[ScientificName == organism], outdir = conf["fastq"],
+                      compress = config$compress_raw_data, config = config, experiment = experiment),
+          logfile_out = file.path(config$project, "log_pipeline", "console", "fetch", paste0(experiment, ".out.log")),
+          logfile_err = file.path(config$project, "log_pipeline", "console", "fetch", paste0(experiment, ".err.log")),
+          on_poll = function() pipeline_checklist(pipelines, config)
         )
         set_flag(config, "fetch", conf["exp"])
     }

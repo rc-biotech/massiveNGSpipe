@@ -4,12 +4,16 @@
 \alias{pipeline_download}
 \title{Download all SRA files for all studies}
 \usage{
-pipeline_download(pipeline, config)
+pipeline_download(pipeline, config, pipelines = list(pipeline))
 }
 \arguments{
 \item{pipeline}{a pipeline object}
 
 \item{config}{the mNGSp config object from \link{pipeline_config}}
+
+\item{pipelines}{the full pipelines list, used only to render the
+checklist (study-level context beyond this one pipeline/organism);
+defaults to just this pipeline if called standalone.}
 }
 \value{
 invisible(NULL)
@@ -17,4 +21,10 @@ invisible(NULL)
 \description{
 Extract them into \verb{<accession>.fastq.gz} or \verb{<accession>_\{1,2\}.fastq.gz}
 for SE/PE reads respectively.
+}
+\details{
+The per-run downloads run in a subprocess (aws s3 sync / ascp /
+fasterq-dump's own console output does not otherwise get captured, see
+run_experiment_subprocess()) that this function polls for progress,
+rendering the checklist on each tick.
 }
