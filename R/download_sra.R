@@ -49,7 +49,7 @@ sra_or_direct_fastq_format <- function(study_info_dt, accession) {
   return(attempt_fast_sra_format)
 }
 
-download_sra_aws <- function(run_accession, outdir, aws_bin = "aws",
+download_sra_aws <- function(run_accession, outdir, aws_bin = install_aws(),
                              aws_mirror = "s3://sra-pub-run-odp/sra") {
 
   file_aws_url <- file.path(aws_mirror, run_accession)
@@ -73,7 +73,7 @@ download_sra_aws <- function(run_accession, outdir, aws_bin = "aws",
 }
 
 download_sra_ascp <- function(run_accession, outdir,
-                              ascp_bin = fs::path_home(".aspera/connect/bin/ascp"),
+                              ascp_bin = install_ascp(),
                               ascp_private_key = "~/.aspera/connect/etc/asperaweb_id_dsa.openssh",
                               resume_level = 1,
                               ssh_port = 33001,
@@ -385,42 +385,78 @@ delete_existing_preformat_files <- function(outdir, accessions, delete_srr_prefo
   }
 }
 
+#' Install ascp (IBM Aspera Connect), if not already installed
+#'
+#' Default location matches Aspera Connect's own default non-root install
+#' path (a hidden dotfolder under home, same as its official installer),
+#' which is also what \code{\link{download_sra_ascp}} looks for by default.
+#' @param path path to the ascp binary, relative to the home directory,
+#' default ".aspera/connect/bin/ascp".
+#' @return path to runnable ascp, only ever returned if it exists.
 install_ascp <- function(path = ".aspera/connect/bin/ascp") {
   install_path <- fs::path_home(path)
   if (file.exists(install_path)) return(install_path)
-  message("Installing ascp to default location:", install_path)
+  message("Installing ascp to default location: ", install_path)
   if (.Platform$OS.type != "unix")
     stop("On windows OS, run through WSL!")
   is_linux <- Sys.info()[1] == "Linux"
-  if (is_linux) {
-    base_url <- "ibm-aspera-connect_4.1.0.46-linux_x86_64.tar.gz"
-  } else base_url <- stop("Implement")
-  tempfile <- file.path(tempdir(), "aspera.tar.gz")
-  download.file(paste0("https://ak-delivery04-mul.dhe.ibm.com/sar/CMA/OSA/0a07f/0/", base_url), tempfile)
-  file <- untar(tempfile, exdir = dirname(tempfile))
-  sh <- gsub(".tar.gz$", ".sh", tempfile)
+  if (!is_linux) stop("Implement")
+  base_url <- "ibm-aspera-connect_4.1.0.46-linux_x86_64.tar.gz"
+  tmp_archive <- file.path(tempdir(), "aspera.tar.gz")
+  download.file(paste0("https://ak-delivery04-mul.dhe.ibm.com/sar/CMA/OSA/0a07f/0/", base_url), tmp_archive)
+  # Do not assume the archive's internal installer name matches our local
+  # download filename -- list it first and find the real .sh entry.
+  entries <- untar(tmp_archive, list = TRUE)
+  installer <- entries[grepl("\\.sh$", entries)]
+  if (length(installer) != 1)
+    stop("Could not identify a unique Aspera Connect install script inside the downloaded archive")
+  untar(tmp_archive, exdir = dirname(tmp_archive))
+  sh <- file.path(dirname(tmp_archive), installer)
   system(paste("chmod +x", sh))
   system(sh)
+  if (!file.exists(install_path) || file.access(install_path, mode = 1) != 0)
+    stop("ascp installation failed: ", install_path, " does not exist or is not executable after running the installer")
   message("done")
   return(install_path)
 }
 
-install_aws <- function(path = "~/bin/aws") {
-
+#' Install aws (AWS CLI v2), if not already installed
+#'
+#' @param path path to the aws binary, relative to the home directory,
+#' default "bin/aws".
+#' @return path to runnable aws, only ever returned if it exists.
+install_aws <- function(path = "bin/aws") {
   install_path <- fs::path_home(path)
   if (file.exists(install_path)) return(install_path)
-  message("Installing aws to default location:", install_path)
+  message("Installing aws to default location: ", install_path)
   if (.Platform$OS.type != "unix")
     stop("On windows OS, run through WSL!")
   is_linux <- Sys.info()[1] == "Linux"
-  if (is_linux) {
-    base_url <- "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
-  } else base_url <- stop("Implement")
-  tempfile <- file.path(tempdir(), "aws-cli.zip")
-  download.file(base_url, tempfile)
-  file <- unzip(tempfile, exdir = dir)
-  sh <- paste0(file.path(dir, "install"), "-i ~/bin -b ~/bin")
-  system(sh)
+  if (!is_linux) stop("Implement")
+  base_url <- "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+  tmp_archive <- file.path(tempdir(), "aws-cli.zip")
+  download.file(base_url, tmp_archive)
+  exdir <- file.path(tempdir(), "aws-cli-extracted")
+  dir.create(exdir, showWarnings = FALSE, recursive = TRUE)
+  # Do not assume the zip's internal layout -- list it first and find the
+  # real "install" script entry (official layout nests it under "aws/").
+  entries <- unzip(tmp_archive, list = TRUE)$Name
+  installer <- entries[basename(entries) == "install"]
+  if (length(installer) != 1)
+    stop("Could not identify a unique AWS CLI install script inside the downloaded archive")
+  unzip(tmp_archive, exdir = exdir)
+  # unzip() does not preserve the zip's stored Unix executable bits, so the
+  # bundled "dist/aws" binary the install script depends on (and everything
+  # else in dist/) comes out non-executable even after chmod'ing the
+  # top-level install script alone.
+  system(paste("chmod -R +x", file.path(exdir, dirname(installer))))
+  sh <- file.path(exdir, installer)
+  bin_dir <- dirname(install_path)
+  dir.create(bin_dir, showWarnings = FALSE, recursive = TRUE)
+  install_dir <- file.path(bin_dir, "aws-cli")
+  system(paste(sh, "-i", install_dir, "-b", bin_dir))
+  if (!file.exists(install_path) || file.access(install_path, mode = 1) != 0)
+    stop("aws installation failed: ", install_path, " does not exist or is not executable after running the installer")
   message("done")
   return(install_path)
 }
