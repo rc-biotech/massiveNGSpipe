@@ -6,15 +6,19 @@
 ("SRR<...>_1.fastq.gz", "SRR<...>_2.fastq.gz") are trimmed separately
 from each other to allow for differing adapters.}
 \usage{
-pipeline_trim(pipeline, config)
+pipeline_trim(pipeline, config, pipelines = list(pipeline))
 }
 \arguments{
 \item{pipeline}{a pipeline object}
 
 \item{config}{the mNGSp config object from \link{pipeline_config}}
+
+\item{pipelines}{the full pipelines list, used only to render the
+checklist (study-level context beyond this one pipeline/organism);
+defaults to just this pipeline if called standalone.}
 }
 \description{
-Trim all .fastq.gz files in a given pipeline. Paired end reads
-("SRR<...>_1.fastq.gz", "SRR<...>_2.fastq.gz") are trimmed separately
-from each other to allow for differing adapters.
+The per-run work runs in a subprocess (fastp's own console output does
+not otherwise get captured, see run_experiment_subprocess()) that this
+function polls for progress, rendering the checklist on each tick.
 }

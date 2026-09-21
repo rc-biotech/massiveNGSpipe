@@ -26,8 +26,15 @@ pipeline_download <- function(pipeline, config) {
 #' Trim all .fastq.gz files in a given pipeline. Paired end reads
 #' ("SRR<...>_1.fastq.gz", "SRR<...>_2.fastq.gz") are trimmed separately
 #' from each other to allow for differing adapters.
+#'
+#' The per-run work runs in a subprocess (fastp's own console output does
+#' not otherwise get captured, see run_experiment_subprocess()) that this
+#' function polls for progress, rendering the checklist on each tick.
 #' @inheritParams pipeline_download
-pipeline_trim <- function(pipeline, config) {
+#' @param pipelines the full pipelines list, used only to render the
+#' checklist (study-level context beyond this one pipeline/organism);
+#' defaults to just this pipeline if called standalone.
+pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
     study <- pipeline$study
     config$BPPARAM_TRIM <- bpparam_from_config(config, "trim")
     for (organism in names(pipeline$organisms)) {
@@ -42,27 +49,37 @@ pipeline_trim <- function(pipeline, config) {
         # Files to run (Single end / Paired end)
         all_files <- run_files_organizer(runs, source_dir)
         # Trim
-        # tail(seq_len(nrow(runs)), 1)
-        barcodes_dt <-
-        lapply(seq_len(nrow(runs)), function(i, all_files, runs, mode) {
-          study_sample <- runs[i]
-          run <- study_sample$Run
-          message(run)
-          filenames <- all_files[[i]]
-          single_end <- is.na(filenames[2])
-          file <- filenames[1]
-          file2 <- if(!single_end) filenames[2]
-          # adapter <- "AGATCGGAAGAG"
-          adapter <- detect_adapter_and_trim(file, target_dir, file2)
-          barcode_dt <- data.table()
-          check_for_barcodes <- runs[i]$LIBRARYTYPE == "RFP"
-          if (check_for_barcodes) {
-            barcode_dt <- run_barcode_detection_and_trim(study_sample, source_dir,
-                                                         target_dir, trimmed_dir, mode, adapter)
-          }
-
-          return(barcode_dt)
-        }, all_files = all_files, runs = runs, mode = config$mode)
+        experiment <- conf["exp"]
+        reset_sample_flags(config, "trim", experiment)
+        barcodes_dt <- run_experiment_subprocess(
+          func = function(all_files, runs, mode, target_dir, trimmed_dir, source_dir, config, experiment) {
+            lapply(seq_len(nrow(runs)), function(i) {
+              study_sample <- runs[i]
+              run <- study_sample$Run
+              message(run)
+              filenames <- all_files[[i]]
+              single_end <- is.na(filenames[2])
+              file <- filenames[1]
+              file2 <- if(!single_end) filenames[2]
+              # adapter <- "AGATCGGAAGAG"
+              adapter <- detect_adapter_and_trim(file, target_dir, file2)
+              barcode_dt <- data.table()
+              check_for_barcodes <- runs[i]$LIBRARYTYPE == "RFP"
+              if (check_for_barcodes) {
+                barcode_dt <- run_barcode_detection_and_trim(study_sample, source_dir,
+                                                             target_dir, trimmed_dir, mode, adapter)
+              }
+              set_sample_flag(config, "trim", experiment, run)
+              barcode_dt
+            })
+          },
+          args = list(all_files = all_files, runs = runs, mode = config$mode,
+                      target_dir = target_dir, trimmed_dir = trimmed_dir,
+                      source_dir = source_dir, config = config, experiment = experiment),
+          logfile_out = file.path(config$project, "log_pipeline", "console", "trim", paste0(experiment, ".out.log")),
+          logfile_err = file.path(config$project, "log_pipeline", "console", "trim", paste0(experiment, ".err.log")),
+          on_poll = function() pipeline_checklist(pipelines, config)
+        )
         barcodes_dt <- rbindlist(barcodes_dt, fill = TRUE)
         fwrite(barcodes_dt, file.path(trimmed_dir, "adapter_barcode_table.csv"))
 
@@ -76,8 +93,19 @@ pipeline_trim <- function(pipeline, config) {
 #' Remove contaminants and align the reads to genome. Single and paired end
 #' reads are handled separately, so the resulting logs are renamed with a
 #' "_SINGLE" and/or "_PAIRED" suffix.
+#'
+#' The per-pair alignment loop plus alignment_final_checks() run in a
+#' subprocess (STAR/multiQC's own console output does not otherwise get
+#' captured, see run_experiment_subprocess()) that this function polls for
+#' progress, rendering the checklist on each tick. STAR's shared-memory
+#' genome loading (keep.index.in.memory) is already fully loaded and
+#' unloaded within one experiment's loop today, so wrapping at this
+#' per-experiment granularity introduces no cross-process shared-memory
+#' risk.
 #' @inheritParams pipeline_download
-pipeline_align <- function(pipeline, config) {
+#' @param pipelines the full pipelines list, used only to render the
+#' checklist; defaults to just this pipeline if called standalone.
+pipeline_align <- function(pipeline, config, pipelines = list(pipeline)) {
   # TODO: fix multiqc error for trimmed
   study <- pipeline$study
   did_contamint_removal <- "contam" %in% names(config$flag)
@@ -126,29 +154,46 @@ pipeline_align <- function(pipeline, config) {
       } else strandMode <- readRDS(file.path(output_dir, "strandMode.rds"))
     }
 
-    pair_index <- 1
-    cat("Total number of files are:\n")
-    cat(length(pairs)); cat("\n")
-    for (R1_R2 in pairs) {
-      cat("Single end mode\n")
-      cat("Run ", pair_index, " / ", length(pairs), "\n")
-      single_end <- lengths(pairs[pair_index]) == 1
-      pair_index <- pair_index + 1
-      keep.index.in.memory <- !identical(R1_R2, tail(pairs, 1)[[1]])
-      file1 <- R1_R2[ifelse(single_end, 1, strandMode)]
-      file2 <- if (!is.na(R1_R2[2]) & FALSE) {R1_R2[ifelse(strandMode == 1, 2, 1)]}
-      ORFik::STAR.align.single(file1, file2,
-                               output.dir = output_dir,
-                               index.dir = index, steps = steps,
-                               resume = "ge",
-                               keep.index.in.memory = keep.index.in.memory,
-                               keep.unaligned.genome = keep.unaligned.genome,
-                               star.path = star.path, fastp = fastp.path
-      )
-      #TODO: Now _1 and _2 will be kept, but fixed in cleanup, do I want it like that ?
-    }
-
-    alignment_final_checks(input_dir, output_dir, runs, config, steps)
+    experiment <- conf["exp"]
+    reset_sample_flags(config, "aligned", experiment)
+    run_experiment_subprocess(
+      func = function(pairs, runs, strandMode, output_dir, index, steps,
+                      keep.unaligned.genome, star.path, fastp.path,
+                      input_dir, config, experiment) {
+        pair_index <- 1
+        cat("Total number of files are:\n")
+        cat(length(pairs)); cat("\n")
+        for (R1_R2 in pairs) {
+          cat("Single end mode\n")
+          cat("Run ", pair_index, " / ", length(pairs), "\n")
+          single_end <- lengths(pairs[pair_index]) == 1
+          run <- runs[pair_index]$Run
+          keep.index.in.memory <- !identical(R1_R2, tail(pairs, 1)[[1]])
+          file1 <- R1_R2[ifelse(single_end, 1, strandMode)]
+          file2 <- if (!is.na(R1_R2[2]) & FALSE) {R1_R2[ifelse(strandMode == 1, 2, 1)]}
+          ORFik::STAR.align.single(file1, file2,
+                                   output.dir = output_dir,
+                                   index.dir = index, steps = steps,
+                                   resume = "ge",
+                                   keep.index.in.memory = keep.index.in.memory,
+                                   keep.unaligned.genome = keep.unaligned.genome,
+                                   star.path = star.path, fastp = fastp.path
+          )
+          #TODO: Now _1 and _2 will be kept, but fixed in cleanup, do I want it like that ?
+          set_sample_flag(config, "aligned", experiment, run)
+          pair_index <- pair_index + 1
+        }
+        alignment_final_checks(input_dir, output_dir, runs, config, steps)
+      },
+      args = list(pairs = pairs, runs = runs, strandMode = strandMode,
+                  output_dir = output_dir, index = index, steps = steps,
+                  keep.unaligned.genome = keep.unaligned.genome,
+                  star.path = star.path, fastp.path = fastp.path,
+                  input_dir = input_dir, config = config, experiment = experiment),
+      logfile_out = file.path(config$project, "log_pipeline", "console", "align", paste0(experiment, ".out.log")),
+      logfile_err = file.path(config$project, "log_pipeline", "console", "align", paste0(experiment, ".err.log")),
+      on_poll = function() pipeline_checklist(pipelines, config)
+    )
     set_flag(config, "aligned", conf["exp"])
   }
 }
@@ -175,8 +220,18 @@ alignment_final_checks <- function(input_dir, output_dir, runs, config, steps) {
 #' Remove contaminants and align the reads to genome. Single and paired end
 #' reads are handled separately, so the resulting logs are renamed with a
 #' "_SINGLE" and/or "_PAIRED" suffix.
+#'
+#' Runs in a subprocess for log hygiene (STAR's own console output does
+#' not otherwise get captured, see run_experiment_subprocess()). This is a
+#' whole-folder STAR call (ORFik::STAR.align.folder()), not a per-sample R
+#' loop, so unlike pipeline_trim()/pipeline_align() there is no natural
+#' per-sample point to hook a marker write into -- the checklist only ever
+#' shows study-level counts for this stage, same limitation as
+#' pshift/valid_pshift/pcounts (ORFik's own internal BiocParallel dispatch).
 #' @inheritParams pipeline_download
-pipeline_align_contaminants <- function(pipeline, config) {
+#' @param pipelines the full pipelines list, used only to render the
+#' checklist; defaults to just this pipeline if called standalone.
+pipeline_align_contaminants <- function(pipeline, config, pipelines = list(pipeline)) {
   study <- pipeline$study
   for (organism in names(pipeline$organisms)) {
     conf <- pipeline$organisms[[organism]]$conf
@@ -187,46 +242,56 @@ pipeline_align_contaminants <- function(pipeline, config) {
     output_dir <- conf["bam"]
     did_collapse <- "collapsed" %in% names(config$flag)
     keep.contaminants <- config$keep_contaminants
-    if (any(runs$LibraryLayout == "SINGLE")) {
-      input_dir <- ifelse(did_collapse,
-                          fs::path(trimmed_dir, "SINGLE"),
-                          trimmed_dir)
-      ORFik::STAR.align.folder(
-        input.dir = input_dir,
-        output.dir = output_dir, keep.contaminants = keep.contaminants,
-        index.dir = index, steps = "co", paired.end = FALSE
-      )
-      for (stage in c("contaminants_depletion")) {
-        fs::file_move(
-          fs::path(output_dir, stage, "LOGS"),
-          fs::path(output_dir, stage, "LOGS_SINGLE")
-        )
-      }
-      for (filename in c("full_process.csv", "runCommand.log")) {
-        fs::file_move(
-          fs::path(output_dir, filename),
-          fs::path(output_dir, paste0(
-            fs::path_ext_remove(filename), "_SINGLE.",
-            fs::path_ext(filename)
-          ))
-        )
-      }
+    experiment <- conf["exp"]
+    run_experiment_subprocess(
+      func = function(runs, trimmed_dir, output_dir, did_collapse, keep.contaminants, index) {
+        if (any(runs$LibraryLayout == "SINGLE")) {
+          input_dir <- ifelse(did_collapse,
+                              fs::path(trimmed_dir, "SINGLE"),
+                              trimmed_dir)
+          ORFik::STAR.align.folder(
+            input.dir = input_dir,
+            output.dir = output_dir, keep.contaminants = keep.contaminants,
+            index.dir = index, steps = "co", paired.end = FALSE
+          )
+          for (stage in c("contaminants_depletion")) {
+            fs::file_move(
+              fs::path(output_dir, stage, "LOGS"),
+              fs::path(output_dir, stage, "LOGS_SINGLE")
+            )
+          }
+          for (filename in c("full_process.csv", "runCommand.log")) {
+            fs::file_move(
+              fs::path(output_dir, filename),
+              fs::path(output_dir, paste0(
+                fs::path_ext_remove(filename), "_SINGLE.",
+                fs::path_ext(filename)
+              ))
+            )
+          }
 
-    }
-    if (any(runs$LibraryLayout == "PAIRED")) {
-      input_dir <- ifelse(did_collapse,
-                          fs::path(trimmed_dir, "PAIRED"),
-                          trimmed_dir)
-      # message("Paired end ignored for now, running collapsed pair mode only!")
-      collapsed_paired_end_mode <- TRUE
-      ORFik::STAR.align.folder(
-        input.dir = input_dir,
-        output.dir = output_dir,
-        index.dir = index, steps = "co",
-        keep.contaminants = keep.contaminants,
-        paired.end = collapsed_paired_end_mode
-      )
-    }
+        }
+        if (any(runs$LibraryLayout == "PAIRED")) {
+          input_dir <- ifelse(did_collapse,
+                              fs::path(trimmed_dir, "PAIRED"),
+                              trimmed_dir)
+          # message("Paired end ignored for now, running collapsed pair mode only!")
+          collapsed_paired_end_mode <- TRUE
+          ORFik::STAR.align.folder(
+            input.dir = input_dir,
+            output.dir = output_dir,
+            index.dir = index, steps = "co",
+            keep.contaminants = keep.contaminants,
+            paired.end = collapsed_paired_end_mode
+          )
+        }
+      },
+      args = list(runs = runs, trimmed_dir = trimmed_dir, output_dir = output_dir,
+                  did_collapse = did_collapse, keep.contaminants = keep.contaminants, index = index),
+      logfile_out = file.path(config$project, "log_pipeline", "console", "contam", paste0(experiment, ".out.log")),
+      logfile_err = file.path(config$project, "log_pipeline", "console", "contam", paste0(experiment, ".err.log")),
+      on_poll = function() pipeline_checklist(pipelines, config)
+    )
     set_flag(config, "contam", conf["exp"])
   }
 }

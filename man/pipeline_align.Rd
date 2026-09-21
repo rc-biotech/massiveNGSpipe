@@ -6,15 +6,23 @@
 reads are handled separately, so the resulting logs are renamed with a
 "_SINGLE" and/or "_PAIRED" suffix.}
 \usage{
-pipeline_align(pipeline, config)
+pipeline_align(pipeline, config, pipelines = list(pipeline))
 }
 \arguments{
 \item{pipeline}{a pipeline object}
 
 \item{config}{the mNGSp config object from \link{pipeline_config}}
+
+\item{pipelines}{the full pipelines list, used only to render the
+checklist; defaults to just this pipeline if called standalone.}
 }
 \description{
-Remove contaminants and align the reads to genome. Single and paired end
-reads are handled separately, so the resulting logs are renamed with a
-"_SINGLE" and/or "_PAIRED" suffix.
+The per-pair alignment loop plus alignment_final_checks() run in a
+subprocess (STAR/multiQC's own console output does not otherwise get
+captured, see run_experiment_subprocess()) that this function polls for
+progress, rendering the checklist on each tick. STAR's shared-memory
+genome loading (keep.index.in.memory) is already fully loaded and
+unloaded within one experiment's loop today, so wrapping at this
+per-experiment granularity introduces no cross-process shared-memory
+risk.
 }

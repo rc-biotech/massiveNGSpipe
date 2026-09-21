@@ -6,15 +6,22 @@
 reads are handled separately, so the resulting logs are renamed with a
 "_SINGLE" and/or "_PAIRED" suffix.}
 \usage{
-pipeline_align_contaminants(pipeline, config)
+pipeline_align_contaminants(pipeline, config, pipelines = list(pipeline))
 }
 \arguments{
 \item{pipeline}{a pipeline object}
 
 \item{config}{the mNGSp config object from \link{pipeline_config}}
+
+\item{pipelines}{the full pipelines list, used only to render the
+checklist; defaults to just this pipeline if called standalone.}
 }
 \description{
-Remove contaminants and align the reads to genome. Single and paired end
-reads are handled separately, so the resulting logs are renamed with a
-"_SINGLE" and/or "_PAIRED" suffix.
+Runs in a subprocess for log hygiene (STAR's own console output does
+not otherwise get captured, see run_experiment_subprocess()). This is a
+whole-folder STAR call (ORFik::STAR.align.folder()), not a per-sample R
+loop, so unlike pipeline_trim()/pipeline_align() there is no natural
+per-sample point to hook a marker write into -- the checklist only ever
+shows study-level counts for this stage, same limitation as
+pshift/valid_pshift/pcounts (ORFik's own internal BiocParallel dispatch).
 }

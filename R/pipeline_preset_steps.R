@@ -35,7 +35,7 @@ pipe_trim_collapse <- function(pipelines, config) {
     if (file.exists(report_failed_pipe_path(config, exp))) next
     try <- try({
       if (do_trim)
-        pipeline_trim(pipeline,     config)
+        pipeline_trim(pipeline, config, pipelines)
     })
     status <- report_failed_pipe(try, config, "trim", pipeline$accession)
     if (status) {
@@ -56,9 +56,9 @@ pipe_align_clean <- function(pipelines, config) {
     if (file.exists(report_failed_pipe_path(config, exp))) next
     try <- try({
       if (do_contamint_removal)
-        pipeline_align_contaminants(pipeline, config)
+        pipeline_align_contaminants(pipeline, config, pipelines)
 
-      pipeline_align(pipeline,    config)
+      pipeline_align(pipeline, config, pipelines)
 
     })
     status <- report_failed_pipe(try, config, "align", pipeline$accession)
