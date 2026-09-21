@@ -400,10 +400,16 @@ install_ascp <- function(path = ".aspera/connect/bin/ascp") {
   if (.Platform$OS.type != "unix")
     stop("On windows OS, run through WSL!")
   is_linux <- Sys.info()[1] == "Linux"
-  if (!is_linux) stop("Implement")
-  base_url <- "ibm-aspera-connect_4.1.0.46-linux_x86_64.tar.gz"
+  if (!is_linux)
+    stop("Mac ascp install not yet implemented. A working download URL is known ",
+         "(https://d3gcli72yxqn2z.cloudfront.net/downloads/connect/latest/bin/",
+         "ibm-aspera-connect_4.2.19.956-HEAD_macOS_x86_64.pkg), but the silent-install ",
+         "invocation and resulting ascp path are unverified without a Mac to test on.")
+  # The previous IBM delivery host (ak-delivery04-mul.dhe.ibm.com) was
+  # retired; this CloudFront URL was confirmed working 2026-09-21.
+  archive_url <- "https://d3gcli72yxqn2z.cloudfront.net/downloads/connect/latest/bin/ibm-aspera-connect_4.2.19.956-HEAD_linux_x86_64.tar.gz"
   tmp_archive <- file.path(tempdir(), "aspera.tar.gz")
-  download.file(paste0("https://ak-delivery04-mul.dhe.ibm.com/sar/CMA/OSA/0a07f/0/", base_url), tmp_archive)
+  download.file(archive_url, tmp_archive)
   # Do not assume the archive's internal installer name matches our local
   # download filename -- list it first and find the real .sh entry.
   entries <- untar(tmp_archive, list = TRUE)
