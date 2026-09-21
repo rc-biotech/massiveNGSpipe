@@ -68,7 +68,7 @@
 #'  stop.on.error = TRUE)}
 #' Specific pipeline config for parallel settings and log directory for BPPARAM_MAIN
 #' @param verbose logical, default TRUE, give start up message
-#' @param discord_webhook = massiveNGSpipe:::discord_connection_default_cached()
+#' @param discord_webhook = discord_connection_default_cached()
 #' @param BPPARAM_MAIN BiocParallel::MulticoreParam(length(pipeline_steps))
 #' The main parallel backend for pipeline, specifying logging behavoir etc.
 #' @param BPPARAM_TRIM BiocParallel::MulticoreParam(max(BiocParallel::bpworkers(), 8)),

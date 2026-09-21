@@ -35,7 +35,7 @@ accessions_to_use <- function(user_specified = character(), organisms = "Homo sa
         term <- paste(org, libtype)
         message("-- ", term)
         search_accessions <- c(search_accessions,
-                               ORFik:::get_bioproject_candidates(term))
+                               ORFik::get_bioproject_candidates(term))
       }
     }
   }

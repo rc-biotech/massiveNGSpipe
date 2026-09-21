@@ -3,7 +3,7 @@
 
 #' Download all SRA files for all studies
 #'
-#' Extract them into '<'accession'>'.fastq.gz or '<'accession'>'_{1,2}.fastq.gz
+#' Extract them into \verb{<accession>.fastq.gz} or \verb{<accession>_\{1,2\}.fastq.gz}
 #' for SE/PE reads respectively.
 #' @param pipeline a pipeline object
 #' @param config the mNGSp config object from [pipeline_config]

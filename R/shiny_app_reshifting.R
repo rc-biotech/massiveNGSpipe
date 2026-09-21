@@ -9,9 +9,9 @@ psite_reshift_app <- function(config, exp_names = reshift_app_exp_names(config),
   ui <- fluidPage(
     fluidRow(h3("Ribo-seq P-site Shift Table Editor")),
     fluidRow(
-      column(1, actionButton("save", "💾 Save", class = "btn-primary")),
-      column(1, actionButton("verify", "✔️ Verify only", class = "btn-secondary")),
-      column(1, actionButton("undo", "↶ Undo shift", class = "btn-default")), # NEW BUTTON
+      column(1, actionButton("save", "\U0001f4be Save", class = "btn-primary")),
+      column(1, actionButton("verify", "\u2714\ufe0f Verify only", class = "btn-secondary")),
+      column(1, actionButton("undo", "\u21b6 Undo shift", class = "btn-default")), # NEW BUTTON
       column(3, fluidRow(selectizeInput(
         inputId = "study",
         label = NULL,
@@ -35,7 +35,7 @@ psite_reshift_app <- function(config, exp_names = reshift_app_exp_names(config),
         width = "100%"
       )),
       column(1, numericInput("relative_shift", "Shift (Rel)", value = 3, step = 1, width = "100%")),
-      column(1, fluidRow(actionButton("apply_shift", "↻ Apply Shift", class = "btn-warning")))
+      column(1, fluidRow(actionButton("apply_shift", "\u21bb Apply Shift", class = "btn-warning")))
     ),
     fluidRow(
       column(6,
@@ -169,10 +169,10 @@ psite_reshift_app <- function(config, exp_names = reshift_app_exp_names(config),
 
     output$shift_verification <- renderUI({
       if (verified_status()) {
-        div("✔ Verified", style = "color: white; background-color: #28a745;
+        div("\u2714 Verified", style = "color: white; background-color: #28a745;
          padding: 6px 12px; border-radius: 5px; font-weight: bold; text-align: center;")
       } else {
-        div("✘ Not Verified", style = "color: white; background-color: #dc3545;
+        div("\u2718 Not Verified", style = "color: white; background-color: #dc3545;
          padding: 6px 12px; border-radius: 5px; font-weight: bold; text-align: center;")
       }
     })

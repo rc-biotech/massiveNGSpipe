@@ -15,6 +15,6 @@ pipeline_download(pipeline, config)
 invisible(NULL)
 }
 \description{
-Extract them into '<'accession'>'.fastq.gz or '<'accession'>'_{1,2}.fastq.gz
+Extract them into \verb{<accession>.fastq.gz} or \verb{<accession>_\{1,2\}.fastq.gz}
 for SE/PE reads respectively.
 }

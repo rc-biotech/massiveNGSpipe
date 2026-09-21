@@ -91,7 +91,7 @@ docker_copy_done_experiments <- function(config,
 #' @return logical, TRUE if successful.
 #' @export
 #' @examples
-#' Single csv
+#' # Single csv
 #' copy_experiments_to("PRJNA324380-saccharomyces_cerevisiae.csv")
 #'
 #' csvs <- list.files(ORFik::config()["exp"], pattern = "modalities\\.csv$")
@@ -120,7 +120,7 @@ is_config <- function(config) return(is(config, "list") && !is.null(config$prese
 #' @param ... functions
 #' @return character, name of function
 #' @export
-name_of_function <- function(...) unlist(purrr:::map(rlang::ensyms(...) , as.character), use.names = FALSE)
+name_of_function <- function(...) unlist(purrr::map(rlang::ensyms(...) , as.character), use.names = FALSE)
 
 #' @inherit rstudioapi::filesPaneNavigate
 #' @importFrom rstudioapi filesPaneNavigate
@@ -262,10 +262,12 @@ file_statistics_raw <- function(config = ORFik::config(),
 
 file_statistics_internal <- function(dir_types, formats, type, l) {
   res <- mapply(function(dir_type, format) {
+    if (dir_type != "SINGLE") return(NULL)
+    browser()
     d <- file.path(l, dir_type)
     d <- d[dir.exists(d)]
     if (dir_type == "") dir_type <- format
-    format <- paste0(ifelse(format != "", "\\.", ""), format, "$")
+    format <- paste0(ifelse(format != "", "\\.", ""), format, ifelse(format != "", "(\\.gz)?", ""), "$")
     all_files <- list.files(d, format, full.names = TRUE)
     info <- as.data.table(file.info(all_files))
     data.table(type, dir_type, n_dirs = length(d), n_files = length(all_files), total_size_GB = round(sum(info$size) / 1e9))

@@ -236,7 +236,7 @@ save_report <- function(status_per_study_list) {
 
   message("- Loading trimming stats for all studies..")
   dt.trim <- rbindlist(lapply(trimmed.out.all, function(f) {
-    dt.trim.single <- try(ORFik:::trimming.table(f), silent = TRUE)
+    dt.trim.single <- try(ORFik::trimming.table(f), silent = TRUE)
     if (is(dt.trim.single, "try-error")) dt.trim.single <- data.table()
     return(dt.trim.single)
   }), fill = TRUE)

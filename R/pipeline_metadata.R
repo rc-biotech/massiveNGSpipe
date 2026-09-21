@@ -296,7 +296,7 @@ pipeline_metadata_annotate <- function(filtered_RFP) {
   }
   # Knock outs
   filtered_RFP$GENE <- ""
-  combs <- expand.grid(c("Δ", "KO"), c(" .*", "_.*", "$"))
+  combs <- expand.grid(c("\u0394", "KO"), c(" .*", "_.*", "$"))
   KO_combs <- paste(paste0(combs[,1], combs[,2]), collapse = "|")
   KO_hits <- grep(KO_combs, filtered_RFP$sample_title)
   filtered_RFP[KO_hits,]$CONDITION <- "KO"

@@ -46,7 +46,7 @@ qc_pipeline_generic <- function(df, output_dir = QCfolder(df), BPPARAM = bpparam
 
   # PCA
   ggsave(filename = file.path(output_dir, paste0("PCAplot_", name(df), ".png")),
-         ORFik:::pcaExperiment(df), height = 7, width = 7)
+         ORFik::pcaExperiment(df), height = 7, width = 7)
 
   is_ribo <- identical("RFP", libraryTypes(df))
   if (is_ribo) {
@@ -80,7 +80,7 @@ analysis_pipeline_DTEG <- function(df.rfp = read.experiment("Eleonora-homo_sapie
   RFP_counts_canonical <- RFP_counts[rownames(RFP_counts) %in% selected_isoforms,]
   RNA_counts_canonical <- RNA_counts[rownames(RNA_counts) %in% selected_isoforms,]
   message("--- PCA validation plot")
-  ORFik:::pcaPlot(table = assay(safe_se_cbind(list(RFP_counts, RNA_counts))),
+  ORFik::pcaPlot(table = assay(safe_se_cbind(list(RFP_counts, RNA_counts))),
                   file.path(output_dir, paste0("PCA_", df.rfp$libtype[1], "_", df.rna$libtype[1], ".png")))
   custom_for_sars_cov2 <- grepl("x_sars_cov2$", name(df.rfp))
   if (custom_for_sars_cov2) {
@@ -114,7 +114,7 @@ analysis_pipeline_DTEG <- function(df.rfp = read.experiment("Eleonora-homo_sapie
   fwrite(res_extended, file.path(output_dir, "DTEG_analysis_with_gene_symbols.csv"))
 
 
-  combined_with_box <- RiboCrypt:::DEG_plot(res_extended_id)
+  combined_with_box <- RiboCrypt::DEG_plot(res_extended_id)
   bs_inlined <- htmltools::attachDependencies(combined_with_box,
                                               htmltools::htmlDependencies(combined_with_box),
                                               append = TRUE)
@@ -248,7 +248,7 @@ analysis_pipeline_DEG <- function(df.rfp, output_dir = QCfolder(df.rfp),
   res_extended_id <- append_gene_symbols(res_extended, symbols, extend_id = TRUE)
 
 
-  combined_with_box <- RiboCrypt:::DEG_plot(res_extended_id)
+  combined_with_box <- RiboCrypt::DEG_plot(res_extended_id)
   bs_inlined <- htmltools::attachDependencies(combined_with_box,
                                               htmltools::htmlDependencies(combined_with_box),
                                               append = TRUE)

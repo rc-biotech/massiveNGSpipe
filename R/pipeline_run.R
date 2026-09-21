@@ -94,7 +94,7 @@ run_pipeline_end_session <- function(pipelines, config) {
                      "- experiments are named: ", paste(exps, collapse = " and "),
                      collapse = "\n")
 
-    massiveNGSpipe:::discord_connection_default_cached()
+    discord_connection_default_cached()
     discordr::send_webhook_message(message)
   }
 

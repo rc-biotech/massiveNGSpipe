@@ -70,8 +70,16 @@ Package is currently only available here on github
 ```r
 if (!requireNamespace("devtools", quietly=TRUE))
     install.packages("devtools")
-devtools::install_github("rc-biotech/massive_NGS_pipe")
+devtools::install_github("rc-biotech/massiveNGSpipe", upgrade = "never")
 ```  
+
+The `Remotes` field pins the data.table, fst, fstcore, and ORFik development
+dependencies used by this checkout. Install into a separate R library when
+comparing these forks with released versions, and use a fresh R session for
+each library. `R CMD INSTALL` alone does not install `Remotes`; install those
+dependencies first. The pinned ORFik commit provides the `filter_chunk_rows`
+argument used by the organism merge helpers; an older ORFik build can have the
+same package version without providing that API.
 
 ### Requirements
 
@@ -468,4 +476,3 @@ the 18 and fail both adapter and barcode for the 2 etc.
 
 During download of .sra files, the extraction to .fastq is very hard drive intensive, we therefor implemented a tempdrive system to only run this step on the tempdrive (which is usually a scratch ssd on servers, i.e. much faster I/O).
 A potential crash that can happen is that the temp is filed by another user during the extraction, if so, restart the pipeline. 
-

@@ -81,7 +81,7 @@ pipe_cigar_collapse_single <- function(df_list, config) {
       files <- filepath(df, "ofst")
       for (f in files) {
         ofst <- fimport(f)
-        ORFik:::export.ofst(collapseDuplicatedReads(ofst), f)
+        ORFik::export.ofst(collapseDuplicatedReads(ofst), f)
       }
     }
 
@@ -90,7 +90,7 @@ pipe_cigar_collapse_single <- function(df_list, config) {
       files <- filepath(df, "ofst")
       for (f in files) {
         ofst <- fimport(f)
-        ORFik:::export.ofst(collapseDuplicatedReads(ofst), f)
+        ORFik::export.ofst(collapseDuplicatedReads(ofst), f)
       }
     }
 

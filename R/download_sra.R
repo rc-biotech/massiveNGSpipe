@@ -273,7 +273,7 @@ check_tempdir_has_space_sra_to_fastq <- function(accession, outdir, tempdir, PAI
     file_extracted_gb <- ifelse(PAIRED_END, file_extracted_gb*2, file_extracted_gb)
   }
 
-  tempdir_free_gb <- get_system_usage(drive = ORFik:::detect_drive(tempdir))$Drive_Free
+  tempdir_free_gb <- get_system_usage(drive = ORFik::detect_drive(tempdir))$Drive_Free
   tempdir_free_gb <- as.numeric(sub("[a-z]+|[A-Z]+", "", tempdir_free_gb))
 
   dir_to_use <- ifelse(file_extracted_gb > tempdir_free_gb, outdir, tempdir)

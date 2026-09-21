@@ -41,7 +41,7 @@ Create the superset collection of all samples per organism
 config <- pipeline_config()
 pipelines <- pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE)
 dirs <- lapply(pipelines, function(p) {
-dirs_pipe <- massiveNGSpipe:::list_dirs_of_pipeline(pipeline = p)
+dirs_pipe <- list_dirs_of_pipeline(pipeline = p)
 names(dirs_pipe) <- tolower(names(dirs_pipe))
 lapply(dirs_pipe, function(exp) {
   all(dir.exists(exp[-which(names(exp) \%in\% c("fastq", "trim", "exp"))]))
@@ -51,7 +51,7 @@ exists <- unlist(dirs, use.names = TRUE)
 names(exists) <- sub("\\\\.", "-", names(exists))
 names(exists) <- sub(" ", "_", names(exists))
 sum(exists / length(exists))
-all_exp_names <- unlist(massiveNGSpipe:::get_experiment_names(pipelines), use.names = FALSE)
+all_exp_names <- unlist(get_experiment_names(pipelines), use.names = FALSE)
 stopifnot(all(names(exists) \%in\% all_exp_names))
 done_experiments <- names(exists)[exists]
 length(done_experiments)

@@ -136,7 +136,7 @@ Run for unique mappers only, split out into seperate directory.}
  stop.on.error = TRUE)}
 Specific pipeline config for parallel settings and log directory for BPPARAM_MAIN}
 
-\item{discord_webhook}{= massiveNGSpipe:::discord_connection_default_cached()}
+\item{discord_webhook}{= discord_connection_default_cached()}
 
 \item{verbose}{logical, default TRUE, give start up message}
 

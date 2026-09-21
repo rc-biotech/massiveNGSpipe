@@ -327,8 +327,8 @@ barcode_detector_pipeline <- function(pipeline, redownload_raw_if_needed = TRUE)
 #' trim_dir <- file.path(output_dir, "trim") # fastp / barcode output dir
 #' dir.create(trim_dir, recursive = TRUE)
 #' # Run in debug mode, press n + enter to step through, s + enter to step into sub function
-#' debug(massiveNGSpipe:::barcode_detector_single)
-#' #massiveNGSpipe:::barcode_detector_single(run,
+#' debug(barcode_detector_single)
+#' #barcode_detector_single(run,
 #' #                                         fastq_dir, output_dir, trim_dir,
 #' #                                         redownload_raw_if_needed = FALSE)
 barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimmed_dir,
@@ -341,12 +341,24 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
   barcode_sizes <- barcode5p_size <- barcode3p_size <- cut_left_rel_pos <- cut_right_rel_pos <- 0
   consensus_string_5p <- consensus_string_3p <- ""
 
+  manual_specified_barcodes_file <- file.path(trimmed_dir, "barcodes_manual.csv")
+  manual_specified_barcodes_exists <- file.exists(manual_specified_barcodes_file)
+  if (manual_specified_barcodes_exists) {
+    dt_barcode <- fread(manual_specified_barcodes_file)
+    stopifnot(ncol(dt_barcode) == 3 &&
+                all(colnames(dt_barcode) == c("Run", "barcode5p_size", "barcode3p_size")))
+    stopifnot(sample %in% dt_barcode$Run)
+    barcode_sizes <- unlist(dt_barcode[Run == sample, 2:3], use.names = TRUE)
+    barcode5p_size <- barcode_sizes["barcode5p_size"]
+    barcode3p_size <- barcode_sizes["barcode3p_size"]
+  }
+
   json_file <- grep(sample, dir(trimmed_dir, "\\.json$", full.names = TRUE), value = TRUE)
   if (length(json_file) == 1) {
     trim_stats <- ORFik::trimming.table(trimmed_dir, json_file, TRUE)
     if (trim_stats$trim_mean_length <= check_at_mean_size) {
       return(data.table(id = sample, adapter = trim_stats$adapter,
-                        barcode_detected = FALSE,
+                        barcode_detected = max(barcode_sizes) > 0,
                         max_length_raw = trim_stats$raw_mean_length,
                         mean_length_raw = trim_stats$raw_mean_length,
                         mean_length_adapter_filtered = trim_stats$trim_mean_length,
@@ -360,13 +372,13 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
 
 
 
-  file_trim <- try(massiveNGSpipe:::run_files_organizer(study_sample, trimmed_dir)[[1]], silent = TRUE)
+  file_trim <- try(run_files_organizer(study_sample, trimmed_dir)[[1]], silent = TRUE)
   trimmed_file_exists <- !is(file_trim, "try-error")
-  file <- try(massiveNGSpipe:::run_files_organizer(study_sample, fastq_dir)[[1]][1], silent = TRUE)
+  file <- try(run_files_organizer(study_sample, fastq_dir)[[1]][1], silent = TRUE)
   raw_file_exists <- !is(file, "try-error")
   # Download
   if (!raw_file_exists & redownload_raw_if_needed) {
-    massiveNGSpipe:::download_sra(study_sample, fastq_dir, compress = FALSE)
+    download_sra(study_sample, fastq_dir, compress = FALSE)
     file <- try(run_files_organizer(study_sample, fastq_dir)[[1]][1], silent = TRUE)
     raw_file_exists <- !is(file, "try-error")
   }
@@ -391,15 +403,7 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
 
   reads_no_adapter_removed_ORFik <- NA
   fastq_cut <- NULL
-  manual_specified_barcodes_file <- file.path(trimmed_dir, "barcodes_manual.csv")
-  manual_specified_barcodes_exists <- file.exists(manual_specified_barcodes_file)
-  if (manual_specified_barcodes_exists) {
-    dt_barcode <- fread(manual_specified_barcodes_file)
-    stopifnot(ncol(dt_barcode) == 3 &&
-                all(colnames(dt_barcode) == c("Run", "barcode5p_size", "barcode3p_size")))
-    stopifnot(sample %in% dt_barcode$Run)
-    barcode_sizes <- unlist(dt_barcode[Run == sample, 2:3], use.names = TRUE)
-  }
+
 
   auto_detect_barcodes <- (max_size_after >= check_at_mean_size) & !manual_specified_barcodes_exists
   if (auto_detect_barcodes) {
@@ -532,7 +536,7 @@ move_trimmed_files <- function(study_sample, trimmed_dir, barcode_dir) {
   # Ignores file 2 in pair for now!
   run <- study_sample$Run
 
-  file_trim_all <- massiveNGSpipe:::run_files_organizer(study_sample, trimmed_dir)[[1]]
+  file_trim_all <- run_files_organizer(study_sample, trimmed_dir)[[1]]
   file_trim <- file_trim_all[1]
   json_file <- grep(run, dir(trimmed_dir, "\\.json$", full.names = TRUE), value = TRUE)
   html_file <- grep(run, dir(trimmed_dir, "\\.html$", full.names = TRUE), value = TRUE)

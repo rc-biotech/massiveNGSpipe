@@ -11,39 +11,63 @@ Description: R package for automatic NGS data download and analysis over a massi
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.2.1
+RoxygenNote: 7.3.3
 Depends:
     data.table,
     ORFik,
     BiocParallel
 Imports:
     base64enc,
+    BiocGenerics,
+    biomaRt,
     biomartr,
+    Biostrings,
+    callr,
     changepoint,
     DataEditR,
+    digest,
     discordr,
     DT,
-    filelock,
     fs,
     fst,
+    gargle,
     ggplot2,
     googledrive,
     googlesheets4,
+    htmltools,
+    htmlwidgets,
+    httr,
     jsonlite,
+    methods,
+    openssl,
     plotly,
     purrr,
+    qs2,
+    R.utils,
+    readxl,
+    remotes,
     RiboCrypt,
     rlang,
     rstudioapi,
+    rtracklayer,
     scales,
     shiny,
     shinycssloaders,
     shinyjqui,
     shinyWidgets,
     ShortRead,
-    stringr
+    stringr,
+    SummarizedExperiment
+Suggests:
+    matrixStats,
+    scater,
+    SingleCellExperiment,
+    uwot
 Remotes:
-    Roleren/ORFik,
+    Roleren/fstcore@8e4484640d1655de1f0e45d29f59c583ca901776,
+    Roleren/fst@d43080601e71b3a7642bd8f73af41543385b1705,
+    Roleren/data.table@78175c70df080a1f7d5162949f1293f95bfc0d69,
+    Roleren/ORFik@307f1ab42bc2ef8d4ced0ff39826613421353e3d,
     m-swirski/RiboCrypt,
     Bioconductor/BiocFileCache,
     TradingLogic/discordr

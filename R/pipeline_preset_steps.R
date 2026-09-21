@@ -233,7 +233,7 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
 #' config <- pipeline_config()
 #' pipelines <- pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE)
 #' dirs <- lapply(pipelines, function(p) {
-#' dirs_pipe <- massiveNGSpipe:::list_dirs_of_pipeline(pipeline = p)
+#' dirs_pipe <- list_dirs_of_pipeline(pipeline = p)
 #' names(dirs_pipe) <- tolower(names(dirs_pipe))
 #' lapply(dirs_pipe, function(exp) {
 #'   all(dir.exists(exp[-which(names(exp) %in% c("fastq", "trim", "exp"))]))
@@ -243,7 +243,7 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
 #' names(exists) <- sub("\\.", "-", names(exists))
 #' names(exists) <- sub(" ", "_", names(exists))
 #' sum(exists / length(exists))
-#' all_exp_names <- unlist(massiveNGSpipe:::get_experiment_names(pipelines), use.names = FALSE)
+#' all_exp_names <- unlist(get_experiment_names(pipelines), use.names = FALSE)
 #' stopifnot(all(names(exists) %in% all_exp_names))
 #' done_experiments <- names(exists)[exists]
 #' length(done_experiments)
@@ -291,7 +291,7 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
                       files = df$filepath, result_folder = out_dir)
     message("--- Validating created collection")
     df <- read.experiment(exp_name, output.env = new.env())
-    message("--- Merging count tables from studies")
+    message("--- CBind count tables from studies")
     count_folder <- QCfolder(df)
     dir.create(count_folder, recursive = TRUE, showWarnings = FALSE)
     for (region in c("mrna", "cds", "leaders", "trailers")) {
@@ -389,7 +389,7 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
     if (config$all_mappers) {
       message("--- Merging all mappers..")
       paths <- filepath(df, "default", base_folders = libFolder(df, mode = "all"))
-      ORFik::mergeLibs(df, out_dir, "all", "default", FALSE, paths = paths)
+      ORFik::mergeLibs(df, out_dir, "all", "default", FALSE, paths = paths, filter_chunk_rows = 5e8)
       make_additional_formats(df[1,], exp_name, out_dir)
     }
 
@@ -405,7 +405,7 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
       paths <- filepath(df_unique, "default",
                         base_folders = libFolder(df_unique, mode = "all"))
       ORFik::mergeLibs(df_unique, out_dir_unique, "all", "default", FALSE,
-                       paths = paths)
+                       paths = paths, filter_chunk_rows = 5e8)
       make_additional_formats_internal(df_unique_merged[1,])
       # fwrite(data.table(Run = runIDs(df)))
     }
@@ -413,6 +413,10 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
   return(invisible(NULL))
 }
 
+#' Convert library type from long name to short name
+#' @param long a character of long names
+#' @return a character of short names
+#' @export
 libtype_long_to_short <- function(long) {
   short <- long
   short[long == "Ribo-seq"] <- "RFP"
@@ -420,6 +424,10 @@ libtype_long_to_short <- function(long) {
   return(short)
 }
 
+#' Convert library type from short name to long name
+#' @param short a character of short names
+#' @return a character of long names
+#' @export
 libtype_short_to_long <- function(short) {
   long <- short
   long[long == "RFP"] <- "Ribo-seq"
@@ -463,22 +471,22 @@ make_additional_formats <- function(df_ref, exp_name, out_dir_exp) {
 #' @export
 make_additional_formats_internal <- function(df, libtype_df_ref =
                                                identical(libraryTypes(df), "RFP")) {
-
-  convert_to_covRleList(df)
   if (libtype_df_ref) {
-    message("- Bigwig method: ORFik (5' ends)")
-    convert_to_bigWig(df, in_files = filepath(df, "cov"))
+    message("- covRle & Bigwig method: ORFik (5' ends)")
+
   } else {
-    message("- Bigwig method: full read")
-    dir <- file.path(libFolder(df), "bigwig")
-    dir.create(dir, showWarnings = FALSE)
-    bw_files <- file.path(dir, c("all_forward.bigWig", "all_reverse.bigWig"))
-    covrle <- fimport(filepath(df, "cov"))
-    message("-- Bigwig forward")
-    rtracklayer::export.bw(object = f(covrle), bw_files[1])
-    message("-- Bigwig reverse")
-    rtracklayer::export.bw(object = r(covrle), bw_files[2])
+    message("- covRle & Bigwig method: full read")
+    # dir <- file.path(libFolder(df), "bigwig")
+    # dir.create(dir, showWarnings = FALSE)
+    # bw_files <- file.path(dir, c("all_forward.bigWig", "all_reverse.bigWig"))
+    # covrle <- fimport(filepath(df, "cov"))
+    # message("-- Bigwig forward")
+    # rtracklayer::export.bw(object = f(covrle), bw_files[1])
+    # message("-- Bigwig reverse")
+    # rtracklayer::export.bw(object = r(covrle), bw_files[2])
   }
+  convert_to_covRleList(df)
+  convert_to_bigWig(df, in_files = filepath(df, "cov"))
   ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE,
                             BPPARAM = SerialParam())
   suppressWarnings(remove.experiments(df))

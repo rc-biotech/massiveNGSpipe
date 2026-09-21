@@ -10,7 +10,6 @@ UMAP_by_gene_counts <- function(all_exp = list.experiments(validate = FALSE, pat
     remotes::install_version("matrixStats", version = "0.62.0", upgrade = "never")
   }
   library(matrixStats)
-  library(SummarizedExperiment)
   library(scater)     # For logNormCounts and runUMAP
   library(uwot)       # Or use scater::runUMAP wrapper
   library(SingleCellExperiment)
@@ -36,7 +35,7 @@ UMAP_by_gene_counts <- function(all_exp = list.experiments(validate = FALSE, pat
     colnames(dt_umap) <- c("UMAP 1", "UMAP 2")
 
     # Add metadata
-    srrs <- ORFik:::runIDs(df_all)
+    srrs <- ORFik::runIDs(df_all)
     rc_m <- meta_rc[match(srrs, Run),]
     stopifnot(nrow(rc_m) > 0)
     m <- rc_m

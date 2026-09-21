@@ -21,7 +21,7 @@ logical, TRUE if successful.
 Copy done experiment csvs to new directory
 }
 \examples{
-Single csv
+# Single csv
 copy_experiments_to("PRJNA324380-saccharomyces_cerevisiae.csv")
 
 csvs <- list.files(ORFik::config()["exp"], pattern = "modalities\\\\.csv$")

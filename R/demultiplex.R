@@ -84,7 +84,7 @@ demultiplex <- function(path, path_out = sub("multiplexed/", "trim/SINGLE", sub(
     #ShortRead::readFastq If we need quality
     file <- file.path(path, file)
     adapter <- ctrl$adapter[1]
-    if (!isTruthy(adapter)) adapter <- massiveNGSpipe:::fastqc_adapters_info(file)
+    if (!isTruthy(adapter)) adapter <- fastqc_adapters_info(file)
     if (adapter == "disable") stop("For demultiplexing adapter must be found!")
 
     # Create a streamer that reads 1e6 reads per chunk
