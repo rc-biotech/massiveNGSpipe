@@ -12,7 +12,7 @@ shiftFootprintsByExperimentSafe <- function(df, shifting_table, accepted_lengths
                                               shift.list = shifting_table,
                                               BPPARAM = BPPARAM),
                   error = function(e) {
-                    message(e)
+                    message(conditionMessage(e))
                     message(name(df))
                     message("P-shifting failed with strict FFT, trying weak!")
                     return(e)
@@ -26,7 +26,7 @@ shiftFootprintsByExperimentSafe <- function(df, shifting_table, accepted_lengths
                                                 strict.fft = FALSE,
                                                 BPPARAM = BPPARAM),
                     error = function(e) {
-                      message(e)
+                      message(conditionMessage(e))
                       message(name(df))
                       message("P-shifting failed also failed with weak FFT")
                       return(e)
@@ -42,7 +42,7 @@ shiftFootprintsByExperimentSafe <- function(df, shifting_table, accepted_lengths
                                                     strict.fft = FALSE,
                                                     BPPARAM = BPPARAM),
                         error = function(e) {
-                          message(e)
+                          message(conditionMessage(e))
                           message(name(df))
                           message("P-shifting failed also failed for hard 12nt,
                                     Fix manually (skipping to next project!)")
