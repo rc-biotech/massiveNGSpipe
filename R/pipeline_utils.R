@@ -262,8 +262,6 @@ file_statistics_raw <- function(config = ORFik::config(),
 
 file_statistics_internal <- function(dir_types, formats, type, l) {
   res <- mapply(function(dir_type, format) {
-    if (dir_type != "SINGLE") return(NULL)
-    browser()
     d <- file.path(l, dir_type)
     d <- d[dir.exists(d)]
     if (dir_type == "") dir_type <- format

@@ -12,7 +12,8 @@ list_dirs_of_pipeline <- function(pipeline) {
     dirs <- exp$conf
     dirs <- c(dirs,
               trim = file.path(dirs["bam"], "trim"),
-              aligned = file.path(dirs["bam"], "aligned"))
+              aligned = file.path(dirs["bam"], "aligned"),
+              contam = file.path(dirs["bam"], "contaminants_depletion"))
     dirs <- c(dirs,
               ofst = file.path(dirs["aligned"], "ofst"),
               pshifted = file.path(dirs["aligned"], "pshifted"),
