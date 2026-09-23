@@ -107,6 +107,45 @@ pipeline_checklist <- function(pipelines, config, print = TRUE) {
   invisible(tab)
 }
 
+#' Live-watch the pipeline checklist in place, like a download progress bar
+#'
+#' Continuously redraws \code{checklist_path(config)}'s current content in
+#' the terminal in place -- like \code{curl}'s progress bar, or
+#' \code{docker compose up}'s multi-line status block -- instead of
+#' printing a new block underneath on every refresh. Purely a read-only
+#' viewer: it never runs, mutates, or blocks the pipeline itself. Meant to
+#' be run in a second terminal/session alongside a real \code{\link{run_pipeline}}
+#' call happening elsewhere (in another terminal, or in the background).
+#'
+#' Uses ANSI cursor-movement escape codes (move up N lines, clear to end of
+#' screen, redraw), so it needs a real terminal emulator -- an \code{Rscript}
+#' or R session run from an actual shell. RStudio's own Console pane does
+#' not support cursor repositioning (only plain text/color codes), so this
+#' will not redraw in place there, only append. From a plain shell (no R
+#' needed at all), \code{watch -n 2 cat <checklist_path(config)>} does the
+#' same job using the standard \code{watch} utility, if that's simpler for
+#' your setup.
+#'
+#' @param config the mNGSp config object
+#' @param interval numeric, seconds between redraws, default 2
+#' @return invisible(NULL). Runs until interrupted (Ctrl+C, or Esc in
+#' RStudio -- though see the terminal note above).
+#' @export
+watch_pipeline_checklist <- function(config, interval = 2) {
+  path <- checklist_path(config)
+  n_prev_lines <- 0L
+  repeat {
+    content <- if (file.exists(path)) readLines(path) else
+      "(waiting for checklist.txt to appear...)"
+    if (n_prev_lines > 0) cat(sprintf("\033[%dA", n_prev_lines))
+    cat("\033[J")
+    cat(content, sep = "\n")
+    cat("\n")
+    n_prev_lines <- length(content) + 1L
+    Sys.sleep(interval)
+  }
+}
+
 #' Format a checklist data.table as a compact printable table
 #' @param tab data.table, as returned by pipeline_checklist(print = FALSE)
 #' @return character, one formatted line per stage
