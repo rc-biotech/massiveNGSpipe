@@ -23,20 +23,39 @@ pipeline_download <- function(pipeline, config, pipelines = list(pipeline)) {
         if (step_is_done(config, "fetch", conf["exp"])) next
         set_flag(config, "start", conf["exp"])
         experiment <- conf["exp"]
-        reset_sample_flags(config, "fetch", experiment)
-        run_experiment_subprocess(
-          func = function(info, outdir, compress, config, experiment) {
-            download_sra(
-              info, outdir, compress = compress,
-              after_run = function(run) set_sample_flag(config, "fetch", experiment, run)
-            )
-          },
-          args = list(info = study[ScientificName == organism], outdir = conf["fastq"],
-                      compress = config$compress_raw_data, config = config, experiment = experiment),
-          logfile_out = file.path(config$project, "log_pipeline", "console", "fetch", paste0(experiment, ".out.log")),
-          logfile_err = file.path(config$project, "log_pipeline", "console", "fetch", paste0(experiment, ".err.log")),
-          on_poll = function() pipeline_checklist(pipelines, config)
-        )
+        info <- study[ScientificName == organism]
+
+        # Resume support: skip runs already marked done for this
+        # experiment AND whose actual fastq output still validates on
+        # disk -- the marker alone isn't trusted here, because
+        # download_sra() has no idempotency of its own and can even
+        # delete a stale-compression leftover file (see
+        # fastq_output_exists_and_valid(), download_sra.R).
+        done_runs <- samples_done(config, "fetch", experiment)
+        already_done <- vapply(info$Run, function(run) {
+          run %in% done_runs &&
+            fastq_output_exists_and_valid(
+              run, conf["fastq"],
+              info$LibraryLayout[info$Run == run] == "PAIRED",
+              config$compress_raw_data)
+        }, logical(1))
+        info <- info[!already_done]
+
+        if (nrow(info) > 0) {
+          run_experiment_subprocess(
+            func = function(info, outdir, compress, config, experiment) {
+              download_sra(
+                info, outdir, compress = compress,
+                after_run = function(run) set_sample_flag(config, "fetch", experiment, run)
+              )
+            },
+            args = list(info = info, outdir = conf["fastq"],
+                        compress = config$compress_raw_data, config = config, experiment = experiment),
+            logfile_out = file.path(pipeline_log_base(config), "console", "fetch", paste0(experiment, ".out.log")),
+            logfile_err = file.path(pipeline_log_base(config), "console", "fetch", paste0(experiment, ".err.log")),
+            on_poll = function() pipeline_checklist(pipelines, config)
+          )
+        }
         set_flag(config, "fetch", conf["exp"])
     }
 }
@@ -63,46 +82,64 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
         process_dir <- target_dir <- conf["bam"]
         trimmed_dir <- fs::path(process_dir, "trim")
 
-        runs <- study[ScientificName == organism]
+        runs_full <- study[ScientificName == organism]
         # Files to run (Single end / Paired end)
-        all_files <- run_files_organizer(runs, source_dir)
-        # Trim
+        all_files_full <- run_files_organizer(runs_full, source_dir)
         experiment <- conf["exp"]
-        reset_sample_flags(config, "trim", experiment)
-        barcodes_dt <- run_experiment_subprocess(
-          func = function(all_files, runs, mode, target_dir, trimmed_dir, source_dir, config, experiment) {
-            lapply(seq_len(nrow(runs)), function(i) {
-              study_sample <- runs[i]
-              run <- study_sample$Run
-              message(run)
-              filenames <- all_files[[i]]
-              single_end <- is.na(filenames[2])
-              file <- filenames[1]
-              file2 <- if(!single_end) filenames[2]
-              # adapter <- "AGATCGGAAGAG"
-              adapter <- detect_adapter_and_trim(file, target_dir, file2)
-              barcode_dt <- data.table()
-              check_for_barcodes <- runs[i]$LIBRARYTYPE == "RFP"
-              if (check_for_barcodes) {
-                barcode_dt <- run_barcode_detection_and_trim(study_sample, source_dir,
-                                                             target_dir, trimmed_dir, mode, adapter)
-              }
-              set_sample_flag(config, "trim", experiment, run)
-              barcode_dt
-            })
-          },
-          args = list(all_files = all_files, runs = runs, mode = config$mode,
-                      target_dir = target_dir, trimmed_dir = trimmed_dir,
-                      source_dir = source_dir, config = config, experiment = experiment),
-          logfile_out = file.path(config$project, "log_pipeline", "console", "trim", paste0(experiment, ".out.log")),
-          logfile_err = file.path(config$project, "log_pipeline", "console", "trim", paste0(experiment, ".err.log")),
-          on_poll = function() pipeline_checklist(pipelines, config)
-        )
-        barcodes_dt <- rbindlist(barcodes_dt, fill = TRUE)
+
+        # Resume support: skip runs already marked done for this
+        # experiment. Trusted directly here (unlike fetch) -- the marker
+        # is only ever written after detect_adapter_and_trim()/
+        # run_barcode_detection_and_trim() return successfully for that
+        # one run, and re-running a not-yet-done run naturally overwrites
+        # its own output files, so no separate output-existence check is
+        # needed.
+        done_runs <- samples_done(config, "trim", experiment)
+        not_done <- !(runs_full$Run %in% done_runs)
+        runs <- runs_full[not_done]
+        all_files <- all_files_full[not_done]
+
+        if (nrow(runs) > 0) {
+          run_experiment_subprocess(
+            func = function(all_files, runs, mode, target_dir, trimmed_dir, source_dir, config, experiment) {
+              lapply(seq_len(nrow(runs)), function(i) {
+                study_sample <- runs[i]
+                run <- study_sample$Run
+                message(run)
+                filenames <- all_files[[i]]
+                single_end <- is.na(filenames[2])
+                file <- filenames[1]
+                file2 <- if(!single_end) filenames[2]
+                # adapter <- "AGATCGGAAGAG"
+                adapter <- detect_adapter_and_trim(file, target_dir, file2)
+                barcode_dt <- data.table()
+                check_for_barcodes <- runs[i]$LIBRARYTYPE == "RFP"
+                if (check_for_barcodes) {
+                  barcode_dt <- run_barcode_detection_and_trim(study_sample, source_dir,
+                                                               target_dir, trimmed_dir, mode, adapter)
+                }
+                # Store the actual barcode_dt row (not just TRUE) so it
+                # can be reconstructed below even across a resumed run.
+                set_sample_flag(config, "trim", experiment, run, value = barcode_dt)
+                barcode_dt
+              })
+            },
+            args = list(all_files = all_files, runs = runs, mode = config$mode,
+                        target_dir = target_dir, trimmed_dir = trimmed_dir,
+                        source_dir = source_dir, config = config, experiment = experiment),
+            logfile_out = file.path(pipeline_log_base(config), "console", "trim", paste0(experiment, ".out.log")),
+            logfile_err = file.path(pipeline_log_base(config), "console", "trim", paste0(experiment, ".err.log")),
+            on_poll = function() pipeline_checklist(pipelines, config)
+          )
+        }
+
+        # Reconstruct the full barcode table across both samples done in
+        # this run and any completed in an earlier, interrupted attempt.
+        barcodes_dt <- rbindlist(sample_flag_values(config, "trim", experiment), fill = TRUE)
         fwrite(barcodes_dt, file.path(trimmed_dir, "adapter_barcode_table.csv"))
 
         set_flag(config, "trim", conf["exp"])
-        if (config$delete_raw_files) fs::file_delete(unlist(all_files))
+        if (config$delete_raw_files) fs::file_delete(unlist(all_files_full))
     }
 }
 
@@ -173,15 +210,23 @@ pipeline_align <- function(pipeline, config, pipelines = list(pipeline)) {
     }
 
     experiment <- conf["exp"]
-    reset_sample_flags(config, "aligned", experiment)
+
+    # Resume support: skip pairs already marked done for this experiment.
+    # todo_indices (not a filtered copy of `pairs`/`runs`) keeps
+    # keep.index.in.memory's tail(pairs, 1)[[1]] comparison and
+    # runs[pair_index]$Run indexing correct even when some pairs are
+    # skipped -- both still refer to the true, original, full pairs/runs.
+    done_runs <- samples_done(config, "aligned", experiment)
+    todo_indices <- which(!(runs$Run %in% done_runs))
+
     run_experiment_subprocess(
       func = function(pairs, runs, strandMode, output_dir, index, steps,
                       keep.unaligned.genome, star.path, fastp.path,
-                      input_dir, config, experiment) {
-        pair_index <- 1
+                      input_dir, config, experiment, todo_indices) {
         cat("Total number of files are:\n")
         cat(length(pairs)); cat("\n")
-        for (R1_R2 in pairs) {
+        for (pair_index in todo_indices) {
+          R1_R2 <- pairs[[pair_index]]
           cat("Single end mode\n")
           cat("Run ", pair_index, " / ", length(pairs), "\n")
           single_end <- lengths(pairs[pair_index]) == 1
@@ -199,7 +244,6 @@ pipeline_align <- function(pipeline, config, pipelines = list(pipeline)) {
           )
           #TODO: Now _1 and _2 will be kept, but fixed in cleanup, do I want it like that ?
           set_sample_flag(config, "aligned", experiment, run)
-          pair_index <- pair_index + 1
         }
         alignment_final_checks(input_dir, output_dir, runs, config, steps)
       },
@@ -207,9 +251,10 @@ pipeline_align <- function(pipeline, config, pipelines = list(pipeline)) {
                   output_dir = output_dir, index = index, steps = steps,
                   keep.unaligned.genome = keep.unaligned.genome,
                   star.path = star.path, fastp.path = fastp.path,
-                  input_dir = input_dir, config = config, experiment = experiment),
-      logfile_out = file.path(config$project, "log_pipeline", "console", "align", paste0(experiment, ".out.log")),
-      logfile_err = file.path(config$project, "log_pipeline", "console", "align", paste0(experiment, ".err.log")),
+                  input_dir = input_dir, config = config, experiment = experiment,
+                  todo_indices = todo_indices),
+      logfile_out = file.path(pipeline_log_base(config), "console", "align", paste0(experiment, ".out.log")),
+      logfile_err = file.path(pipeline_log_base(config), "console", "align", paste0(experiment, ".err.log")),
       on_poll = function() pipeline_checklist(pipelines, config)
     )
     set_flag(config, "aligned", conf["exp"])
@@ -306,8 +351,8 @@ pipeline_align_contaminants <- function(pipeline, config, pipelines = list(pipel
       },
       args = list(runs = runs, trimmed_dir = trimmed_dir, output_dir = output_dir,
                   did_collapse = did_collapse, keep.contaminants = keep.contaminants, index = index),
-      logfile_out = file.path(config$project, "log_pipeline", "console", "contam", paste0(experiment, ".out.log")),
-      logfile_err = file.path(config$project, "log_pipeline", "console", "contam", paste0(experiment, ".err.log")),
+      logfile_out = file.path(pipeline_log_base(config), "console", "contam", paste0(experiment, ".out.log")),
+      logfile_err = file.path(pipeline_log_base(config), "console", "contam", paste0(experiment, ".err.log")),
       on_poll = function() pipeline_checklist(pipelines, config)
     )
     set_flag(config, "contam", conf["exp"])

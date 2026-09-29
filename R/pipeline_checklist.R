@@ -30,10 +30,38 @@ experiment_sample_counts <- function(pipelines) {
   unlist(counts)
 }
 
-#' Path to the live checklist snapshot file for one project
+#' Base directory for this run's live checklist/console-log artifacts
+#'
+#' Session-scoped whenever \code{config$session_dir} is set (i.e. running
+#' through \code{\link{run_pipeline}}, which sets it once per call via
+#' \code{run_pipeline_set_up_session()} before dispatching any stage-group
+#' work -- so every downstream function already receives a \code{config}
+#' with it populated, no extra plumbing needed). This matters because two
+#' concurrent \code{run_pipeline()} calls (e.g. processing two different
+#' subsets of \code{pipelines} at once) would otherwise both write
+#' \code{checklist.txt} and the same per-experiment console logs to the
+#' exact same project-level path, silently clobbering each other -- the
+#' whole reason \code{session_logs/<init_time>/} exists as a unique
+#' per-call directory in the first place (see \code{\link{session_info_table}}
+#' for browsing/swapping between past sessions, and \code{mNGSp_app()} for
+#' a live Shiny view of one selected session at a time).
+#'
+#' Falls back to a fixed project-level location when called outside a real
+#' session (e.g. calling a \code{pipeline_*()} function directly,
+#' interactively, without going through \code{run_pipeline()}) -- that
+#' fallback path does not change between calls, so it is not
+#' concurrency-safe and should not be relied on for simultaneous runs.
 #' @param config the mNGSp config object
-#' @return character, file.path(config$project, "log_pipeline", "checklist.txt")
-checklist_path <- function(config) file.path(config$project, "log_pipeline", "checklist.txt")
+#' @return character, a directory path (not guaranteed to exist yet)
+pipeline_log_base <- function(config) {
+  if (!is.null(config$session_dir)) config$session_dir
+  else file.path(config$project, "log_pipeline")
+}
+
+#' Path to the live checklist snapshot file for one run_pipeline() session
+#' @inheritParams pipeline_log_base
+#' @return character, file.path(pipeline_log_base(config), "checklist.txt")
+checklist_path <- function(config) file.path(pipeline_log_base(config), "checklist.txt")
 
 #' Nextflow-style stage checklist
 #'

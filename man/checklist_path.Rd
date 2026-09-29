@@ -2,7 +2,7 @@
 % Please edit documentation in R/pipeline_checklist.R
 \name{checklist_path}
 \alias{checklist_path}
-\title{Path to the live checklist snapshot file for one project}
+\title{Path to the live checklist snapshot file for one run_pipeline() session}
 \usage{
 checklist_path(config)
 }
@@ -10,8 +10,8 @@ checklist_path(config)
 \item{config}{the mNGSp config object}
 }
 \value{
-character, file.path(config$project, "log_pipeline", "checklist.txt")
+character, file.path(pipeline_log_base(config), "checklist.txt")
 }
 \description{
-Path to the live checklist snapshot file for one project
+Path to the live checklist snapshot file for one run_pipeline() session
 }

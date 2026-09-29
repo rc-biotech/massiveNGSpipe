@@ -42,6 +42,36 @@ download_raw_srr <- function(accession, outdir, compress = TRUE,
                                              compress))
 }
 
+#' Check whether a run's final fastq output already exists and looks valid
+#'
+#' Read-only existence/size check used to support resuming an interrupted
+#' fetch stage -- does NOT delete or modify anything (deliberately does
+#' not call \code{cleanup_and_validate_fastq_download()}/
+#' \code{validate_fastq_download()}, whose job is to delete stray/
+#' duplicate files and is not appropriate to invoke just to decide
+#' whether a re-download can be skipped). \code{download_sra()}/
+#' \code{download_raw_srr()} have no idempotency of their own (confirmed:
+#' they always re-download/re-extract unconditionally, and
+#' \code{validate_fastq_download()} will even delete a leftover file of
+#' the "wrong" compression format) -- this is the check
+#' \code{pipeline_download()} uses instead of trusting a sample marker
+#' alone, so a stale/deleted-since-marked file still gets re-downloaded.
+#' @param accession character, the run accession (SRR/ERR/DRR...)
+#' @param outdir character, directory the fastq(s) should be in
+#' @param PAIRED_END logical
+#' @param compress logical, TRUE if a ".gz" suffix is expected
+#' @return logical, TRUE only if every expected output file exists and is non-empty
+#' @noRd
+fastq_output_exists_and_valid <- function(accession, outdir, PAIRED_END, compress = TRUE) {
+  suffix <- paste0(".fastq", if (compress) ".gz" else "")
+  expected <- if (isTRUE(PAIRED_END)) {
+    file.path(outdir, paste0(accession, c("_1", "_2"), suffix))
+  } else {
+    file.path(outdir, paste0(accession, suffix))
+  }
+  all(file.exists(expected)) && all(file.info(expected)$size > 0)
+}
+
 sra_or_direct_fastq_format <- function(study_info_dt, accession) {
   attempt_fast_sra_format <- TRUE
   valid_study_info <- (!is.null(study_info_dt) && !is.null(study_info_dt$Run) &&

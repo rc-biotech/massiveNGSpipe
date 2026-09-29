@@ -20,6 +20,7 @@ pipe_fetch <- function(pipelines, config) {
   for (pipeline in pipelines) {
     exp <- pipeline$accession
     if (file.exists(report_failed_pipe_path(config, exp))) next
+    if (stop_requested(config)) break
     try <- try(
       pipeline_download(pipeline, config, pipelines)
     )
@@ -33,6 +34,7 @@ pipe_trim_collapse <- function(pipelines, config) {
   for (pipeline in pipelines) {
     exp <- pipeline$accession
     if (file.exists(report_failed_pipe_path(config, exp))) next
+    if (stop_requested(config)) break
     try <- try({
       if (do_trim)
         pipeline_trim(pipeline, config, pipelines)
@@ -54,6 +56,7 @@ pipe_align_clean <- function(pipelines, config) {
   for (pipeline in pipelines) {
     exp <- pipeline$accession
     if (file.exists(report_failed_pipe_path(config, exp))) next
+    if (stop_requested(config)) break
     try <- try({
       if (do_contamint_removal)
         pipeline_align_contaminants(pipeline, config, pipelines)
@@ -76,6 +79,7 @@ pipe_exp_ofst <- function(pipelines, config) {
   for (pipeline in pipelines) {
     exp <- pipeline$accession
     if (file.exists(report_failed_pipe_path(config, exp))) next
+    if (stop_requested(config)) break
     try <- try({
       df_list <- pipeline_create_experiment(pipeline, config)
     })
@@ -99,6 +103,7 @@ pipe_pshift_and_validate <- function(pipelines, config) {
 
   for (experiments in exp[done_exp]) {
     if (file.exists(report_failed_pipe_path(config, experiments[1]))) next
+    if (stop_requested(config)) break
 
     try <- try({
       df_list <- lapply(experiments, function(e)
@@ -126,6 +131,7 @@ pipe_convert <- function(pipelines, config) {
 
   for (experiments in exp[done_exp]) {
     if (file.exists(report_failed_pipe_path(config, experiments[1]))) next
+    if (stop_requested(config)) break
     try <- try({
       df_list <- lapply(experiments, function(e) read.experiment(e, validate = F))
       pipeline_convert_covRLE(df_list, config)
@@ -141,6 +147,7 @@ pipe_counts <- function(pipelines, config) {
 
   for (experiments in exp[done_exp]) {
     if (file.exists(report_failed_pipe_path(config, experiments[1]))) next
+    if (stop_requested(config)) break
     try <- try({
       df_list <- lapply(experiments, function(e) read.experiment(e, validate = F,
                                                                  output.env = new.env()))

@@ -19,29 +19,40 @@ run_pipeline <- function(pipelines, config, wait = 100) {
   BiocParallel::bplapply(seq_along(config$pipeline_steps),
                          function(i, config, pipelines, wait)
       parallel_wrap(config$pipeline_steps[[i]], pipelines, config,
-                    config$flag_steps[[i]], wait),
+                    config$flag_steps[[i]], wait,
+                    stage_name = names(config$flag_steps)[i]),
     pipelines = pipelines, wait = wait, config = config,
     BPPARAM = config$BPPARAM_MAIN)
 
   return(run_pipeline_end_session(pipelines, config))
 }
 
-parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100) {
+parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100,
+                          stage_name = NULL) {
   steps_merged <- paste(steps, collapse = ", ", sep = ", ")
   message("Start step pipeline:\n", steps_merged)
   exps <- pipelines_names(pipelines)
   idle_round <- 0
   steps_done <- all_substeps_done_all(config, steps, exps)
-  while(!all(steps_done)) {
+  while(!all(steps_done) && !stop_requested(config)) {
     function_call(pipelines, config)
     steps_done <- all_substeps_done_all(config, steps, exps)
-    if (!all(steps_done)) {
+    if (!all(steps_done) && !stop_requested(config)) {
       Sys.sleep(wait)
       idle_round <- idle_round + 1;
       pipeline_checklist(pipelines, config)
     }
   }
-  message("Done for step pipeline:\n", steps_merged)
+  # Always mark this stage-group's loop as exited, whether it finished
+  # naturally or honored a stop request -- see mark_stage_exited()'s own
+  # doc for why "only mark on stop" would leave abort_session_when_next_study_done_per_step()
+  # waiting forever on stages that simply finished before any stop was requested.
+  mark_stage_exited(config, stage_name, stopped = !all(steps_done))
+  if (!all(steps_done)) {
+    message("Stopped (graceful shutdown requested) for step pipeline:\n", steps_merged)
+  } else {
+    message("Done for step pipeline:\n", steps_merged)
+  }
 }
 
 run_pipeline_set_up_session <- function(pipelines, config) {
