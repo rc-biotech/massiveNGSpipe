@@ -112,6 +112,10 @@ copy_experiments_to <- function(csv_names, old_exp_dir = ORFik::config()["exp"],
   return(res == 0)
 }
 
+#' Does this look like a valid mNGSp config object?
+#' @param config value to check
+#' @return logical, TRUE if `config` is a list with a non-NULL `$preset`
+#' @noRd
 is_config <- function(config) return(is(config, "list") && !is.null(config$preset))
 
 #' Get name of function
@@ -260,6 +264,19 @@ file_statistics_raw <- function(config = ORFik::config(),
   file_statistics_internal(dir_types, formats, type, l)
 }
 
+#' Count/size files under `l/<dir_type>` matching each (dir_type, format) pair
+#'
+#' The shared workhorse behind `file_statistics_processed()`/
+#' `_references()`/`_raw()`.
+#' @param dir_types character vector, subdirectory names under `l` (an
+#' empty string `""` uses `format` itself as the label instead)
+#' @param formats character vector, parallel to `dir_types`; file
+#' extension(s) to match (`""` matches any file)
+#' @param type character, a label recorded in the output (e.g. "processed")
+#' @param l character, base directory
+#' @return data.table with columns `type`, `dir_type`, `n_dirs`,
+#' `n_files`, `total_size_GB`
+#' @noRd
 file_statistics_internal <- function(dir_types, formats, type, l) {
   res <- mapply(function(dir_type, format) {
     d <- file.path(l, dir_type)

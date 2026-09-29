@@ -319,6 +319,15 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
   }
 }
 
+#' cbind a list of SummarizedExperiments, with a useful error on mismatch
+#'
+#' On the happy path, identical to `do.call(BiocGenerics::cbind, count_lists)`.
+#' On failure (mismatched row counts), reports exactly which named
+#' elements' `nrow()` differ from the majority, instead of a generic
+#' cbind error.
+#' @param count_lists named list of SummarizedExperiment (or similar) objects
+#' @return the cbind'd object
+#' @noRd
 safe_se_cbind <- function(count_lists) {
   out <- try(do.call(BiocGenerics::cbind, count_lists), silent = TRUE)
 
@@ -442,6 +451,9 @@ libtype_short_to_long <- function(short) {
   return(long)
 }
 
+#' Allowed LibraryStrategy values
+#' @return fixed character vector
+#' @noRd
 library_strategies_allowed <- function() {
   c("RNA-Seq", "Ribo-seq","ssRNA-seq", "ncRNA-Seq", "miRNA-Seq", "OTHER")
 }
@@ -483,14 +495,6 @@ make_additional_formats_internal <- function(df, libtype_df_ref =
 
   } else {
     message("- covRle & Bigwig method: full read")
-    # dir <- file.path(libFolder(df), "bigwig")
-    # dir.create(dir, showWarnings = FALSE)
-    # bw_files <- file.path(dir, c("all_forward.bigWig", "all_reverse.bigWig"))
-    # covrle <- fimport(filepath(df, "cov"))
-    # message("-- Bigwig forward")
-    # rtracklayer::export.bw(object = f(covrle), bw_files[1])
-    # message("-- Bigwig reverse")
-    # rtracklayer::export.bw(object = r(covrle), bw_files[2])
   }
   convert_to_covRleList(df)
   convert_to_bigWig(df, in_files = filepath(df, "cov"))
@@ -551,7 +555,7 @@ pipeline_merge_org_modalities <- function(all_exp = list.experiments(validate = 
     qc_folder <- QCfolder(df)
     regions <- c("mrna", "leaders", "cds", "trailers")
     dir.create(qc_folder, recursive = TRUE, showWarnings = FALSE)
-    counts <- lapply(regions, function(region) {
+    invisible(lapply(regions, function(region) {
       message("-- ", region)
       sum_exp <- do.call(BiocGenerics::cbind, lapply(seq(nrow(df)), function(i) {
         df_sub <- df[i,]
@@ -559,7 +563,7 @@ pipeline_merge_org_modalities <- function(all_exp = list.experiments(validate = 
         countTable(df_sub, region = region, type = "summarized")
       }))
       save_RDSQS(sum_exp, file.path(qc_folder, paste0("countTable_", region, ".qs")))
-    })
+    }))
   }
   message("Modalities done")
   return(invisible(NULL))

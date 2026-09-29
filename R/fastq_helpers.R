@@ -124,6 +124,13 @@ run_fastqc <- function(file, nreads, adapters_file) {
   return(qc_report_path)
 }
 
+#' Known adapter name/sequence pairs
+#'
+#' Writes the built-in candidate table to `candidates_file` on first call;
+#' re-reads it from disk on later calls.
+#' @param candidates_file character, path to read/write the table
+#' @return data.table with `name`/`value` columns
+#' @noRd
 adapter_list <- function(candidates_file = fs::path(tempdir(), "adapter_candidates.txt")) {
 
   if (!file.exists(candidates_file)) {
@@ -150,7 +157,7 @@ adapter_list <- function(candidates_file = fs::path(tempdir(), "adapter_candidat
     )
   } else {
     candidates <- fread(candidates_file, header = FALSE)
-    stopifnot(ncol(candidates_file) == 2)
+    stopifnot(ncol(candidates) == 2)
     colnames(candidates) <- c("name", "value")
   }
   return(candidates)
@@ -199,6 +206,17 @@ run_files_organizer <- function(runs, source_dir, exclude = c("","json", "html",
   return(all_files)
 }
 
+#' Match one run's expected fastq filename(s) against real files present
+#'
+#' Per-row matching logic behind `run_files_organizer()`: tries each
+#' `paired_end_suffixes` variant in turn, disambiguating by `prefixes`/
+#' `format`/`compressions` when a plain grep match is ambiguous.
+#' @param i integer, row index into `runs`
+#' @inheritParams run_files_organizer
+#' @param files character vector of candidate file paths (already listed,
+#' no disk I/O here)
+#' @return character vector of length 1 (SINGLE) or 2 (PAIRED)
+#' @noRd
 run_files_organizer_internal <- function(i, runs, files,
                                          format = c(".fastq", ".fq", ".fa", ".fasta"),
                                          compressions = c("", ".gz"),
@@ -454,6 +472,18 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
   return(dt_stats_this)
 }
 
+#' Infer 5'/3' barcode sizes from quality/content curves via changepoint detection
+#' @param curves list of "curve type" groups, each a list of individual
+#' numeric curve vectors -- NOT a flat numeric vector
+#' @param max_barcode_left_size numeric, upper bound to search for a 5' barcode
+#' @param max_size_before numeric, read size before barcode removal
+#' @param max_size_after numeric, read size after barcode removal
+#' @param minimum_size numeric, minimum acceptable trimmed read size
+#' @param z_score_normalize logical, default FALSE. Normalize curves
+#' before changepoint detection.
+#' @param Q integer, default 3. Max number of changepoints `changepoint::cpt.mean()` looks for.
+#' @return named numeric vector: `barcode5p_size`, `barcode3p_size`
+#' @noRd
 barcode_change_point <- function(curves, max_barcode_left_size,
                                  max_size_before, max_size_after,
                                  minimum_size, z_score_normalize = FALSE,
@@ -533,6 +563,14 @@ run_barcode_detection_and_trim <- function(study_sample, source_dir, target_dir,
   return(barcode_dt)
 }
 
+#' Move one run's trimmed fastq + its json/html report siblings aside
+#'
+#' Strips the `"trimmed_"` prefix from the moved files' new names.
+#' @param study_sample 1-row data.table with a `Run` column
+#' @param trimmed_dir character, directory the trimmed files currently live in
+#' @param barcode_dir character, directory to move them into
+#' @return invisible(NULL)
+#' @noRd
 move_trimmed_files <- function(study_sample, trimmed_dir, barcode_dir) {
   # Ignores file 2 in pair for now!
   run <- study_sample$Run
@@ -603,6 +641,12 @@ barcodes_manual_assign <- function(pipeline, barcode5p_size, barcode3p_size) {
   }
 }
 
+#' Write a manual barcode-size override CSV
+#' @param trimmed_dir character, directory to write `barcodes_manual.csv` into
+#' @param run_ids character vector of run accessions
+#' @param barcode5p_size,barcode3p_size numeric, sizes to assign to every run in `run_ids`
+#' @return invisible(NULL)
+#' @noRd
 barcodes_manual_assign_table <- function(trimmed_dir, run_ids, barcode5p_size,
                                          barcode3p_size) {
   path <- file.path(trimmed_dir, "barcodes_manual.csv")
@@ -627,6 +671,12 @@ adapters_manual_assign <- function(pipeline, adapters) {
   }
 }
 
+#' Write a manual adapter-sequence override CSV
+#' @param trimmed_dir character, directory to write `adapters_manual.csv` into
+#' @param run_ids character vector of run accessions
+#' @param adapters character, adapter sequence to assign to every run in `run_ids`
+#' @return invisible(NULL)
+#' @noRd
 adapters_manual_assign_table <- function(trimmed_dir, run_ids, adapters) {
   path <- file.path(trimmed_dir, "adapters_manual.csv")
   dt_barcode <- data.table(Run = run_ids, adapter = adapters)
@@ -635,6 +685,15 @@ adapters_manual_assign_table <- function(trimmed_dir, run_ids, adapters) {
   return(dt_barcode[])
 }
 
+#' Find and 3'-trim an adapter from reads
+#' @param fastq_raw a DNAStringSet/DNAString of reads
+#' @param adapter character, adapter sequence to search for
+#' @param max.mismatch integer, default 2
+#' @param fixed logical, default TRUE, passed to `Biostrings::vmatchPattern()`
+#' @param add_statistics logical, default TRUE. Attach a per-read
+#' trimming-statistics data.table as a `"statistics"` attribute.
+#' @return the trimmed DNAStringSet
+#' @noRd
 remove_adapter_ORFik <- function(fastq_raw, adapter, max.mismatch = 2,
                                  fixed = TRUE, add_statistics = TRUE) {
 
@@ -660,6 +719,14 @@ remove_adapter_ORFik <- function(fastq_raw, adapter, max.mismatch = 2,
   return(fastq_raw_trimmed)
 }
 
+#' Trim fixed-length 5'/3' flanks from reads
+#'
+#' Records the consensus sequence of the trimmed-off flanks as attributes.
+#' @param fastq a DNAStringSet/DNAString of reads
+#' @param left,right integer, number of bases to trim from each end,
+#' default 0 (no trim on that side)
+#' @return the trimmed DNAStringSet/DNAString
+#' @noRd
 trim_flanks_ORFik <- function(fastq, left = 0, right = 0) {
   stopifnot(!is.character(fastq) | is(fastq, "DNAString") | is(fastq, "DNAStringSet"))
   stopifnot(is.numeric(left) & is.numeric(right))
@@ -688,17 +755,37 @@ trim_flanks_ORFik <- function(fastq, left = 0, right = 0) {
   return(fastq_cut)
 }
 
+#' Trim each read at its first adapter-hit position
+#'
+#' Reads with no hit are left untouched.
+#' @param fastq_raw a DNAStringSet/DNAString of reads
+#' @param hits an IRanges::IntegerList (or list), one element per read,
+#' of adapter match start positions (see `find_adapter_start_pos()`)
+#' @return the trimmed DNAStringSet/DNAString, with an `"empty"`
+#' attribute (logical, TRUE for reads that had no hit)
+#' @noRd
 subseqSafeNonEmptyTrim3p <- function(fastq_raw, hits) {
   empty <- lengths(hits) == 0
   h <- hits[!empty] - 1
   h <- unlist(heads(h, 1))
-  whole_read_trimmed <- h == 0
   fastq_raw_trimmed <- fastq_raw
   fastq_raw_trimmed[!empty] <- subseqSafe(fastq_raw_trimmed[!empty], 1, h)
   attr(fastq_raw_trimmed, "empty") <- empty
   return(fastq_raw_trimmed)
 }
 
+#' A `Biostrings::subseq()` wrapper that tolerates out-of-range start/end
+#'
+#' Per-element start/end that fall outside a sequence's width don't
+#' error; they're either blanked (kept, empty string) or dropped,
+#' depending on `include_invalid`.
+#' @param x a DNAStringSet/DNAString (or similar XStringSet)
+#' @param start,end numeric, length 1 or `length(x)`; `NA` (default)
+#' passes through to a plain `subseq(x, NA, NA)`
+#' @param include_invalid logical, default TRUE. TRUE blanks invalid
+#' elements to `""` (preserves length/order); FALSE drops them entirely.
+#' @return the (possibly shorter, if `include_invalid = FALSE`) subsequence
+#' @noRd
 subseqSafe <- function(x, start = NA, end = NA, include_invalid = TRUE) {
   stopifnot(length(start) == 1 | length(start) == length(x))
   stopifnot(length(end) == 1 | length(end) == length(x))

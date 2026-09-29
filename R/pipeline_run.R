@@ -5,10 +5,6 @@
 #' @param wait numeric, default 100 (in seconds). How long should each
 #' partial pipeline wait if it done before it check for new results
 #' ready to continue with.
-#' @param BPPARAM a BiocParallel Param object, default is the user standard,
-#' namely bpparam(). To quickly check how many threads you use, do:
-#' \code{bpparam()$workers}. To adjust number of threads do for instance:
-#' \code{MulticoreParam(3)}, which gives 3 threads.
 #' @return invisible(NULL)
 #' @export
 run_pipeline <- function(pipelines, config, wait = 100) {
@@ -27,19 +23,33 @@ run_pipeline <- function(pipelines, config, wait = 100) {
   return(run_pipeline_end_session(pipelines, config))
 }
 
+#' One stage-group's idle-poll loop
+#'
+#' Repeatedly calls `function_call(pipelines, config)` until every step in
+#' `steps` is done for every experiment, or a graceful stop is requested
+#' (`stop_requested()`), sleeping `wait` seconds and re-rendering the
+#' checklist between rounds.
+#' @param function_call function(pipelines, config), a `pipe_*()` wrapper
+#' @param pipelines the pipelines list
+#' @param config the mNGSp config object
+#' @param steps character vector, this stage-group's step ids (one
+#' element of `config$flag_steps`)
+#' @param wait numeric, seconds to sleep between idle rounds
+#' @param stage_name character, this stage-group's name (one name of
+#' `config$flag_steps`), used to record its exit via `mark_stage_exited()`
+#' @return invisible(NULL)
+#' @noRd
 parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100,
                           stage_name = NULL) {
   steps_merged <- paste(steps, collapse = ", ", sep = ", ")
   message("Start step pipeline:\n", steps_merged)
   exps <- pipelines_names(pipelines)
-  idle_round <- 0
   steps_done <- all_substeps_done_all(config, steps, exps)
   while(!all(steps_done) && !stop_requested(config)) {
     function_call(pipelines, config)
     steps_done <- all_substeps_done_all(config, steps, exps)
     if (!all(steps_done) && !stop_requested(config)) {
       Sys.sleep(wait)
-      idle_round <- idle_round + 1;
       pipeline_checklist(pipelines, config)
     }
   }
@@ -55,6 +65,13 @@ parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100,
   }
 }
 
+#' Validate inputs and initialize a run_pipeline() session
+#'
+#' Sets `config$BPPARAM_MAIN`/`init_time`/`error_dir`/`session_dir`,
+#' creates the session directory, and writes its initial info file.
+#' @inheritParams run_pipeline
+#' @return `config`, with the session fields above set
+#' @noRd
 run_pipeline_set_up_session <- function(pipelines, config) {
   stopifnot(length(pipelines) > 0 & is(pipelines, "list"))
   stopifnot(!anyNA(names(pipelines)) & all(lengths(pipelines) == 3))
@@ -73,6 +90,15 @@ run_pipeline_set_up_session <- function(pipelines, config) {
   return(config)
 }
 
+#' Finalize a run_pipeline() session
+#'
+#' Determines success from whether `config$error_dir` has any recorded
+#' errors, prints a progress report on success, updates the session's
+#' info file status to "Completed"/"Failed", and optionally sends a
+#' Discord notification.
+#' @inheritParams run_pipeline
+#' @return logical, TRUE if the session completed with no recorded errors
+#' @noRd
 run_pipeline_end_session <- function(pipelines, config) {
   # Done
   no_errors <- ifelse(!is.null(config$error_dir) && dir.exists(config$error_dir),

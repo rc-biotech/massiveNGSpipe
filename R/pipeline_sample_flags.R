@@ -20,17 +20,25 @@
 # resume needed there). All functions here are internal (unexported),
 # same as the existing flag primitives in pipeline_flags.R.
 
+#' Directory holding one experiment's per-sample markers for one step
+#' @param config the mNGSp config object
+#' @param step_id character, e.g. "fetch", "trim", or "aligned"
+#' @param experiment character, the "<accession>-<assembly_name>" string
+#' @return character, a directory path (not guaranteed to exist yet)
+#' @noRd
 sample_flag_dir <- function(config, step_id, experiment)
   file.path(config$project, "sample_flags", step_id, experiment)
 
-# config: the mNGSp config object
-# step_id: character, e.g. "trim" or "aligned"
-# experiment: character, the "<accession>-<assembly_name>" string
-# run: character, the sample/run id (e.g. SRR accession)
-# value: what to store in the marker. Usually just TRUE, but
-# pipeline_trim() stores the actual per-run barcode_dt row here instead,
-# so that a resumed run can reconstruct the full barcode table across
-# both previously-done and newly-done samples (see sample_flag_values()).
+#' Mark one sample done for one experiment/step
+#' @inheritParams sample_flag_dir
+#' @param run character, the sample/run id (e.g. SRR accession)
+#' @param value what to store in the marker. Usually just \code{TRUE}, but
+#' \code{pipeline_trim()} stores the actual per-run \code{barcode_dt} row
+#' here instead, so a resumed run can reconstruct the full barcode table
+#' across both previously-done and newly-done samples (see
+#' \code{\link{sample_flag_values}}).
+#' @return invisible(NULL)
+#' @noRd
 set_sample_flag <- function(config, step_id, experiment, run, value = TRUE) {
   d <- sample_flag_dir(config, step_id, experiment)
   dir.create(d, showWarnings = FALSE, recursive = TRUE)
@@ -38,40 +46,58 @@ set_sample_flag <- function(config, step_id, experiment, run, value = TRUE) {
   invisible(NULL)
 }
 
-# Explicit, opt-in "force a clean restart" path -- clears sample markers
-# for one experiment so the next attempt redoes every sample, regardless
-# of what an earlier attempt completed. NOT called implicitly anymore on
-# every stage entry (see samples_done() below for why): a resumed run
-# should skip already-done samples, not silently wipe the evidence of
-# what was already done. Call this deliberately (e.g. alongside
-# remove_flag_all_exp_from(), pipeline_flags.R:248) when a real from-
-# scratch reprocess of a step is wanted.
+#' Explicit, opt-in "force a clean restart" for one experiment/step
+#'
+#' Clears sample markers so the next attempt redoes every sample,
+#' regardless of what an earlier attempt completed. NOT called implicitly
+#' on every stage entry (see \code{\link{samples_done}} for why): a
+#' resumed run should skip already-done samples, not silently wipe the
+#' evidence of what was already done. Call this deliberately (e.g.
+#' alongside \code{remove_flag_all_exp_from()}, pipeline_flags.R) when a
+#' real from-scratch reprocess of a step is wanted.
+#' @inheritParams sample_flag_dir
+#' @return invisible(NULL)
+#' @noRd
 reset_sample_flags <- function(config, step_id, experiment) {
   d <- sample_flag_dir(config, step_id, experiment)
   if (dir.exists(d)) unlink(d, recursive = TRUE)
   invisible(NULL)
 }
 
-# Returns the number of samples marked done for this experiment/step.
+#' Number of samples marked done for this experiment/step
+#' @inheritParams sample_flag_dir
+#' @return integer, 0L if the marker directory doesn't exist yet
+#' @noRd
 n_samples_done <- function(config, step_id, experiment) {
   d <- sample_flag_dir(config, step_id, experiment)
   if (!dir.exists(d)) return(0L)
   length(list.files(d, pattern = "\\.rds$"))
 }
 
-# Character vector of run ids already marked done for this experiment/step
-# -- the actual resume-support lookup. One list.files() call, cheap.
+#' Run ids already marked done for this experiment/step
+#'
+#' The actual resume-support lookup: which samples can be skipped on a
+#' resumed run. One \code{list.files()} call, cheap.
+#' @inheritParams sample_flag_dir
+#' @return character vector of run ids, \code{character()} if the marker
+#' directory doesn't exist yet
+#' @noRd
 samples_done <- function(config, step_id, experiment) {
   d <- sample_flag_dir(config, step_id, experiment)
   if (!dir.exists(d)) return(character())
   sub("\\.rds$", "", list.files(d, pattern = "\\.rds$"))
 }
 
-# Read back every marker's stored value for this experiment/step, e.g. to
-# reconstruct a full per-sample table (barcode_dt in pipeline_trim())
-# across a run that resumed partway through -- some markers were written
-# in an earlier, interrupted attempt, others just now, and this reads all
-# of them uniformly.
+#' Read back every marker's stored value for this experiment/step
+#'
+#' E.g. to reconstruct a full per-sample table (\code{barcode_dt} in
+#' \code{pipeline_trim()}) across a run that resumed partway through --
+#' some markers were written in an earlier, interrupted attempt, others
+#' just now, and this reads all of them uniformly.
+#' @inheritParams sample_flag_dir
+#' @return list of stored marker values, \code{list()} if the marker
+#' directory doesn't exist yet
+#' @noRd
 sample_flag_values <- function(config, step_id, experiment) {
   d <- sample_flag_dir(config, step_id, experiment)
   if (!dir.exists(d)) return(list())

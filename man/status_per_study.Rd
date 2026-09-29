@@ -26,7 +26,7 @@ of projects that are not done. Stats will still show for all.}
 \value{
 a list structured as: list(done, progress_index, projects,
 alignment.stats.all, trimmed.out.all, n_bioprojects,
-report_dir = config$project, message)
+report_dir = config$project, message, steps, all_organism)
 }
 \description{
 Status per study

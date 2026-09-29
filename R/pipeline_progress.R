@@ -36,11 +36,11 @@ progress_report <- function(pipelines, config,
   progress_index <- status_per_study_list$progress_index
   n_bioprojects <- status_per_study_list$n_bioprojects
   if (check_merged_org) {
-    organism_report(all_organism, config, progress_index)
+    organism_report(status_per_study_list$all_organism, config, progress_index)
   }
   if (system_usage_stats) {
-    usage <- get_system_usage(detect_drive(path.expand(config$config["ref"])),
-                              one_liner = TRUE)
+    get_system_usage(detect_drive(path.expand(config$config["ref"])),
+                     one_liner = TRUE)
   }
   cat(status_per_study_list$message, "\n")
 
@@ -98,12 +98,26 @@ get_running_processes <- function(pgid_subset = NULL,
 #' @title Call View on get_running_processes
 ps <- function(pgid_subset = NULL) View(get_running_processes(pgid_subset))
 
+#' This process's own process group id
+#' @return integer, length 1
+#' @noRd
 get_pgid <- function() as.integer(system("ps -o pgid= -p $$", intern = TRUE))
 
+#' All currently-running process group ids
+#'
+#' Used to check whether a previous session's recorded pgid
+#' (\code{session_info.rds}) is still alive, e.g. by
+#' \code{\link{last_session_stil_active}}.
+#' @return integer vector of unique pgids currently running on this machine
 get_pgid_all <- function() {
-  as.integer(get_running_processes("pgid", TRUE)[-1])
+  unique(as.integer(get_running_processes()$PGID))
 }
 
+#' Write this session's info file (pgid, init_time, status="started")
+#' @param config the mNGSp config object, with an active `session_dir`
+#' @param pipelines the pipelines list this session is running
+#' @return invisible(NULL)
+#' @noRd
 session_info_save <- function(config, pipelines) {
   if (is.null(config$session_dir)) stop("Can only save session info for active session!")
   info <- list(pipeline_names = names(pipelines),
@@ -115,6 +129,13 @@ session_info_save <- function(config, pipelines) {
   return(invisible(NULL))
 }
 
+#' Read a session's info file
+#' @param config a list with a `session_dir` pointing at an existing
+#' session directory (does not need to be a full mNGSp config -- callers
+#' like `abort_session_when_next_study_done_per_step()` pass a minimal
+#' `list(session_dir = ...)`)
+#' @return the session info list (see `session_info_save()`)
+#' @noRd
 session_info_read <- function(config) {
   if (is.null(config$session_dir)) stop("Can only read session info for actived sessions!")
   session_info <- file.path(config$session_dir, "session_info.rds")
@@ -123,6 +144,11 @@ session_info_read <- function(config) {
   return(readRDS(session_info))
 }
 
+#' Read the info file of the `session_index`-th most recent session
+#' @param config the mNGSp config object
+#' @param session_index integer, 1 = most recent (default)
+#' @return the session info list (see `session_info_save()`)
+#' @noRd
 session_info_read_specific <- function(config, session_index = 1) {
   info <- session_info_table(config)
   if (session_index > nrow(info)) stop("There are ", nrow(info), "session,
@@ -130,6 +156,11 @@ session_info_read_specific <- function(config, session_index = 1) {
   return(session_info_read(list(session_dir = info$path[session_index])))
 }
 
+#' List a project's session directories, newest first
+#' @param config the mNGSp config object
+#' @return a data.frame/data.table (see `dir_info()`) with a `path` column,
+#' sorted by modification time descending
+#' @noRd
 session_info_table <- function(config) {
   session_dir <- file.path(config$project, "session_logs")
   info <- dir_info(session_dir)
@@ -155,7 +186,7 @@ last_session_stil_active <- function(config) {
 #' @inheritParams progress_report
 #' @return a list structured as: list(done, progress_index, projects,
 #'  alignment.stats.all, trimmed.out.all, n_bioprojects,
-#'  report_dir = config$project, message)
+#'  report_dir = config$project, message, steps, all_organism)
 #' @export
 status_per_study <- function(pipelines, config, show_status_per_exp, show_done,
                              show_stats) {
@@ -214,7 +245,8 @@ status_per_study <- function(pipelines, config, show_status_per_exp, show_done,
   return(list(done = done, progress_index = progress_index,
               projects = projects, alignment.stats.all = alignment.stats.all,
               trimmed.out.all = trimmed.out.all, n_bioprojects = n_bioprojects,
-              report_dir = config$project, message= message, steps = names(config$flag)))
+              report_dir = config$project, message= message, steps = names(config$flag),
+              all_organism = all_organism))
 }
 
 #' Store total trimming and alignment stats for pipeline
@@ -303,6 +335,13 @@ pipeline_summary_alignment <- function(paths, output_dir) {
   return(dt)
 }
 
+#' How many experiments are at each progress step
+#' @param progress_index integer vector, one entry per experiment (see
+#' `status_per_study()`'s return value)
+#' @param steps character vector of step names, in pipeline order
+#' @return a named `table`, labeled `"<step>(<index>)"`, with a final
+#' `"complete(<n>)"` bucket for experiments that finished every step
+#' @noRd
 current_step_table <- function(progress_index, steps) {
   all_flag_steps <- c(steps, "complete")
 
@@ -376,7 +415,7 @@ status_plot <- function(status_per_study_list, show_done = TRUE) {
   projects <- status_per_study_list$projects
   n_bioprojects <- status_per_study_list$n_bioprojects
   done <- status_per_study_list$done
-  is_not_done <- progress_index != 14
+  is_not_done <- progress_index != length(steps)
   if (!show_done & any(is_not_done)) {
     projects <- projects[is_not_done]
     progress_index <- progress_index[is_not_done]
@@ -401,6 +440,14 @@ status_plot <- function(status_per_study_list, show_done = TRUE) {
   return(fig1)
 }
 
+#' Print a per-organism done/total summary, plus whether each organism's
+#' merged track exists on disk
+#' @param all_organism character vector, one entry per experiment (see
+#' `status_per_study()`'s return value)
+#' @param config the mNGSp config object
+#' @param progress_index integer vector, parallel to `all_organism`
+#' @return invisible(NULL) (prints via `cat()`)
+#' @noRd
 organism_report <- function(all_organism, config, progress_index) {
   all_organism_unique <- sort(unique(all_organism))
   cat("--------------------\n")

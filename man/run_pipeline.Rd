@@ -15,11 +15,6 @@ NGS pipeline}
 \item{wait}{numeric, default 100 (in seconds). How long should each
 partial pipeline wait if it done before it check for new results
 ready to continue with.}
-
-\item{BPPARAM}{a BiocParallel Param object, default is the user standard,
-namely bpparam(). To quickly check how many threads you use, do:
-\code{bpparam()$workers}. To adjust number of threads do for instance:
-\code{MulticoreParam(3)}, which gives 3 threads.}
 }
 \value{
 invisible(NULL)

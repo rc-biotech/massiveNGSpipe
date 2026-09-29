@@ -72,6 +72,15 @@ fastq_output_exists_and_valid <- function(accession, outdir, PAIRED_END, compres
   all(file.exists(expected)) && all(file.info(expected)$size > 0)
 }
 
+#' Should the fast AWS/ASCP `.sra` path be attempted for this run?
+#'
+#' Defaults to TRUE unless `study_info_dt` gives an unambiguous, known
+#' `size_MB` for `accession` that's at or below 100MB (small enough that
+#' the direct-fastq EBI fallback is not worth skipping).
+#' @param study_info_dt data.table with `Run`/`size_MB` columns, or NULL
+#' @param accession character, the run accession
+#' @return logical, length 1
+#' @noRd
 sra_or_direct_fastq_format <- function(study_info_dt, accession) {
   attempt_fast_sra_format <- TRUE
   valid_study_info <- (!is.null(study_info_dt) && !is.null(study_info_dt$Run) &&
@@ -175,7 +184,6 @@ sra_to_fastq <- function(accession, outdir, compress = TRUE,
   out_file_temp <- paste0(temp_path, if(PAIRED_END) c("_1", "_2"), ".fastq")
 
   if (ret != 0) {
-    browser()
     file.remove(c(out_file_temp, temp_path))
     stop("Fasterq dump failed!")
   }
@@ -281,7 +289,7 @@ validate_fastq_download <- function(filenames, accession, PAIRED_END, is_compres
       paste(filenames, collapse = " ")
     )
   }
-  return(return(filenames))
+  return(filenames)
 }
 
 find_ascp_srr_url <- function(run_accession) {
@@ -313,6 +321,21 @@ check_tempdir_has_space_sra_to_fastq <- function(accession, outdir, tempdir, PAI
   return(dir_to_use)
 }
 
+#' Estimate a run's decompressed fastq size
+#'
+#' Pure arithmetic estimate from read count/length, no files touched.
+#' @param dt_row 1-row data.table/data.frame with `Run`, `spots`, `bases`,
+#' `avgLength`, `LibraryLayout`
+#' @param read_len numeric, override the read length instead of deriving
+#' it from `dt_row`
+#' @param header_template character, fastq header template used to
+#' estimate per-read header byte count
+#' @param plus_repeats_header logical, whether the "+" line repeats the
+#' full header (vs. just "+")
+#' @param newline_bytes integer, bytes per line terminator
+#' @return list with `Run`, `LibraryLayout`, `reads`, `read_length`, and
+#' size estimates (`total_bytes`, `total_GB`, `total_GiB`)
+#' @noRd
 estimate_fastq_tmp_gb <- function(dt_row,
                                   read_len = NULL,
                                   header_template = "{run}.{i} {i} length={L}",
@@ -409,6 +432,12 @@ estimate_fastq_tmp_gb <- function(dt_row,
 }
 
 
+#' Delete leftover pre-format `.sra` files for a set of accessions
+#' @param outdir character, directory to look in
+#' @param accessions character vector of run accessions
+#' @param delete_srr_preformat logical, default TRUE. FALSE is a no-op.
+#' @return invisible(NULL)
+#' @noRd
 delete_existing_preformat_files <- function(outdir, accessions, delete_srr_preformat = TRUE) {
   preformat_files <- fs::path(outdir, accessions)
   delete_srr_preformat <- delete_srr_preformat && any(file.exists(preformat_files))

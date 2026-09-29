@@ -1,3 +1,9 @@
+#' Set BiocParallel task logging on a BPPARAM
+#' @param BPPARAM a BiocParallelParam object
+#' @param parallel_conf list with a character `logdir` (created if
+#' missing) and optionally `jobname`
+#' @return the modified BPPARAM
+#' @noRd
 set_parallel_conf <- function(BPPARAM, parallel_conf) {
   stopifnot(is(parallel_conf, "list"))
   logdir <- parallel_conf$logdir
@@ -40,6 +46,10 @@ last_update <- function(config, flagdir = flag_dir(config$project),
   return(max(mod_time))
 }
 
+#' Directory listing info for a flags directory
+#' @param flagdir character, must already exist
+#' @return a data.frame/data.table (see `dir_info()`) of `flagdir`'s contents
+#' @noRd
 last_update_dir_info <- function(flagdir) {
   stopifnot(dir.exists(flagdir))
   return(dir_info(flagdir))
@@ -63,7 +73,7 @@ last_update_diff <- function(config, units = "days") {
 #' @export
 last_update_message <- function(config, units = "hours") {
   cat("Last update: ")
-  cat("(", round(last_update_diff(config, units = "hours"), 1), " hours ago): ",
+  cat("(", round(last_update_diff(config, units = units), 1), " ", units, " ago): ",
       format(last_update(config), usetz=TRUE), "\n", sep = "")
   return(invisible(NULL))
 }
@@ -79,6 +89,18 @@ is_progressing <- function(config, max_time_since_update = 1) {
   last_update_diff(config) < max_time_since_update
 }
 
+#' Record a step's failure for an experiment, if it failed
+#'
+#' If `try` is a `try-error`, warns and (when `config$error_dir` is set)
+#' saves an error record so this experiment gets skipped on the next
+#' pass (see `report_failed_pipe_path()`).
+#' @param try the result of a `try()` call
+#' @param config the mNGSp config object
+#' @param step character, step name (used only in the warning/record, not
+#' validated against `config$flag`)
+#' @param exp character, experiment id
+#' @return logical, TRUE if `try` was not an error
+#' @noRd
 report_failed_pipe <- function(try, config, step, exp) {
 
   if (is(try, "try-error")) {
@@ -95,6 +117,12 @@ report_failed_pipe <- function(try, config, step, exp) {
   return(TRUE)
 }
 
+#' Path an experiment's failure record would be saved to
+#' @param config the mNGSp config object
+#' @param exp character, experiment id
+#' @return character path under `config$error_dir`; if `error_dir` is
+#' NULL, warns and returns a `tempfile()` path instead
+#' @noRd
 report_failed_pipe_path <- function(config, exp) {
   if (is.null(config$error_dir)) {
     warning("error_dir not defined in config, returning nonsense directory!")
@@ -103,10 +131,18 @@ report_failed_pipe_path <- function(config, exp) {
   file.path(config$error_dir, paste0(exp, ".rds"))
 }
 
+#' List a project's error_logs session directories, newest first
+#' @param config the mNGSp config object
+#' @return character vector of directory paths
+#' @noRd
 session_error_dirs <- function(config) {
   sort(list.dirs(file.path(config$project, "error_logs"), recursive = F), decreasing = TRUE)
 }
 
+#' Number of recorded errors per error_logs session directory
+#' @inheritParams session_error_dirs
+#' @return named integer vector, names are session directory basenames
+#' @noRd
 session_error_dirs_count <- function(config) {
   res <- sapply(session_error_dirs(config), function(x) length(list.files(x)))
   names(res) <- basename(names(res))

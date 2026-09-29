@@ -19,35 +19,18 @@ pipeline_collapse <- function(pipeline, config) {
 
 
     if (any_paired_libs) {
-      # message("Paired end data is now collapsed into 1 file,
-      #               and 2nd file is reverse complimented before merging!")
+      # Paired-end reads are collapsed using only read 1; read 2 is not
+      # separately reverse-complemented/merged back in.
       outdir <- fs::path(trimmed_dir, runs_paired[1]$LibraryLayout)
       fs::dir_create(outdir)
       files <- run_files_organizer(runs_paired, trimmed_dir)
       all_files <- c(all_files, files)
-      # Use only read 1 for paired-end
       BiocParallel::bplapply(heads(files, 1), function(filename) {
         ORFik::collapse.fastq(
           filename, outdir,
           compress = TRUE
         )
       }, BPPARAM = BiocParallel::MulticoreParam(16))
-      # Read in and reverse second file, then merge back into 1.
-      # filenames <- file.path(outdir,
-      #                        paste0("collapsed_",
-      #                               sub("\\.fastq", ".fasta", basename(unlist(files))),
-      #                               ".gz"))
-      # first_files <- filenames[seq_along(filenames) %% 2 == 1]
-      # second_files <- filenames[seq_along(filenames) %% 2 == 0]
-      #
-      # for (i in seq_along(first_files)) {
-      #   first_file <- first_files[(i*2)-1]
-      #   second_file <- second_files[(i*2)]
-      #   a <- readDNAStringSet(first_file, format = "fasta", use.names = TRUE)
-      #   b <- readDNAStringSet(second_file, format = "fasta", use.names = TRUE)
-      #   b <- reverseComplement(b)
-      #   writeXStringSet(c(a,b), first_file, format = "fasta")
-      # }
     }
 
     any_single_libs <- nrow(runs_single) > 0

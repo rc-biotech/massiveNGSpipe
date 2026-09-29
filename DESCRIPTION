@@ -63,6 +63,7 @@ Suggests:
     matrixStats,
     scater,
     SingleCellExperiment,
+    testthat (>= 3.0.0),
     uwot
 Remotes:
     Roleren/fstcore@8e4484640d1655de1f0e45d29f59c583ca901776,
@@ -72,3 +73,4 @@ Remotes:
     m-swirski/RiboCrypt,
     Bioconductor/BiocFileCache,
     Roleren/discordr
+Config/testthat/edition: 3

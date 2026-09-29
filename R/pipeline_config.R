@@ -192,6 +192,16 @@ flag_grouping <- function(flags, substeps = preset_grouping(flags)) {
   return(substeps)
 }
 
+#' Reconstruct the step-id groupings from a flags vector's grouping attribute
+#'
+#' `split(names(flags), grouping)`, preserving the grouping's own
+#' first-occurrence order (not alphabetical `split()` order).
+#' @param flags a flags vector as returned by `pipeline_flags()`: named by
+#' step id, with a parallel `"grouping"` attribute naming each step's
+#' owning pipe_*() function
+#' @return named list, one element per group, each a character vector of
+#' step ids
+#' @noRd
 preset_grouping <- function(flags) {
   grouping <- attr(flags, "grouping")
   if (is.null(names(flags))) stop("flags must have names!")
@@ -202,6 +212,14 @@ preset_grouping <- function(flags) {
   return(split(names(flags), grouping)[unique(grouping)])
 }
 
+#' Find the exported name(s) of a value in a package's namespace
+#'
+#' Reverse lookup via `identical()`, used only for a startup message
+#' naming e.g. the resolved `BiocParallel` param type.
+#' @param fun the value to search for
+#' @param pkg character, package name to search
+#' @return character vector of matching names, `character(0)` if none found
+#' @noRd
 get_fun_name <- function(fun, pkg) {
   nm <- ls(getNamespace(pkg))
   nm[vapply(nm, function(n)

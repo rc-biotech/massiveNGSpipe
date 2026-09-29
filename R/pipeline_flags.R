@@ -29,8 +29,8 @@ libtype_flags <- function(preset, mode = "online", contam = FALSE) {
     c(cigar_collapse = "cigar_collapse")
   } else if (preset %in% c("SSU", "disome", "empty")) {
     c()
-  } else stop(paste("Currently valid preset pipelines are of types:",
-                    valid_presets, collapse = ", " ))
+  } else stop("Currently valid preset pipelines are of types: ",
+             paste(valid_presets, collapse = ", "))
 
   format_processing <- c(convert = "covrle", convert = "bigwig")
   count_tables <- c(counts = "pcounts")
@@ -41,8 +41,14 @@ libtype_flags <- function(preset, mode = "online", contam = FALSE) {
   return(full_pipe)
 }
 
+#' Which of `steps` are done for a single experiment
+#' @param config the mNGSp config object
+#' @param steps character vector of step ids to check
+#' @param exp character, one or more experiment ids -- a step counts as
+#' done only if it's done for every element of `exp`
+#' @return logical vector, one entry per element of `steps`
+#' @noRd
 all_substeps_done <- function(config, steps, exp) {
-  # Check which steps are done
   steps_done <- c()
   for (step in steps) {
     step_done <- TRUE
@@ -57,8 +63,13 @@ all_substeps_done <- function(config, steps, exp) {
   return(steps_done)
 }
 
+#' Which of `steps` are done, for each of several experiments
+#' @inheritParams all_substeps_done
+#' @param exps character vector of experiment ids, checked independently
+#' @return logical vector, `all_substeps_done()`'s result concatenated
+#' across every element of `exps`
+#' @noRd
 all_substeps_done_all <- function(config, steps, exps) {
-  # Check which steps are done
   if (length(exps) == 0) stop("exps must have length > 0")
   steps_done <- c()
   for (exp in exps) {
@@ -97,10 +108,22 @@ pipeline_flags <- function(project_dir, mode = c("online", "local")[1],
   return(flags)
 }
 
+#' The flags/ directory for a project
+#' @inheritParams pipeline_flags
+#' @return character, `file.path(project_dir, "flags")`
+#' @noRd
 flag_dir <- function(project_dir) {
   return(file.path(project_dir, "flags"))
 }
 
+#' Is a step done for an experiment?
+#'
+#' Vectorized over `experiment`.
+#' @param config the mNGSp config object
+#' @param step character, a valid step id (name in `config$flag`)
+#' @param experiment character, one or more experiment ids
+#' @return logical, same length as `experiment`
+#' @noRd
 step_is_done <- function(config, step, experiment) {
   step_dir <- config[["flag"]][step]
   flag_rds <- file.path(step_dir, paste0(experiment, ".rds"))
@@ -118,6 +141,15 @@ step_is_done_pipelines <- function(config, step, pipelines) {
   return(exp[step_is_done(config, step, exp)])
 }
 
+#' Is `step` the next not-yet-done step for an experiment?
+#'
+#' TRUE only if every step before `step` (by position in
+#' `names(config$flag)`) is already done AND `step` itself isn't -- the
+#' real gating predicate almost every `pipeline_*()` function checks
+#' before doing any work for an experiment.
+#' @inheritParams step_is_done
+#' @return logical, length 1
+#' @noRd
 step_is_next_not_done <- function(config, step, experiment
                                   ) {
   if (step == "fetch") stop("fetch should use step_is_done directly!")
@@ -132,6 +164,11 @@ step_is_next_not_done <- function(config, step, experiment
   return(all_previous_done & this_one_not_done)
 }
 
+#' Mark a step done for an experiment
+#' @inheritParams step_is_done
+#' @param value what to record, default TRUE
+#' @return invisible(NULL)
+#' @noRd
 set_flag <- function(config, step, experiment, value = TRUE) {
   step_dir <- config[["flag"]][step]
   if (!dir.exists(step_dir)) stop(step, " is not a valid flag dir!")
@@ -184,6 +221,13 @@ set_flag_all_exp <- function(config, steps = names(config$flag), exps) {
   return(invisible(NULL))
 }
 
+#' Delete a step's flag for an experiment
+#' @inheritParams step_is_done
+#' @param warning logical, default FALSE. If FALSE, suppress the warning
+#' `file.remove()` raises when the flag doesn't exist to begin with.
+#' @return invisible(NULL) (or the `file.remove()` result when
+#' `warning = TRUE`)
+#' @noRd
 remove_flag <- function(config, step, experiment, warning = FALSE) {
   step_dir <- config[["flag"]][step]
   flag_rds <- file.path(step_dir, paste0(experiment, ".rds"))
