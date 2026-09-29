@@ -30,6 +30,11 @@ pipeline_config(
   reuse_shifts_if_existing = TRUE,
   split_unique_mappers = FALSE,
   all_mappers = TRUE,
+  min_raw_reads_pshift = 1e+05,
+  min_alignment_rate_pshift = 10,
+  max_no_adapter_removed_pct = 80,
+  skip_pshift_on_low_reads = FALSE,
+  skip_pshift_on_low_alignment = FALSE,
   parallel_conf = bpoptions(log = TRUE, jobname = "pipeline_step", logdir =
     file.path(project_dir, "log_pipeline"), stop.on.error = TRUE),
   discord_webhook = discord_connection_default_cached(),
@@ -128,6 +133,30 @@ relative toexperiment)}
 Run for unique mappers only, split out into seperate directory.}
 
 \item{all_mappers}{logical, default TRUE. Run for all mappers}
+
+\item{min_raw_reads_pshift}{numeric, default 1e5. Raw read-count
+threshold (summed across a study's runs) below which a study is
+recorded (see \code{\link{qc_diagnostics_path}}) as likely
+too-few-reads for a usable P-shift. Record-only for now: does not by
+itself skip or block any step (see \code{skip_pshift_on_low_reads}).}
+
+\item{min_alignment_rate_pshift}{numeric, percent, default 10. Unique
+genome-mapping-rate threshold below which a study is recorded as
+likely wrong-organism. Record-only for now (see
+\code{skip_pshift_on_low_alignment}).}
+
+\item{max_no_adapter_removed_pct}{numeric, percent, default 80. Share
+of reads with no adapter removed at all (fastp), above which a study
+is recorded as likely bad adapter/barcode/UMI trimming. Record-only:
+this signal is never used to block a step today.}
+
+\item{skip_pshift_on_low_reads}{logical, default FALSE. Placeholder
+for a future pipeline change: does not currently skip anything, even
+when \code{min_raw_reads_pshift} is tripped.}
+
+\item{skip_pshift_on_low_alignment}{logical, default FALSE. Placeholder
+for a future pipeline change: does not currently skip anything, even
+when \code{min_alignment_rate_pshift} is tripped.}
 
 \item{parallel_conf}{a bpoptions object, default:
 \code{bpoptions(log =TRUE,

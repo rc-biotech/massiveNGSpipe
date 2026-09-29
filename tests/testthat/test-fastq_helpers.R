@@ -179,7 +179,7 @@ test_that("remove_adapter_ORFik: add_statistics=FALSE skips the stats attribute"
   expect_null(attr(trimmed, "statistics"))
 })
 
-test_that("barcode_change_point infers a barcode size on a synthetic step-change curve", {
+test_that("barcode_change_point_5p infers a barcode size on a synthetic step-change curve", {
   skip_if_not_installed("changepoint")
   # curves is a list of "curve type" groups, each a list of individual
   # curve vectors -- NOT a flat numeric vector (a real structural trap:
@@ -188,9 +188,106 @@ test_that("barcode_change_point infers a barcode size on a synthetic step-change
   # large"). A clear step: low values (barcode region) then a jump up.
   curve <- c(rep(1, 20), rep(20, 30))
   curves <- list(list(curve))
-  result <- barcode_change_point(curves, max_barcode_left_size = 15,
-                                 max_size_before = 40, max_size_after = 50,
-                                 minimum_size = 10, Q = 1)
-  expect_named(result, c("barcode5p_size", "barcode3p_size"))
-  expect_true(all(result >= 0))
+  result <- barcode_change_point_5p(curves, max_barcode_left_size = 15,
+                                    max_size_after = 50, Q = 1)
+  expect_true(result >= 0)
+})
+
+test_that("constrain_barcode_sizes leaves sizes untouched when well within minimum_size", {
+  result <- constrain_barcode_sizes(barcode5p_size = 4, barcode3p_size = 4,
+                                    max_size_after = 30, minimum_size = 20)
+  expect_identical(unname(result), c(4, 4))
+})
+
+test_that("constrain_barcode_sizes shrinks the 3p size first when sizes are too big", {
+  # max_size_after - (5+10) = 15 < minimum_size 20 -- must shrink.
+  result <- constrain_barcode_sizes(barcode5p_size = 5, barcode3p_size = 10,
+                                    max_size_after = 30, minimum_size = 20)
+  expect_equal(unname(result["barcode5p_size"]), 5)
+  expect_equal(unname(result["barcode3p_size"]), 5) # shrunk by 5 to hit the 20 floor
+})
+
+test_that("constrain_barcode_sizes falls through to shrinking 5p once 3p hits zero", {
+  # Even after zeroing barcode3p_size, 30 - 25 = 5 < minimum_size 20 --
+  # must shrink barcode5p_size too.
+  result <- constrain_barcode_sizes(barcode5p_size = 25, barcode3p_size = 3,
+                                    max_size_after = 30, minimum_size = 20)
+  expect_equal(unname(result["barcode3p_size"]), 0)
+  expect_equal(unname(result["barcode5p_size"]), 10)
+})
+
+#' Detect a 3' barcode size with the same auto-retry
+#' barcode_detector_single() itself uses: try unnormalized, fall back to
+#' z-score-normalized only if that returns 0.
+detect_3p_with_retry <- function(curves_3p, max_barcode_right_size, Q = 3) {
+  size <- barcode_change_point_3p(curves_3p, max_barcode_right_size,
+                                  z_score_normalize = FALSE, Q = Q)
+  if (size == 0) {
+    size <- barcode_change_point_3p(curves_3p, max_barcode_right_size,
+                                    z_score_normalize = TRUE, Q = Q)
+  }
+  size
+}
+
+test_that("REGRESSION: a head-anchored population curve smears the 3' barcode boundary when insert length varies", {
+  # This reproduces the structural bug the old joint barcode_change_point()
+  # had for the 3' side: fastp's own curves are population-averaged and
+  # anchored from each read's TRUE 5' START. The 3' barcode instead sits
+  # at a fixed offset from each read's OWN TRUE END -- with insert length
+  # varying read-to-read (normal biology), the 3' barcode's absolute
+  # position from the 5' start differs per read, so a single fixed
+  # absolute position never sees a clean signal across the population.
+  set.seed(42)
+  fixture <- fake_barcode_fixture(n = 2000, insert_lengths = 26:34)
+  trimmed <- ShortRead::sread(ShortRead::readFastq(fixture$trimmed_file))
+
+  # Build a head-anchored population content curve exactly as fastp's own
+  # curves are shaped: one max-nucleotide-frequency value per ABSOLUTE
+  # position (from the 5' start), pooled across all reads that reach it.
+  maxw <- max(Biostrings::width(trimmed))
+  head_curve <- vapply(seq_len(maxw), function(pos) {
+    reads_here <- trimmed[Biostrings::width(trimmed) >= pos]
+    cm <- Biostrings::consensusMatrix(Biostrings::subseq(reads_here, pos, pos), as.prob = TRUE)
+    max(cm[c("A", "C", "G", "T"), ])
+  }, numeric(1))
+
+  # The true 3' barcode boundary is at a different absolute position for
+  # every read (barcode5p_size + insert_length), spanning positions
+  # min(insert_lengths)+5 .. max(insert_lengths)+8 across the population.
+  # At the SINGLE fixed absolute position matching the median insert
+  # length's boundary, the pooled signal must be diluted well below the
+  # ~1.0 a real, unsmeared barcode consensus would show -- most reads at
+  # that position are still inside a random OTHER read's insert, not in
+  # their own barcode.
+  median_insert <- stats::median(fixture$insert_lengths)
+  boundary_pos <- fixture$barcode5p_size + median_insert + 1
+  expect_lt(head_curve[boundary_pos], 0.9)
+})
+
+test_that("tail_anchored_3p_curves() + barcode_change_point_3p() recover the true 3' barcode size despite varying insert length", {
+  for (seed in c(1, 2, 3)) {
+    set.seed(seed)
+    fixture <- fake_barcode_fixture(n = 2000, insert_lengths = 26:34)
+    curves_3p <- tail_anchored_3p_curves(fixture$trimmed_file, window = 18, n_reads = 1e5)
+    size <- detect_3p_with_retry(curves_3p, max_barcode_right_size = 18)
+    expect_equal(size, fixture$barcode3p_size, info = paste("seed", seed))
+  }
+})
+
+test_that("tail_anchored_3p_curves() + barcode_change_point_3p() still work on the easy fixed-insert-length case", {
+  set.seed(1)
+  fixture <- fake_barcode_fixture(n = 2000, insert_lengths = 30) # no variance at all
+  curves_3p <- tail_anchored_3p_curves(fixture$trimmed_file, window = 18, n_reads = 1e5)
+  size <- detect_3p_with_retry(curves_3p, max_barcode_right_size = 18)
+  expect_equal(size, fixture$barcode3p_size)
+})
+
+test_that("tail_anchored_3p_curves() returns NULL when no reads reach the search window", {
+  # Tiny insert_lengths (1:5) -> post-adapter-trim widths are
+  # barcode5p_size + 1..5 + barcode3p_size (9-13 here), well under
+  # window = 18 -- nothing should reach the window.
+  fixture <- fake_barcode_fixture(n = 50, insert_lengths = 1:5, raw_len = 50)
+  curves_3p <- tail_anchored_3p_curves(fixture$trimmed_file, window = 18, n_reads = 1e5)
+  expect_null(curves_3p)
+  expect_equal(detect_3p_with_retry(curves_3p, max_barcode_right_size = 18), 0)
 })

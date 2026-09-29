@@ -2,7 +2,8 @@
 #' 3. Hard 12 for allowed species
 #' @noRd
 shiftFootprintsByExperimentSafe <- function(df, shifting_table, accepted_lengths,
-                                            allowed_hard12_species, BPPARAM) {
+                                            allowed_hard12_species, BPPARAM,
+                                            max_no_adapter_removed_pct = 80) {
   fft_files <- fft_strength_files(df)
   fft_strengths <- names(fft_files)
 
@@ -50,7 +51,7 @@ shiftFootprintsByExperimentSafe <- function(df, shifting_table, accepted_lengths
                         })
       } else {
         message("Fix manually (skipping to next project!)")
-        bad_pshifting_report(df)
+        bad_pshifting_report(df, max_no_adapter_removed_pct)
       }
     }
   }
@@ -95,7 +96,7 @@ fft_strength_files <- function(df) {
   return(fft_files)
 }
 
-shift_qc <- function(df, BPPARAM = bpparam()) {
+shift_qc <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct = 80) {
   # Plot max 39 libraries!
   subset <- if (nrow(df) >= 40) {seq(39)} else {seq(nrow(df))}
   has_leaders <- length(filterTranscripts(df, 5, 0, 0, stopOnEmpty = FALSE))
@@ -113,8 +114,20 @@ shift_qc <- function(df, BPPARAM = bpparam()) {
   data.table::fwrite(frameQC, file = file.path(QCFolder, "Ribo_frames_all.csv"))
   data.table::fwrite(zero_frame, file = file.path(QCFolder, "Ribo_frames_badzero.csv"))
 
-  # Store a flag that says good / bad shifting
-  periodicity_check_flag(zero_frame, QCFolder)
+  # Adapter/barcode-quality diagnostic signal (see R/pshift_diagnostics.R):
+  # recorded here, alongside the periodicity verdict, since this is the
+  # first point after trim where a P-shift-failure classification is
+  # actually attempted.
+  trimmed_dir <- file.path(bam_dir_from_df(df), "trim")
+  check_adapter_barcode_quality(bam_dir_from_df(df), trimmed_dir,
+                                max_no_adapter_removed_pct)
+
+  # Store a flag that says good / bad / no-data shifting.
+  # nrow(frameQC) == 0 (zero CDS frame data at all, e.g. because almost
+  # nothing aligned to real ORFs) is a different situation from
+  # nrow(zero_frame) == 0 (perfect periodicity for every read length) --
+  # the corrected has_cds_data tells these two apart.
+  periodicity_check_flag(zero_frame, QCFolder, has_cds_data = nrow(frameQC) > 0)
 }
 
 orfFrameDistributions <- function(df, type = "pshifted", weight = "score",
@@ -170,16 +183,40 @@ template_shift_table_exps <- function(exps, accepted.lengths = c(20, 21, 25:33))
   return(invisible(TRUE))
 }
 
-periodicity_check_flag <- function(zero_frame, QCFolder) {
-  status_flag_files <- file.path(QCFolder, paste0(c("warning", "good"), ".rds"))
-  names(status_flag_files) <- c("warning", "good")
-  status <- "good"
-  any_wrong_frame <- any(zero_frame$percent_length < 25) | nrow(zero_frame) == 0
-  if (any_wrong_frame) {
+#' Classify a P-shifted experiment's periodicity as good/warning/no_data
+#'
+#' \code{nrow(zero_frame) == 0} on its own is ambiguous: it's true both
+#' when periodicity is perfect for every read length (no bad rows to
+#' report) AND when there is zero CDS frame data at all (e.g. almost
+#' nothing aligned to real ORFs, so there was never anything to compute
+#' frame usage from in the first place) -- two very different situations.
+#' \code{has_cds_data} disambiguates them into a third \code{"no_data"}
+#' status, distinct from a genuine \code{"good"} verdict.
+#' @param zero_frame data.table, the frame==0 & !best_frame rows from
+#' \code{orfFrameDistributions()}'s output (see \code{shift_qc()})
+#' @param QCFolder character, directory the status flag files are
+#' written to (see \code{QCfolder()})
+#' @param has_cds_data logical, default \code{nrow(zero_frame) > 0} --
+#' this default deliberately reproduces the historical (buggy) boolean
+#' for any caller other than \code{shift_qc()}, which passes the
+#' corrected \code{nrow(frameQC) > 0} instead.
+#' @return character, one of \code{"good"}, \code{"warning"}, \code{"no_data"}
+#' @noRd
+periodicity_check_flag <- function(zero_frame, QCFolder,
+                                   has_cds_data = nrow(zero_frame) > 0) {
+  status_flag_files <- file.path(QCFolder, paste0(c("warning", "good", "no_data"), ".rds"))
+  names(status_flag_files) <- c("warning", "good", "no_data")
+  if (!has_cds_data) {
+    warning("No CDS frame data at all -- nothing aligned to real ORFs?")
+    status <- "no_data"
+  } else if (any(zero_frame$percent_length < 25)) {
     warning("Some libraries contain shift that is < 25% of CDS coverage")
     status <- "warning"
+  } else {
+    status <- "good"
   }
   saveRDS(TRUE, status_flag_files[status])
   suppressWarnings(file.remove(status_flag_files[names(status_flag_files) != status]))
+  update_qc_diagnostics(file.path(QCFolder, "qc_diagnostics.rds"), periodicity_status = status)
   return(status)
 }

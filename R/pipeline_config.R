@@ -61,6 +61,25 @@
 #' @param split_unique_mappers logical, default FALSE.
 #' Run for unique mappers only, split out into seperate directory.
 #' @param all_mappers logical, default TRUE. Run for all mappers
+#' @param min_raw_reads_pshift numeric, default 1e5. Raw read-count
+#' threshold (summed across a study's runs) below which a study is
+#' recorded (see \code{\link{qc_diagnostics_path}}) as likely
+#' too-few-reads for a usable P-shift. Record-only for now: does not by
+#' itself skip or block any step (see \code{skip_pshift_on_low_reads}).
+#' @param min_alignment_rate_pshift numeric, percent, default 10. Unique
+#' genome-mapping-rate threshold below which a study is recorded as
+#' likely wrong-organism. Record-only for now (see
+#' \code{skip_pshift_on_low_alignment}).
+#' @param max_no_adapter_removed_pct numeric, percent, default 80. Share
+#' of reads with no adapter removed at all (fastp), above which a study
+#' is recorded as likely bad adapter/barcode/UMI trimming. Record-only:
+#' this signal is never used to block a step today.
+#' @param skip_pshift_on_low_reads logical, default FALSE. Placeholder
+#' for a future pipeline change: does not currently skip anything, even
+#' when \code{min_raw_reads_pshift} is tripped.
+#' @param skip_pshift_on_low_alignment logical, default FALSE. Placeholder
+#' for a future pipeline change: does not currently skip anything, even
+#' when \code{min_alignment_rate_pshift} is tripped.
 #' @param parallel_conf a bpoptions object, default:
 #' \code{bpoptions(log =TRUE,
 #'  jobname = "pipeline_step",
@@ -102,6 +121,11 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             reuse_shifts_if_existing = TRUE,
                             split_unique_mappers = FALSE,
                             all_mappers = TRUE,
+                            min_raw_reads_pshift = 1e5,
+                            min_alignment_rate_pshift = 10,
+                            max_no_adapter_removed_pct = 80,
+                            skip_pshift_on_low_reads = FALSE,
+                            skip_pshift_on_low_alignment = FALSE,
                             parallel_conf = bpoptions(log = TRUE,
                                                       jobname = "pipeline_step",
                                                       logdir = file.path(project_dir, "log_pipeline"),
@@ -167,6 +191,11 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               reuse_shifts_if_existing = reuse_shifts_if_existing,
               split_unique_mappers = split_unique_mappers,
               all_mappers = all_mappers,
+              min_raw_reads_pshift = min_raw_reads_pshift,
+              min_alignment_rate_pshift = min_alignment_rate_pshift,
+              max_no_adapter_removed_pct = max_no_adapter_removed_pct,
+              skip_pshift_on_low_reads = skip_pshift_on_low_reads,
+              skip_pshift_on_low_alignment = skip_pshift_on_low_alignment,
               preset = preset, parallel_conf = parallel_conf,
               discord_webhook = discord_webhook,
               thread_type = thread_type,

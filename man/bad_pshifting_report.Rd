@@ -4,14 +4,25 @@
 \alias{bad_pshifting_report}
 \title{If pshifting fails, Check qc and shift plots}
 \usage{
-bad_pshifting_report(df)
+bad_pshifting_report(df, max_no_adapter_removed_pct = 80)
 }
 \arguments{
 \item{df}{an ORFik experiment object}
+
+\item{max_no_adapter_removed_pct}{numeric, percent, see
+\code{\link{check_adapter_barcode_quality}} (default 80, matching
+\code{pipeline_config()}'s own default)}
 }
 \value{
 invisible(NULL)
 }
 \description{
-If pshifting fails, Check qc and shift plots
+Also classifies the likely failure cause (see
+\code{\link{classify_bad_shift_cause}}) into \code{qc_diagnostics.rds}
+every call, independent of the \code{bad_shift_report_done.rds} guard
+below -- that guard exists only to skip the expensive
+\code{QCreport()}/\code{shiftPlots()} calls on repeat runs, so
+classification (cheap: just reads already-written files) stays current
+as upstream trim/align diagnostics evolve even for a study stuck here
+across many pipeline runs.
 }

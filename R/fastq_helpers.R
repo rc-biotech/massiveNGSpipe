@@ -352,7 +352,8 @@ barcode_detector_pipeline <- function(pipeline, redownload_raw_if_needed = TRUE)
 #' #                                         redownload_raw_if_needed = FALSE)
 barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimmed_dir,
                                     redownload_raw_if_needed = TRUE, check_at_mean_size = 33,
-                                    minimum_size = 26, max_barcode_left_size = 18) {
+                                    minimum_size = 26, max_barcode_left_size = 18,
+                                    max_barcode_right_size = 18) {
   sample <- study_sample$Run
   message("-- ", sample)
   stopifnot(is(study_sample, "data.table") && nrow(study_sample) == 1)
@@ -426,17 +427,30 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
 
   auto_detect_barcodes <- (max_size_after >= check_at_mean_size) & !manual_specified_barcodes_exists
   if (auto_detect_barcodes) {
-    # Detect them
+    # Detect them. 5' and 3' use different curve sources (see
+    # barcode_change_point_5p()/_3p()'s own docs for why), so each side
+    # is now retried independently on a failed (size-0) detection,
+    # rather than both being retried jointly as before.
     curves <- a$read1_after_filtering[c("quality_curves", "content_curves")]
     curves$content_curves$max <- MatrixGenerics::rowMaxs(as.matrix(setDT(curves$content_curves)), useNames = FALSE)
 
-    barcode_sizes <- barcode_change_point(curves, max_barcode_left_size, max_size_before,
-                                          max_size_after, minimum_size, z_score_normalize = FALSE)
-    if (max(barcode_sizes) == 0) {
-      barcode_sizes <- barcode_change_point(curves, max_barcode_left_size, max_size_before,
-                                            max_size_after, minimum_size, z_score_normalize = TRUE)
+    barcode5p_size <- barcode_change_point_5p(curves, max_barcode_left_size, max_size_after,
+                                              z_score_normalize = FALSE)
+    if (barcode5p_size == 0) {
+      barcode5p_size <- barcode_change_point_5p(curves, max_barcode_left_size, max_size_after,
+                                                z_score_normalize = TRUE)
     }
 
+    curves_3p <- tail_anchored_3p_curves(file_trim, window = max_barcode_right_size)
+    barcode3p_size <- barcode_change_point_3p(curves_3p, max_barcode_right_size,
+                                              z_score_normalize = FALSE)
+    if (barcode3p_size == 0) {
+      barcode3p_size <- barcode_change_point_3p(curves_3p, max_barcode_right_size,
+                                                z_score_normalize = TRUE)
+    }
+
+    barcode_sizes <- constrain_barcode_sizes(barcode5p_size, barcode3p_size,
+                                             max_size_after, minimum_size)
     barcode5p_size <- barcode_sizes["barcode5p_size"]
     barcode3p_size <- barcode_sizes["barcode3p_size"]
 
@@ -472,22 +486,24 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
   return(dt_stats_this)
 }
 
-#' Infer 5'/3' barcode sizes from quality/content curves via changepoint detection
+#' Table of changepoint positions across all curves, from `changepoint::cpt.mean()`
+#'
+#' Shared core of \code{\link{barcode_change_point_5p}} and
+#' \code{\link{barcode_change_point_3p}}. \code{cpt.mean()} always
+#' includes the last index of a curve as a trivial "changepoint" (the
+#' segment boundary at the vector's own end) -- since that position would
+#' otherwise dominate any max-count position search, its single highest
+#' position bucket is always dropped from the returned table.
 #' @param curves list of "curve type" groups, each a list of individual
 #' numeric curve vectors -- NOT a flat numeric vector
-#' @param max_barcode_left_size numeric, upper bound to search for a 5' barcode
-#' @param max_size_before numeric, read size before barcode removal
-#' @param max_size_after numeric, read size after barcode removal
-#' @param minimum_size numeric, minimum acceptable trimmed read size
+#' @param upper_bound numeric, drop any changepoint position beyond this
 #' @param z_score_normalize logical, default FALSE. Normalize curves
 #' before changepoint detection.
 #' @param Q integer, default 3. Max number of changepoints `changepoint::cpt.mean()` looks for.
-#' @return named numeric vector: `barcode5p_size`, `barcode3p_size`
+#' @return a `table` of position (as character) -> count, restricted to
+#' `<= upper_bound` with the trivial endpoint dropped; may have 0 rows.
 #' @noRd
-barcode_change_point <- function(curves, max_barcode_left_size,
-                                 max_size_before, max_size_after,
-                                 minimum_size, z_score_normalize = FALSE,
-                                 Q = 3) {
+changepoint_position_table <- function(curves, upper_bound, z_score_normalize = FALSE, Q = 3) {
   cpt_func <- if (z_score_normalize) {
     function(curve_vec, Q) {
       vec <- as.vector(scale(curve_vec))
@@ -510,27 +526,119 @@ barcode_change_point <- function(curves, max_barcode_left_size,
   set <- unlist(list)
   tab <- table(set)
   tab <- tab[-length(tab)]
-  tab <- tab[as.numeric(names(tab)) <= max_size_after]
+  tab[as.numeric(names(tab)) <= upper_bound]
+}
+
+#' Infer the 5' barcode size from fastp's own (head-anchored) curves
+#'
+#' fastp's quality/content curves are population-averaged and anchored
+#' from each read's TRUE 5' START -- correct for 5' barcode detection,
+#' since the 5' barcode sits at a fixed offset from that same start for
+#' every read regardless of insert/footprint length.
+#' @param curves list of "curve type" groups, each a list of individual
+#' numeric curve vectors (fastp's own head-anchored curves)
+#' @param max_barcode_left_size numeric, upper bound to search for a 5' barcode
+#' @param max_size_after numeric, read size after adapter removal
+#' @param z_score_normalize logical, default FALSE. Normalize curves
+#' before changepoint detection.
+#' @param Q integer, default 3. Max number of changepoints `changepoint::cpt.mean()` looks for.
+#' @return numeric, the inferred 5' barcode size (0 if none found)
+#' @noRd
+barcode_change_point_5p <- function(curves, max_barcode_left_size, max_size_after,
+                                    z_score_normalize = FALSE, Q = 3) {
+  tab <- changepoint_position_table(curves, max_size_after, z_score_normalize, Q)
   pos <- as.numeric(names(tab))
   cut_left <- as.numeric(names(which.max(rev(tab[pos < max_barcode_left_size]))))
-  pos_high <- as.numeric(names(which.max(tab[pos > max_size_before-cut_left])))
+  max(0, cut_left, na.rm = TRUE)
+}
 
-  #max(pos[pos > cut_left*2])
+#' Infer the 3' barcode size from tail-anchored curves
+#'
+#' Unlike the 5' side, fastp's own curves are unusable here: the 3'
+#' barcode sits at a fixed offset from each read's OWN TRUE END, and
+#' insert/footprint length varies read-to-read, so its absolute position
+#' from the 5' start differs per read and smears a head-anchored
+#' population average regardless of where a search window looks. Takes
+#' curves already built tail-anchored (see
+#' \code{\link{tail_anchored_3p_curves}}), where position 1 already means
+#' "1 base from the read's own true end" by construction -- so, unlike
+#' the old joint function, no `max_size_before - pos - 2` conversion is
+#' needed: the detected changepoint position IS the barcode size.
+#' @param curves_3p list as returned by \code{\link{tail_anchored_3p_curves}},
+#' or NULL (too few reads reached the search window -- returns 0)
+#' @param max_barcode_right_size numeric, upper bound to search for a 3' barcode
+#' @param z_score_normalize logical, default FALSE. Normalize curves
+#' before changepoint detection.
+#' @param Q integer, default 3. Max number of changepoints `changepoint::cpt.mean()` looks for.
+#' @return numeric, the inferred 3' barcode size (0 if none found)
+#' @noRd
+barcode_change_point_3p <- function(curves_3p, max_barcode_right_size,
+                                    z_score_normalize = FALSE, Q = 3) {
+  if (is.null(curves_3p)) return(0)
+  tab <- changepoint_position_table(curves_3p, max_barcode_right_size, z_score_normalize, Q)
+  pos <- as.numeric(names(tab))
+  cut_right <- as.numeric(names(which.max(rev(tab[pos <= max_barcode_right_size]))))
+  max(0, cut_right, na.rm = TRUE)
+}
 
-  barcode5p_size <- max(0, cut_left, na.rm = TRUE)
-  barcode3p_size <- max(0, max_size_before - pos_high - 2, na.rm = TRUE)
+#' Tail-anchored quality/content curves for 3' barcode detection
+#'
+#' Reverses each read to its own true end BEFORE windowing, so position 1
+#' means "1 base from THIS read's own end" for every read regardless of
+#' its individual length -- exactly what a fixed-size 3' barcode needs
+#' (see \code{\link{barcode_change_point_3p}} for why fastp's own
+#' head-anchored curves can't be reused here).
+#' @param file_trim character, path to the (adapter-)trimmed fastq file
+#' @param window numeric, default 18. How many bases from each read's end
+#' to build curves over (matches \code{max_barcode_right_size})
+#' @param n_reads numeric, default 1e5. Subsample to at most this many reads.
+#' @return a list shaped like \code{barcode_change_point_3p()} expects
+#' (\code{list(quality_curves = list(...), content_curves = list(...))}),
+#' or NULL if too few reads reach `window` length to trust an estimate
+#' @noRd
+tail_anchored_3p_curves <- function(file_trim, window = 18, n_reads = 1e5) {
+  fq <- ShortRead::readFastq(file_trim)
+  if (length(fq) > n_reads) fq <- fq[sample(length(fq), n_reads)]
+  fq <- fq[ShortRead::width(fq) >= window]
+  if (length(fq) == 0) return(NULL)
 
-  barcodes_detected_too_big <- (max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size
-  if (barcodes_detected_too_big) { # Reduce 3p barcode size
+  seqs_window <- Biostrings::subseq(Biostrings::reverse(ShortRead::sread(fq)), 1, window)
+  # QualityScore objects (e.g. FastqQuality) don't support subseq()
+  # directly -- unwrap to the underlying BStringSet first via its
+  # `quality` slot.
+  quals_rev <- Biostrings::reverse(Biostrings::quality(fq))@quality
+  quals_window <- Biostrings::subseq(quals_rev, 1, window)
+
+  cm <- Biostrings::consensusMatrix(seqs_window, as.prob = TRUE)
+  content_curve <- MatrixGenerics::colMaxs(cm[c("A", "C", "G", "T"), , drop = FALSE])
+  quality_curve <- colMeans(as(Biostrings::PhredQuality(quals_window), "matrix"), na.rm = TRUE)
+
+  list(quality_curves = list(quality_curve), content_curves = list(content_curve))
+}
+
+#' Shrink 5'/3' barcode sizes together if they'd leave too few usable bases
+#'
+#' Kept as one joint step (unlike detection, which now retries each side
+#' independently -- see \code{barcode_detector_single()}): whether the
+#' combined size is "too big" is inherently a joint question about the
+#' two sizes' sum relative to \code{max_size_after}.
+#' @param barcode5p_size,barcode3p_size numeric, as detected
+#' @param max_size_after numeric, read size after adapter removal
+#' @param minimum_size numeric, minimum acceptable trimmed read size
+#' @return named numeric vector: `barcode5p_size`, `barcode3p_size`
+#' @noRd
+constrain_barcode_sizes <- function(barcode5p_size, barcode3p_size, max_size_after, minimum_size) {
+  too_big <- (max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size
+  if (too_big) { # Reduce 3p barcode size
     amount_too_big <- minimum_size - (max_size_after - (barcode5p_size + barcode3p_size))
     barcode3p_size <- max(barcode3p_size - amount_too_big, 0)
-    barcodes_detected_too_big <- (max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size
-    if (barcodes_detected_too_big) { # Reduce 5p barcode siz
+    too_big <- (max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size
+    if (too_big) { # Reduce 5p barcode size
       amount_too_big <- minimum_size - (max_size_after - (barcode5p_size + barcode3p_size))
       barcode5p_size <- max(barcode5p_size - amount_too_big, 0)
     }
   }
-  return(c(barcode5p_size = barcode5p_size, barcode3p_size = barcode3p_size))
+  c(barcode5p_size = barcode5p_size, barcode3p_size = barcode3p_size)
 }
 
 run_barcode_detection_and_trim <- function(study_sample, source_dir, target_dir, trimmed_dir,

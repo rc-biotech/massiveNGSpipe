@@ -138,6 +138,11 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
         barcodes_dt <- rbindlist(sample_flag_values(config, "trim", experiment), fill = TRUE)
         fwrite(barcodes_dt, file.path(trimmed_dir, "adapter_barcode_table.csv"))
 
+        # Record-only P-shift-failure-cause signal (see
+        # R/pshift_diagnostics.R): too-few-raw-reads is knowable as soon
+        # as trimming finishes, well before align/pshift ever run.
+        check_too_few_reads(conf["bam"], trimmed_dir, config$min_raw_reads_pshift)
+
         set_flag(config, "trim", conf["exp"])
         if (config$delete_raw_files) fs::file_delete(unlist(all_files_full))
     }
@@ -266,6 +271,10 @@ alignment_final_checks <- function(input_dir, output_dir, runs, config, steps) {
                                 package = "ORFik")
   system2("/bin/bash", c(cleanup_script, output_dir))
   STAR.allsteps.multiQC(output_dir, steps = steps)
+
+  # Record-only P-shift-failure-cause signal (see R/pshift_diagnostics.R):
+  # alignment rate is knowable right after align, well before pshift runs.
+  check_alignment_rate(output_dir, config$min_alignment_rate_pshift)
 
   dir_info <- as.data.table(fs::dir_info(file.path(output_dir, "aligned"), type = "file"))
   dir_info <- dir_info[grep(paste(runs$Run, collapse = "|"), path)][grep("\\.bam$", path)]
@@ -465,7 +474,8 @@ pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_
     shifting_table <- shifts_load_safe(df, reuse_shifts_if_existing)
     if (config$all_mappers) {
       res <- shiftFootprintsByExperimentSafe(df, shifting_table, accepted_lengths,
-                                             allowed_hard12_species, BPPARAM)
+                                             allowed_hard12_species, BPPARAM,
+                                             config$max_no_adapter_removed_pct)
     }
 
     if(config$split_unique_mappers & !inherits(res, "error")) {
@@ -476,7 +486,8 @@ pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_
       uniqueMappers(df) <- TRUE
       names(shifting_table) <- filepath(df, "ofst")
       res <- shiftFootprintsByExperimentSafe(df, shifting_table, accepted_lengths,
-                                             allowed_hard12_species, BPPARAM)
+                                             allowed_hard12_species, BPPARAM,
+                                             config$max_no_adapter_removed_pct)
     }
 
     if(!inherits(res, "error")) {
@@ -501,10 +512,10 @@ pipeline_validate_shifts <- function(df_list, config) {
     if (!step_is_next_not_done(config, "valid_pshift", name(df))) next
     BPPARAM <- bpparam_from_config(config, "valid_pshift")
     if (config$all_mappers)
-      shift_qc(df, BPPARAM)
+      shift_qc(df, BPPARAM, config$max_no_adapter_removed_pct)
     if (config$split_unique_mappers) {
       uniqueMappers(df) <- TRUE
-      shift_qc(df, BPPARAM)
+      shift_qc(df, BPPARAM, config$max_no_adapter_removed_pct)
     }
     set_flag(config, "valid_pshift", name(df))
   }
