@@ -126,13 +126,56 @@ pipeline_checklist <- function(pipelines, config, print = TRUE) {
   })
   tab <- data.table::rbindlist(rows)
   txt <- format_checklist(tab)
+  usage <- format_system_usage_line(config)
 
+  # Fixed-height header, always exactly 5 lines before the stage table
+  # (title / usage / cap-note-or-blank / blank / blank) whether or not
+  # the cap note has anything to say -- so the stage table always starts
+  # on the same line number and a live-redrawing viewer (or someone just
+  # watching the plain file) doesn't get thrown off by the line count
+  # shifting as the cap note appears/disappears between polls.
   path <- checklist_path(config)
   dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
-  cat(sprintf("Pipeline status as of %s\n\n%s\n", Sys.time(), txt), file = path)
+  header <- c(sprintf("Pipeline status as of %s", Sys.time()), usage["line"], usage["cap_note"], "", "")
+  cat(paste(c(header, txt), collapse = "\n"), "\n", sep = "", file = path)
 
-  if (print) message(txt)
+  if (print) message(paste(c(usage["line"], usage["cap_note"], "", "", txt), collapse = "\n"))
   invisible(tab)
+}
+
+#' One-line system usage summary for the checklist, plus a separate
+#' fixed-slot cap-warning note
+#'
+#' The usage line matches \code{ORFik::get_system_usage(one_liner = TRUE)}'s
+#' own format (\code{"CPU (x%), Memory (y%), Drive <drive> (z%)"} -- built
+#' directly from the list-mode return value here rather than capturing
+#' that function's own \code{cat()} side effect, so the same call also
+#' gives the numeric drive percentage needed for the cap check below
+#' without a second \code{df}/\code{top} invocation).
+#'
+#' Returned as two separate elements (not one combined line) so the
+#' caller can always reserve a fixed line for the cap note, whether or
+#' not it has anything to say -- an appended note makes the usage line's
+#' length vary based on live drive usage, which wraps unpredictably in a
+#' narrow terminal/UI and pushes every line below it out of position.
+#' @param config the mNGSp config object
+#' @return named character vector of length 2: \code{line} (the usage
+#' summary) and \code{cap_note} (the warning, or \code{""} when drive
+#' usage is below the cap)
+format_system_usage_line <- function(config) {
+  drive <- detect_drive(path.expand(config$config["ref"]))
+  usage <- get_system_usage(drive)
+  line <- paste0("CPU (", usage$CPU_Usage_Percent, "%),",
+                " Memory (", usage$Memory_Usage_Percent, "%),",
+                " Drive ", usage$Drive, " (", usage$Drive_Usage_Percent, "%)")
+
+  cap <- config$stop_downloading_new_data_at_drive_usage
+  drive_pct <- suppressWarnings(as.numeric(gsub("%", "", usage$Drive_Usage_Percent)))
+  cap_note <- ""
+  if (!is.null(cap) && !is.na(drive_pct) && drive_pct >= cap) {
+    cap_note <- paste0("[DRIVE AT/ABOVE ", cap, "% CAP -- pipe_fetch() is pausing new downloads]")
+  }
+  c(line = line, cap_note = cap_note)
 }
 
 #' Live-watch the pipeline checklist in place, like a download progress bar
