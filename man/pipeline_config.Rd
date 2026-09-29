@@ -24,7 +24,7 @@ pipeline_config(
   keep_contaminants = FALSE,
   keep_unaligned_genome = FALSE,
   compress_raw_data = FALSE,
-  stop_downloading_new_data_at_drive_usage = 96,
+  stop_downloading_new_data_at_drive_usage = 92,
   max_unprocessed_downloads = 30,
   accepted_lengths_rpf = c(20, 21, 25:33),
   reuse_shifts_if_existing = TRUE,
@@ -109,7 +109,7 @@ else saved in contamination dir.}
 
 \item{compress_raw_data}{logical, default FALSE. If TRUE, will compress raw fastq files.}
 
-\item{stop_downloading_new_data_at_drive_usage}{integer, default 96,
+\item{stop_downloading_new_data_at_drive_usage}{integer, default 92,
 percentage value where the drive will stop downloading new data. Set to 101 to
 disable a cap.}
 
