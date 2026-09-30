@@ -110,13 +110,19 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
                 single_end <- is.na(filenames[2])
                 file <- filenames[1]
                 file2 <- if(!single_end) filenames[2]
-                # adapter <- "AGATCGGAAGAG"
-                adapter <- detect_adapter_and_trim(file, target_dir, file2)
                 barcode_dt <- data.table()
                 check_for_barcodes <- runs[i]$LIBRARYTYPE == "RFP"
                 if (check_for_barcodes) {
+                  # Detects barcode sizes from a cheap subsample, then
+                  # does the ONE real full adapter+barcode trim pass --
+                  # NOT detect_adapter_and_trim() first (that used to run
+                  # a full adapter-only pass which this then reprocessed
+                  # a second time in full; see run_barcode_detection_and_trim()).
                   barcode_dt <- run_barcode_detection_and_trim(study_sample, source_dir,
-                                                               target_dir, trimmed_dir, mode, adapter)
+                                                               target_dir, trimmed_dir, mode,
+                                                               file, file2)
+                } else {
+                  detect_adapter_and_trim(file, target_dir, file2)
                 }
                 # Store the actual barcode_dt row (not just TRUE) so it
                 # can be reconstructed below even across a resumed run.

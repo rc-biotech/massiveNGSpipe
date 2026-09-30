@@ -1,7 +1,13 @@
 # Unit tests for R/fastq_helpers.R -- the pure/tempdir()-friendly pieces.
 # The real STAR/fastqc/adapter-detection subprocess chain
 # (detect_adapter_and_trim, run_fastqc, barcode_detector_single/pipeline,
-# run_barcode_detection_and_trim) is out of scope here.
+# run_barcode_detection_and_trim, fastp_detect_sample) is out of scope
+# here EXCEPT for resolve_adapter_for_trim()'s own pure fasta/polyN
+# branching logic (no external tool involved when `adapter` is supplied
+# explicitly, bypassing its fastqc_adapters_info() default) and the
+# massiveNGSpipe-side orchestration of the trim-fusion redesign (which
+# branch runs, single-vs-cheap-pass routing, exactly-one-real-pass
+# guarantee), verified below via mocks -- see test-barcode_trim_fusion.R.
 
 test_that("run_files_organizer_internal matches a SINGLE run's plain filename", {
   runs <- data.table::data.table(Run = "SRR001", LibraryLayout = "SINGLE")
@@ -290,4 +296,93 @@ test_that("tail_anchored_3p_curves() returns NULL when no reads reach the search
   curves_3p <- tail_anchored_3p_curves(fixture$trimmed_file, window = 18, n_reads = 1e5)
   expect_null(curves_3p)
   expect_equal(detect_3p_with_retry(curves_3p, max_barcode_right_size = 18), 0)
+})
+
+test_that("fastp_detect_sample() never passes reads_to_process in scientific notation", {
+  # Regression test: c("--reads_to_process", reads_to_process) coerces a
+  # numeric like 1e6 straight to character, giving "1e+06" -- fastp
+  # rejects that as an invalid integer (verified live: system2() failed,
+  # only surfacing as a missing downstream json file with no clear error).
+  args <- fastp_detect_sample_args("raw.fastq", "out.fastq", "out.json", "out.html",
+                                  adapter = "AGATCGGAAGAGC", reads_to_process = 1e6)
+
+  idx <- which(args == "--reads_to_process") + 1
+  expect_identical(args[idx], "1000000")
+  expect_false(grepl("e[+-]", args[idx]))
+})
+
+test_that("fastp_detect_sample_args() passes a concrete adapter sequence through", {
+  args <- fastp_detect_sample_args("raw.fastq", "out.fastq", "out.json", "out.html",
+                                  adapter = "AGATCGGAAGAGC", reads_to_process = 5e5)
+  idx <- which(args == "--adapter_sequence") + 1
+  expect_identical(args[idx], "AGATCGGAAGAGC")
+  expect_false("--disable_adapter_trimming" %in% args)
+})
+
+test_that("fastp_detect_sample_args() disables adapter trimming when adapter is 'disable'", {
+  args <- fastp_detect_sample_args("raw.fastq", "out.fastq", "out.json", "out.html",
+                                  adapter = "disable", reads_to_process = 5e5)
+  expect_true("--disable_adapter_trimming" %in% args)
+  expect_false("--adapter_sequence" %in% args)
+})
+
+test_that("resolve_adapter_for_trim() forces adapter=disable for a fasta file, regardless of input", {
+  result <- resolve_adapter_for_trim("some/path/reads.fasta", tempdir(), adapter = "ATCGATCG")
+  expect_identical(result$adapter, "disable")
+  expect_identical(result$tempfile, "some/path/reads.fasta")
+  expect_false(result$polyN_adapter)
+
+  result_gz <- resolve_adapter_for_trim("some/path/reads.fasta.gz", tempdir(), adapter = "ATCGATCG")
+  expect_identical(result_gz$adapter, "disable")
+})
+
+test_that("resolve_adapter_for_trim() passes a concrete adapter through unchanged for a normal fastq", {
+  result <- resolve_adapter_for_trim("some/path/reads.fastq.gz", tempdir(), adapter = "AGATCGGAAGAGC")
+  expect_identical(result$adapter, "AGATCGGAAGAGC")
+  expect_identical(result$tempfile, "some/path/reads.fastq.gz")
+  expect_false(result$polyN_adapter)
+})
+
+test_that("resolve_adapter_for_trim() falls back to disable when adapter detection errored (try-error)", {
+  bad_adapter <- try(stop("adapter detection failed"), silent = TRUE)
+  result <- resolve_adapter_for_trim("some/path/reads.fastq", tempdir(), adapter = bad_adapter)
+  expect_identical(result$adapter, "disable")
+  expect_false(result$polyN_adapter)
+})
+
+test_that("resolve_adapter_for_trim() strips a polyN tail and switches to a fixed adapter", {
+  # trimLRPatterns()'s Rpattern is built as max(width(seqs)) N's, and "N"
+  # is a wildcard that matches any base -- an N-run comparable in length
+  # to the read itself gets greedily over-matched and wipes the whole
+  # read (verified live), so this fixture keeps the N-tail short relative
+  # to read length, matching a realistic terminal low-quality/uncalled
+  # run rather than a degenerate all-N case.
+  reads <- Biostrings::DNAStringSet(c(
+    "ACGTACGTACGTACGTACGTACGTACGTACGTNNNNNNNN", # 33 real bases + 8 N's
+    "TTTTGGGGCCCCAAAATTTTGGGGCCCCAAAANNNNNNNN"
+  ))
+  quals <- Biostrings::BStringSet(rep(strrep("I", Biostrings::width(reads)[1]), length(reads)))
+  fq <- ShortRead::ShortReadQ(sread = reads, quality = ShortRead::FastqQuality(quals),
+                              id = Biostrings::BStringSet(paste0("read", seq_along(reads))))
+  # Deliberately NOT under tempdir() directly: resolve_adapter_for_trim()'s
+  # polyN branch writes its stripped copy to file.path(tempdir(),
+  # basename(file)) -- if the input already lived directly in tempdir()
+  # with the same basename, that would collide with the input itself
+  # (a pre-existing, separate latent issue, not touched by this test).
+  raw_dir <- file.path(tempdir(), "resolve_adapter_polyN_test")
+  dir.create(raw_dir, showWarnings = FALSE)
+  raw_file <- file.path(raw_dir, "raw.fastq")
+  ShortRead::writeFastq(fq, raw_file, compress = FALSE)
+
+  invisible(capture.output(suppressMessages(
+    result <- resolve_adapter_for_trim(raw_file, tempdir(), adapter = "NNNNNNNNNN")
+  )))
+  expect_identical(result$adapter, "AGATCGGAAGAG")
+  expect_true(result$polyN_adapter)
+  expect_true(file.exists(result$tempfile))
+  expect_false(identical(result$tempfile, raw_file))
+
+  stripped <- ShortRead::readFastq(result$tempfile)
+  expect_true(all(Biostrings::width(ShortRead::sread(stripped)) == 32))
+  file.remove(result$tempfile)
 })
