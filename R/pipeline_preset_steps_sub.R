@@ -446,6 +446,51 @@ pipeline_create_experiment <- function(pipeline, config) {
   return(df_list)
 }
 
+#' Run one format conversion per sample, with per-sample resume support
+#'
+#' Subsets \code{df} to one row at a time and calls \code{convert_fun} on
+#' that single-row experiment instead of the whole experiment at once --
+#' ORFik's own \code{convert_bam_to_ofst()}/\code{convert_to_covRleList()}/
+#' \code{convert_to_bigWig()} are already plain serial per-file
+#' \code{for} loops internally (verified directly: no \code{BPPARAM}, no
+#' cross-sample state besides directory creation and \code{seqinfo()}),
+#' so calling them one row at a time is functionally identical to calling
+#' them once on the whole \code{df} -- just resumable: a sample already
+#' marked done in an earlier, interrupted attempt is skipped instead of
+#' redone, the same resume pattern \code{pipeline_trim()}/
+#' \code{pipeline_align()} already use (see \code{R/pipeline_sample_flags.R}).
+#'
+#' Deliberately NOT extended to pshift/pcounts: pshift hands off to
+#' ORFik's own internal per-experiment shifting (no natural per-sample
+#' point to hook into without changing ORFik itself), and pcounts'
+#' \code{countTable_regions()} needs every sample's data together to
+#' build one \code{SummarizedExperiment} -- neither has a safe per-sample
+#' subset-and-resume equivalent the way a plain per-file conversion loop
+#' does.
+#' @param df an ORFik experiment, already at the correct
+#' \code{uniqueMappers()} setting for this pass (see \code{step_id})
+#' @param config the mNGSp config object
+#' @param step_id character, the sample-flag namespace for this pass
+#' (e.g. \code{"ofst"} or \code{"ofst_unique"} -- kept distinct per
+#' mapper-mode so a resume mid-way through the unique-mappers pass never
+#' re-skips or re-redoes the separately-tracked all-mappers pass)
+#' @param convert_fun function(df_one_row), one of ORFik's own
+#' \code{convert_bam_to_ofst()}/\code{convert_to_covRleList()}/
+#' \code{convert_to_bigWig()} (the last one wrapped to also supply its
+#' \code{in_files} argument per-row)
+#' @return invisible(NULL)
+#' @noRd
+convert_per_sample <- function(df, config, step_id, convert_fun) {
+  experiment <- name(df)
+  run_ids <- runIDs(df)
+  done <- samples_done(config, step_id, experiment)
+  for (i in which(!(run_ids %in% done))) {
+    convert_fun(df[i, ])
+    set_sample_flag(config, step_id, experiment, run_ids[i])
+  }
+  invisible(NULL)
+}
+
 #' Create ORFik ofst files from bam files
 #' @param df_list a list of ORFik experiments
 #' @inheritParams pipeline_download
@@ -453,11 +498,12 @@ pipeline_create_ofst <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "ofst", name(df))) next
     if (config$all_mappers)
-      convert_bam_to_ofst(df)
+      convert_per_sample(df, config, "ofst", convert_bam_to_ofst)
 
     if (config$split_unique_mappers) {
-      uniqueMappers(df) <- TRUE
-      convert_bam_to_ofst(df)
+      df_unique <- df
+      uniqueMappers(df_unique) <- TRUE
+      convert_per_sample(df_unique, config, "ofst_unique", convert_bam_to_ofst)
     }
     set_flag(config, "ofst", name(df))
   }
@@ -526,10 +572,11 @@ pipeline_convert_covRLE <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "covrle", name(df))) next
     if (config$all_mappers)
-      convert_to_covRleList(df)
+      convert_per_sample(df, config, "covrle", convert_to_covRleList)
     if (config$split_unique_mappers) {
-      uniqueMappers(df) <- TRUE
-      convert_to_covRleList(df)
+      df_unique <- df
+      uniqueMappers(df_unique) <- TRUE
+      convert_per_sample(df_unique, config, "covrle_unique", convert_to_covRleList)
     }
     set_flag(config, "covrle", name(df))
   }
@@ -537,13 +584,20 @@ pipeline_convert_covRLE <- function(df_list, config) {
 
 #' @inheritParams pipeline_create_ofst
 pipeline_convert_bigwig <- function(df_list, config) {
+  # convert_to_bigWig()'s in_files must be supplied per-row too (it
+  # defaults to "pshifted", but this pipeline builds bigwig from the
+  # covRLE step's own output instead -- filepath type "cov" -- so the
+  # override has to travel with the per-row wrapper, not be left at the
+  # function default).
+  convert_bigwig_one <- function(df_one_row) convert_to_bigWig(df_one_row, filepath(df_one_row, "cov"))
   for (df in df_list) {
     if (!step_is_next_not_done(config, "bigwig", name(df))) next
     if (config$all_mappers)
-      convert_to_bigWig(df, filepath(df, "cov"))
+      convert_per_sample(df, config, "bigwig", convert_bigwig_one)
     if (config$split_unique_mappers) {
-      uniqueMappers(df) <- TRUE
-      convert_to_bigWig(df, filepath(df, "cov"))
+      df_unique <- df
+      uniqueMappers(df_unique) <- TRUE
+      convert_per_sample(df_unique, config, "bigwig_unique", convert_bigwig_one)
     }
     set_flag(config, "bigwig", name(df))
   }

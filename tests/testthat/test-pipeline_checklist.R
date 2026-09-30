@@ -8,7 +8,8 @@ test_that("stage_marker_step maps known stages and falls through to NA otherwise
   expect_identical(stage_marker_step("pipe_fetch"), "fetch")
   expect_identical(stage_marker_step("pipe_trim_collapse"), "trim")
   expect_identical(stage_marker_step("pipe_align_clean"), "aligned")
-  expect_identical(stage_marker_step("pipe_exp_ofst"), NA_character_)
+  expect_identical(stage_marker_step("pipe_exp_ofst"), "ofst")
+  expect_identical(stage_marker_step("pipe_convert"), "bigwig")
   expect_identical(stage_marker_step("totally_unknown_stage"), NA_character_)
 })
 

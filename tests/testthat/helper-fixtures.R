@@ -65,6 +65,31 @@ fake_mark_all_done <- function(config, steps, experiment) {
   for (s in steps) set_flag(config, s, experiment)
 }
 
+#' Minimal S4 stand-in for an ORFik experiment, supporting only what
+#' convert_per_sample() and its pipeline_convert_*() callers
+#' (R/pipeline_preset_steps_sub.R) actually call: name(), runIDs(),
+#' single-row `[` subsetting, and uniqueMappers<-. Avoids constructing a
+#' real ORFik experiment (needs real bam/reference files) just to test
+#' massiveNGSpipe's own per-sample resume orchestration.
+methods::setClass("fake_exp_stub", representation(name = "character", run_ids = "character",
+                                                   unique_mappers = "logical"),
+                  prototype(unique_mappers = FALSE))
+methods::setMethod("name", "fake_exp_stub", function(x) x@name)
+methods::setMethod("runIDs", "fake_exp_stub", function(x) x@run_ids)
+methods::setMethod("[", "fake_exp_stub", function(x, i, ...) {
+  methods::new("fake_exp_stub", name = x@name, run_ids = x@run_ids[i],
+              unique_mappers = x@unique_mappers)
+})
+methods::setMethod("uniqueMappers<-", "fake_exp_stub", function(x, value) {
+  x@unique_mappers <- value
+  x
+})
+
+fake_experiment_stub <- function(run_ids = c("SRR001", "SRR002", "SRR003"),
+                                 exp_name = "PRJNA000001-homo_sapiens") {
+  methods::new("fake_exp_stub", name = exp_name, run_ids = run_ids)
+}
+
 #' Synthetic Ribo-seq-like fastq data with a fixed 5'/3' barcode and a
 #' REALISTIC, VARYING insert (footprint) length -- adapted from
 #' fastqc_adapters_info()'s own roxygen @examples pattern (R/fastq_helpers.R),

@@ -4,21 +4,29 @@
 # R/pipeline_flags.R. Existing flags only track completion at (study
 # accession x organism) = "experiment" granularity; these give finer
 # sample/run-level detail for the stages that process samples in a plain
-# in-process loop (currently: fetch, trim, align), so the checklist in
-# R/pipeline_checklist.R can show "M/K samples done" for whichever
-# experiment a stage is currently working on, AND (see samples_done()/
-# sample_flag_values() below) so a resumed run can skip samples already
-# completed in an earlier, interrupted attempt instead of redoing the
-# whole experiment from scratch.
+# in-process loop (fetch, trim, align, ofst, covrle, bigwig -- the last
+# three via convert_per_sample(), R/pipeline_preset_steps_sub.R), so the
+# checklist in R/pipeline_checklist.R can show "M/K samples done" for
+# whichever experiment a stage is currently working on, AND (see
+# samples_done()/sample_flag_values() below) so a resumed run can skip
+# samples already completed in an earlier, interrupted attempt instead of
+# redoing the whole experiment from scratch.
 #
 # Not every stage can offer this: stages that hand off to ORFik's own
-# internal BiocParallel dispatch (pshift, valid_pshift, pcounts) or that
-# process a whole folder in one call (contam) have no per-sample loop to
-# hook into, and simply have no markers -- the checklist falls back to
+# internal BiocParallel dispatch (pshift, valid_pshift) or that need every
+# sample together in one call (pcounts' countTable_regions(), which builds
+# one SummarizedExperiment across all samples at once; contam, which
+# processes a whole folder in one call) have no per-sample loop to hook
+# into, and simply have no markers -- the checklist falls back to
 # study-level counts only for those, and resume for those stages already
 # works at the existing experiment-level flag granularity (no per-sample
 # resume needed there). All functions here are internal (unexported),
 # same as the existing flag primitives in pipeline_flags.R.
+#
+# The all-mappers and split-unique-mappers passes of ofst/covrle/bigwig
+# are tracked under separate step ids ("ofst" vs "ofst_unique", etc.) --
+# a single experiment can have one pass fully done and the other only
+# partway through, and each needs its own independent resume point.
 
 #' Directory holding one experiment's per-sample markers for one step
 #' @param config the mNGSp config object

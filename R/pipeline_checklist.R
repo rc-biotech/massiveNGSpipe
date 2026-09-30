@@ -11,6 +11,13 @@ stage_marker_step <- function(stage_name) {
         pipe_fetch = "fetch",
         pipe_trim_collapse = "trim",
         pipe_align_clean = "aligned",
+        pipe_exp_ofst = "ofst",
+        # pipe_convert runs covRLE then bigwig; a single marker can only
+        # track one, so bigwig is chosen (the later phase) -- during the
+        # covRLE phase this stage just shows "queued" instead of live
+        # per-sample progress, rather than showing stale/misleadingly-
+        # complete covRLE counts once the bigwig phase has actually begun.
+        pipe_convert = "bigwig",
         NA_character_)
 }
 
