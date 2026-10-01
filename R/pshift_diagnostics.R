@@ -24,6 +24,76 @@ bam_dir_from_df <- function(df) {
   dirname(resFolder(df))
 }
 
+#' True (score-weighted) read-length distribution for one ofst file
+#'
+#' Every existing interactive tool that computes a length distribution
+#' (shared_scripts/.../shift_study_app.R, mNGSp_manual_reshift.R) does a
+#' plain \code{table(readWidths(x))} over an ofst's rows -- but ofst rows
+#' are collapsed/deduplicated sequences, each carrying its true read
+#' count in \code{mcols()$score} (same collapse-weighting issue already
+#' fixed for alignment metrics, see \code{get_expanded_alignment_metrics()},
+#' R/bam_utils.R). Verified live on real production data: the row-count
+#' view and the score-weighted view can peak at completely different
+#' read lengths. This weights by \code{score} to get the TRUE
+#' distribution; row-count-only ofst files (no \code{score} column, e.g.
+#' pre-dating multiplicity tracking) fall back to weight 1 per row.
+#' @param ofst_path character, path to a \code{.ofst} file
+#' @return data.table(read_length, count, percent), sorted by
+#' read_length. \code{count} is the total (score-weighted) read count.
+#' A 0-row table (not an error) for an empty/0-read ofst file.
+#' @noRd
+read_length_distribution <- function(ofst_path) {
+  x <- ORFik::fimport(ofst_path)
+  if (length(x) == 0) {
+    return(data.table::data.table(read_length = integer(), count = numeric(), percent = numeric()))
+  }
+  score <- S4Vectors::mcols(x)$score
+  if (is.null(score)) score <- rep(1, length(x))
+  dt <- data.table::data.table(read_length = ORFik::readWidths(x), score = score)
+  agg <- dt[, .(count = sum(score)), by = read_length][order(read_length)]
+  agg[, percent := round(100 * count / sum(count), 2)]
+  agg[]
+}
+
+#' Save one sample's read-length distribution CSV
+#' @param ofst_path character, the .ofst (or _pshifted.ofst) file to summarize
+#' @param out_dir character, destination folder (e.g.
+#' \code{<ofst_dir>/read_length_distribution})
+#' @param run_id character, sample identifier for the per-sample filename
+#' @return invisible(data.table), this sample's own distribution (so a
+#' caller building its own aggregate doesn't need to re-read the CSV back)
+#' @noRd
+save_read_length_distribution <- function(ofst_path, out_dir, run_id) {
+  dist <- read_length_distribution(ofst_path)
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+  data.table::fwrite(dist, file.path(out_dir, paste0(run_id, ".csv")))
+  invisible(dist)
+}
+
+#' Combine every per-sample CSV in a read_length_distribution folder into
+#' one study-level \code{00_aggregated.csv}
+#'
+#' \code{00_}-prefixed, matching the existing aggregate-file convention
+#' already used for \code{00_STAR_LOG_table.csv}/\code{00_STAR_LOG_plot.pdf}
+#' (\code{aligned/LOGS*/}). Re-reads whatever per-sample CSVs currently
+#' exist in \code{out_dir} rather than taking them as an argument, so a
+#' resumed run's aggregate is always built from every sample done so far,
+#' not just the ones newly converted in this call.
+#' @param out_dir character, the read_length_distribution folder
+#' @return invisible(NULL)
+#' @noRd
+aggregate_read_length_distribution <- function(out_dir) {
+  files <- list.files(out_dir, pattern = "\\.csv$", full.names = TRUE)
+  files <- files[basename(files) != "00_aggregated.csv"]
+  if (length(files) == 0) return(invisible(NULL))
+  all_dt <- data.table::rbindlist(lapply(files, data.table::fread), fill = TRUE)
+  if (nrow(all_dt) == 0) return(invisible(NULL))
+  agg <- all_dt[, .(count = sum(count)), by = read_length][order(read_length)]
+  agg[, percent := round(100 * count / sum(count), 2)]
+  data.table::fwrite(agg, file.path(out_dir, "00_aggregated.csv"))
+  invisible(NULL)
+}
+
 #' Canonical QC-diagnostics file path for one experiment
 #'
 #' Computable identically before or after the ORFik experiment object

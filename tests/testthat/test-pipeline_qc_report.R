@@ -68,3 +68,65 @@ test_that("qc_verdict_report(only_flagged = TRUE) keeps a study flagged only via
   result <- qc_verdict_report(pipelines, config, only_flagged = TRUE)
   expect_equal(nrow(result), 1)
 })
+
+test_that("pshift_triage() assembles qc/frames/length-distribution data purely from precomputed files", {
+  config <- fake_config()
+  bam_dir <- tempfile("bam_")
+  qc_dir <- file.path(bam_dir, "aligned", "QC_STATS")
+  # read_dist_or_null() derives its path as
+  # dirname(filepath(df, type))/read_length_distribution/00_aggregated.csv
+  # -- so the parent of each *_parent dir below is what the mocked
+  # filepath() must return, not the distribution folder itself.
+  ofst_parent <- tempfile("ofst_parent_")
+  pshifted_parent <- tempfile("pshifted_parent_")
+  dir.create(file.path(ofst_parent, "read_length_distribution"), recursive = TRUE)
+  dir.create(file.path(pshifted_parent, "read_length_distribution"), recursive = TRUE)
+
+  update_qc_diagnostics(qc_diagnostics_path(bam_dir), primary_cause = "wrong_organism")
+  dir.create(qc_dir, showWarnings = FALSE, recursive = TRUE)
+  data.table::fwrite(data.table::data.table(frame = 0, fraction = "RFP", length = 28, score = 10),
+                     file.path(qc_dir, "Ribo_frames_all.csv"))
+  data.table::fwrite(data.table::data.table(read_length = 28L, count = 100, percent = 100),
+                     file.path(ofst_parent, "read_length_distribution", "00_aggregated.csv"))
+  data.table::fwrite(data.table::data.table(read_length = 28L, count = 80, percent = 100),
+                     file.path(pshifted_parent, "read_length_distribution", "00_aggregated.csv"))
+
+  stub <- fake_experiment_stub(exp_name = "PRJNA000001-homo_sapiens")
+  testthat::local_mocked_bindings(
+    `read.experiment` = function(exp, ...) stub,
+    bam_dir_from_df = function(df) bam_dir,
+    QCfolder = function(x) qc_dir,
+    filepath = function(df, type, ...) {
+      if (type == "ofst") file.path(ofst_parent, "SRR001.ofst")
+      else file.path(pshifted_parent, "SRR001_pshifted.ofst")
+    }
+  )
+
+  result <- pshift_triage("PRJNA000001-homo_sapiens", config)
+
+  expect_identical(result$exp, "PRJNA000001-homo_sapiens")
+  expect_identical(result$qc$primary_cause, "wrong_organism")
+  expect_equal(result$frames$score, 10)
+  expect_equal(result$length_dist_preshift$count, 100)
+  expect_equal(result$length_dist_postshift$count, 80)
+  expect_identical(result$accepted_lengths, config$accepted_lengths_rpf)
+})
+
+test_that("pshift_triage() returns NULL (not an error) for pieces that don't exist yet", {
+  config <- fake_config()
+  bam_dir <- tempfile("bam_") # nothing written under it at all
+  stub <- fake_experiment_stub(exp_name = "PRJNA000002-homo_sapiens")
+  testthat::local_mocked_bindings(
+    `read.experiment` = function(exp, ...) stub,
+    bam_dir_from_df = function(df) bam_dir,
+    QCfolder = function(x) file.path(bam_dir, "aligned", "QC_STATS"),
+    filepath = function(df, type, ...) file.path(tempfile(), "missing.ofst")
+  )
+
+  result <- pshift_triage("PRJNA000002-homo_sapiens", config)
+
+  expect_identical(result$qc, list())
+  expect_null(result$frames)
+  expect_null(result$length_dist_preshift)
+  expect_null(result$length_dist_postshift)
+})

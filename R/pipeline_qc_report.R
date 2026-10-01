@@ -57,3 +57,55 @@ qc_verdict_report <- function(pipelines, config, only_flagged = FALSE) {
   }
   result[]
 }
+
+#' One study's full P-shift diagnostic picture, read entirely from
+#' precomputed files
+#'
+#' A pure read: never loads an ofst file, never recomputes anything --
+#' everything here is already written progressively by the pipeline
+#' itself (\code{qc_diagnostics.rds} by \code{R/pshift_diagnostics.R}'s
+#' check functions; \code{Ribo_frames_all.csv} by \code{shift_qc()},
+#' \code{R/shifting_helpers.R}; the two \code{00_aggregated.csv} length
+#' distributions by \code{convert_bam_to_ofst_with_length_dist()}/
+#' \code{save_pshifted_length_distributions()},
+#' \code{R/pipeline_preset_steps_sub.R}). Cheap enough to call on demand
+#' to decide whether and how a study needs reshifting: comparing
+#' \code{length_dist_preshift} against \code{accepted_lengths} shows
+#' whether footprint sizes genuinely fall outside the configured range
+#' (an \code{accepted_lengths_rpf} fix, not a reshift); comparing
+#' \code{length_dist_preshift} against \code{length_dist_postshift}
+#' shows how much got dropped by that filter; \code{frames} shows
+#' whether periodicity is actually poor (an offset fix) once the data
+#' itself looks reasonable.
+#' @param exp character, experiment name
+#' @param config the mNGSp config object
+#' @return a list: \code{exp}, \code{qc} (\code{qc_diagnostics.rds}
+#' contents, \code{list()} if not yet written), \code{frames}
+#' (data.table from \code{Ribo_frames_all.csv}, or \code{NULL}),
+#' \code{length_dist_preshift}/\code{length_dist_postshift} (data.table
+#' from the respective \code{00_aggregated.csv}, or \code{NULL} if not
+#' yet written), \code{accepted_lengths} (\code{config$accepted_lengths_rpf})
+#' @export
+pshift_triage <- function(exp, config = pipeline_config()) {
+  df <- read.experiment(exp, validate = FALSE)
+  bam_dir <- bam_dir_from_df(df)
+
+  read_dist_or_null <- function(dir_of_filetype) {
+    path <- tryCatch(file.path(dirname(filepath(df, dir_of_filetype)[1]),
+                               "read_length_distribution", "00_aggregated.csv"),
+                     error = function(e) NA_character_)
+    if (is.na(path) || !file.exists(path)) return(NULL)
+    data.table::fread(path)
+  }
+
+  frames_path <- file.path(QCfolder(df), "Ribo_frames_all.csv")
+
+  list(
+    exp = exp,
+    qc = read_qc_diagnostics(qc_diagnostics_path(bam_dir)),
+    frames = if (file.exists(frames_path)) data.table::fread(frames_path) else NULL,
+    length_dist_preshift = read_dist_or_null("ofst"),
+    length_dist_postshift = read_dist_or_null("pshifted"),
+    accepted_lengths = config$accepted_lengths_rpf
+  )
+}

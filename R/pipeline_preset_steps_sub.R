@@ -509,22 +509,87 @@ convert_per_sample <- function(df, config, step_id, convert_fun) {
   invisible(NULL)
 }
 
+#' convert_bam_to_ofst(), plus save that one sample's read-length
+#' distribution right after
+#'
+#' Reads the just-written ofst file once (cheap: a compact, local,
+#' already-converted file, not a BAM reparse) to save
+#' \code{<ofst_dir>/read_length_distribution/<Run>.csv} alongside it --
+#' see \code{\link{read_length_distribution}} for why this must be
+#' score-weighted, not a plain row count. Wrapped in its own \code{try()}:
+#' a bug in this diagnostic-only addition must never fail the real ofst
+#' conversion it rides along with (same reasoning already used for
+#' \code{\link{save_expanded_alignment_metrics}}).
+#' @param df_one_row an ORFik experiment subset to exactly one row (see
+#' \code{\link{convert_per_sample}})
+#' @return invisible(NULL)
+#' @noRd
+convert_bam_to_ofst_with_length_dist <- function(df_one_row) {
+  convert_bam_to_ofst(df_one_row)
+  try({
+    ofst_path <- filepath(df_one_row, "ofst")
+    out_dir <- file.path(dirname(ofst_path), "read_length_distribution")
+    save_read_length_distribution(ofst_path, out_dir, runIDs(df_one_row))
+  }, silent = TRUE)
+  invisible(NULL)
+}
+
 #' Create ORFik ofst files from bam files
 #' @param df_list a list of ORFik experiments
 #' @inheritParams pipeline_download
 pipeline_create_ofst <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "ofst", name(df))) next
-    if (config$all_mappers)
-      convert_per_sample(df, config, "ofst", convert_bam_to_ofst)
+    if (config$all_mappers) {
+      convert_per_sample(df, config, "ofst", convert_bam_to_ofst_with_length_dist)
+      try(aggregate_read_length_distribution(file.path(dirname(filepath(df, "ofst")[1]),
+                                                        "read_length_distribution")), silent = TRUE)
+    }
 
     if (config$split_unique_mappers) {
       df_unique <- df
       uniqueMappers(df_unique) <- TRUE
-      convert_per_sample(df_unique, config, "ofst_unique", convert_bam_to_ofst)
+      convert_per_sample(df_unique, config, "ofst_unique", convert_bam_to_ofst_with_length_dist)
+      try(aggregate_read_length_distribution(file.path(dirname(filepath(df_unique, "ofst")[1]),
+                                                        "read_length_distribution")), silent = TRUE)
     }
     set_flag(config, "ofst", name(df))
   }
+}
+
+#' Save per-sample + aggregated read-length distribution for every
+#' already-shifted ofst in this experiment
+#'
+#' No per-sample loop exists in \code{pipeline_pshift()} itself
+#' (\code{shiftFootprintsByExperimentSafe()} shifts the whole experiment
+#' via ORFik's own internal dispatch -- same constraint already accepted
+#' for the ofst/covRLE/bigwig per-sample-resume work this session, which
+#' deliberately did not extend to pshift for the same reason). Called
+#' once, right after a successful shift, looping over the shifted files
+#' that already exist on disk at that point (cheap: no re-shift, just a
+#' read of each small ofst). Comparing this against the pre-shift
+#' distribution (see \code{convert_bam_to_ofst_with_length_dist()})
+#' directly shows how much got dropped by the \code{accepted_lengths}
+#' filter. Wrapped in its own \code{try()}, same reasoning as the ofst
+#' side: a bug here must never fail the real shift it rides along with.
+#' @param df an ORFik experiment, already at the correct
+#' \code{uniqueMappers()} setting for this pass (shifted file paths come
+#' from \code{filepath(df, "pshifted")})
+#' @return invisible(NULL)
+#' @noRd
+save_pshifted_length_distributions <- function(df) {
+  try({
+    pshifted_paths <- filepath(df, "pshifted")
+    run_ids <- runIDs(df)
+    out_dir <- file.path(dirname(pshifted_paths[1]), "read_length_distribution")
+    for (i in seq_along(pshifted_paths)) {
+      if (file.exists(pshifted_paths[i])) {
+        save_read_length_distribution(pshifted_paths[i], out_dir, run_ids[i])
+      }
+    }
+    aggregate_read_length_distribution(out_dir)
+  }, silent = TRUE)
+  invisible(NULL)
 }
 
 #' @inheritParams pipeline_create_ofst
@@ -540,6 +605,7 @@ pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_
       res <- shiftFootprintsByExperimentSafe(df, shifting_table, accepted_lengths,
                                              allowed_hard12_species, BPPARAM,
                                              config$max_no_adapter_removed_pct)
+      if (!inherits(res, "error")) save_pshifted_length_distributions(df)
     }
 
     if(config$split_unique_mappers & !inherits(res, "error")) {
@@ -552,6 +618,7 @@ pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_
       res <- shiftFootprintsByExperimentSafe(df, shifting_table, accepted_lengths,
                                              allowed_hard12_species, BPPARAM,
                                              config$max_no_adapter_removed_pct)
+      if (!inherits(res, "error")) save_pshifted_length_distributions(df)
     }
 
     if(!inherits(res, "error")) {

@@ -5,6 +5,35 @@
 # tempdir() directories (not mocks) so flag/file-based functions behave
 # exactly as they do in production, just against throwaway paths.
 
+#' A tiny, real .ofst file with known per-length score-weighted read counts
+#'
+#' Builds a real GAlignments + ORFik::export.ofst() round trip (not a
+#' mock) -- cheap enough for a fast unit test, but exercises the real
+#' ofst read/write path read_length_distribution() depends on.
+#' @param widths integer vector, one width per row
+#' @param scores numeric vector, same length as widths (each row's true
+#' read-multiplicity weight)
+#' @return character, path to the written .ofst file
+fake_ofst <- function(widths = c(28, 28, 30, 30), scores = c(100, 1, 5, 5)) {
+  stopifnot(length(widths) == length(scores))
+  # GAlignments() itself rejects zero-length seqnames/cigar/strand inputs
+  # ("not parallel to x") -- always build >= 1 row, then subset down to
+  # the requested (possibly empty) length, which GAlignments handles fine.
+  n <- max(length(widths), 1)
+  w <- if (length(widths) == 0) 1 else widths
+  aln <- GenomicAlignments::GAlignments(
+    seqnames = S4Vectors::Rle(rep("chr1", n)),
+    pos = rep(1L, n),
+    cigar = paste0(w, "M"),
+    strand = S4Vectors::Rle(BiocGenerics::strand(rep("+", n)))
+  )
+  S4Vectors::mcols(aln)$score <- if (length(scores) == 0) 1 else scores
+  if (length(widths) == 0) aln <- aln[0]
+  path <- tempfile(fileext = ".ofst")
+  ORFik::export.ofst(aln, path)
+  path
+}
+
 #' Minimal real mNGSp config for tests, with real flag directories created
 #' under a tempdir() project.
 fake_config <- function(project = tempfile("mNGSp_test_"), preset = "RNA-seq",

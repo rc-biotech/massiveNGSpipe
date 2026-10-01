@@ -210,3 +210,81 @@ test_that("classify_bad_shift_cause() writes primary_cause back into the record"
   diag <- read_qc_diagnostics(qc_diagnostics_path(bam_dir))
   expect_identical(diag$primary_cause, "wrong_organism")
 })
+
+test_that("read_length_distribution() weights by score (true reads), not row count", {
+  # 2 rows at length 28 (scores 100+1=101 true reads), 2 rows at length 30
+  # (scores 5+5=10 true reads) -- a naive table(readWidths(x)) row-count
+  # view would wrongly show 2 vs 2 (a tie), not the true 101 vs 10.
+  path <- fake_ofst(widths = c(28, 28, 30, 30), scores = c(100, 1, 5, 5))
+  dist <- read_length_distribution(path)
+
+  expect_identical(dist$read_length, c(28L, 30L))
+  expect_equal(dist[read_length == 28]$count, 101)
+  expect_equal(dist[read_length == 30]$count, 10)
+  expect_equal(sum(dist$percent), 100, tolerance = 0.1)
+  expect_gt(dist[read_length == 28]$percent, dist[read_length == 30]$percent)
+})
+
+test_that("read_length_distribution() falls back to weight 1 per row when score is absent", {
+  aln <- GenomicAlignments::GAlignments(
+    seqnames = S4Vectors::Rle(c("chr1", "chr1")), pos = c(1L, 1L),
+    cigar = c("28M", "30M"),
+    strand = S4Vectors::Rle(BiocGenerics::strand(c("+", "+")))
+  ) # no mcols()$score at all
+  path <- tempfile(fileext = ".ofst")
+  ORFik::export.ofst(aln, path)
+
+  dist <- read_length_distribution(path)
+  expect_equal(dist$count, c(1, 1))
+})
+
+test_that("read_length_distribution() returns a 0-row table (not an error) for an empty ofst", {
+  path <- fake_ofst(widths = integer(), scores = numeric())
+  dist <- read_length_distribution(path)
+  expect_equal(nrow(dist), 0)
+  expect_identical(names(dist), c("read_length", "count", "percent"))
+})
+
+test_that("save_read_length_distribution() writes a per-sample CSV matching the computed table", {
+  path <- fake_ofst()
+  out_dir <- tempfile("dist_")
+  result <- save_read_length_distribution(path, out_dir, "SRR001")
+
+  csv_path <- file.path(out_dir, "SRR001.csv")
+  expect_true(file.exists(csv_path))
+  on_disk <- data.table::fread(csv_path)
+  expect_equal(on_disk$count, result$count)
+})
+
+test_that("aggregate_read_length_distribution() sums per-sample CSVs into 00_aggregated.csv", {
+  out_dir <- tempfile("dist_")
+  dir.create(out_dir)
+  data.table::fwrite(data.table::data.table(read_length = c(28L, 30L), count = c(10, 5), percent = c(66.7, 33.3)),
+                     file.path(out_dir, "SRR001.csv"))
+  data.table::fwrite(data.table::data.table(read_length = c(28L, 30L), count = c(20, 5), percent = c(80, 20)),
+                     file.path(out_dir, "SRR002.csv"))
+
+  aggregate_read_length_distribution(out_dir)
+  agg <- data.table::fread(file.path(out_dir, "00_aggregated.csv"))
+  expect_equal(agg[read_length == 28]$count, 30) # 10 + 20
+  expect_equal(agg[read_length == 30]$count, 10) # 5 + 5
+  expect_equal(sum(agg$percent), 100, tolerance = 0.1)
+})
+
+test_that("aggregate_read_length_distribution() does nothing (no error) when the folder has no CSVs yet", {
+  out_dir <- tempfile("dist_")
+  dir.create(out_dir)
+  expect_no_error(aggregate_read_length_distribution(out_dir))
+  expect_false(file.exists(file.path(out_dir, "00_aggregated.csv")))
+})
+
+test_that("aggregate_read_length_distribution() re-running is idempotent and excludes its own output", {
+  out_dir <- tempfile("dist_")
+  dir.create(out_dir)
+  data.table::fwrite(data.table::data.table(read_length = 28L, count = 10, percent = 100),
+                     file.path(out_dir, "SRR001.csv"))
+  aggregate_read_length_distribution(out_dir)
+  aggregate_read_length_distribution(out_dir) # must not double-count its own 00_aggregated.csv
+  agg <- data.table::fread(file.path(out_dir, "00_aggregated.csv"))
+  expect_equal(agg$count, 10)
+})

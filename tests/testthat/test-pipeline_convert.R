@@ -80,6 +80,20 @@ test_that("pipeline_create_ofst() drives convert_per_sample() for the all-mapper
   expect_true(step_is_done(config, "ofst", name(stub)))
 })
 
+test_that("pipeline_create_ofst() passes the length-distribution-saving wrapper, not plain convert_bam_to_ofst", {
+  config <- fake_config(extra = list(all_mappers = TRUE, split_unique_mappers = FALSE))
+  stub <- fake_experiment_stub(run_ids = c("SRR001"))
+  fake_mark_all_done(config, c("aligned", "cleanbam", "exp"), name(stub))
+  seen_fun <- NULL
+  testthat::local_mocked_bindings(
+    convert_per_sample = function(df, config, step_id, convert_fun) seen_fun <<- convert_fun
+  )
+
+  pipeline_create_ofst(list(stub), config)
+
+  expect_identical(seen_fun, convert_bam_to_ofst_with_length_dist)
+})
+
 test_that("pipeline_create_ofst() also drives the _unique pass when split_unique_mappers is TRUE", {
   config <- fake_config(extra = list(all_mappers = TRUE, split_unique_mappers = TRUE))
   stub <- fake_experiment_stub(run_ids = c("SRR001"))
