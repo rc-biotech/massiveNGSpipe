@@ -273,7 +273,12 @@ expanded_alignment_metrics_plot <- function(dt) {
 #' is called)
 #' @param collapsed_dir character, where SINGLE-end collapsed fasta live
 #' (\code{<bam>/trim/SINGLE}, matching \code{pipeline_collapse()}'s own
-#' output location)
+#' output location). Resolved per sample via \code{\link{run_files_organizer}}
+#' (same prefix-matching logic fastq/fasta discovery already uses
+#' elsewhere in this package), not a hardcoded \code{<Run>.fasta.gz} --
+#' real collapsed fasta are written as \code{collapsed_trimmed_<Run>.fasta.gz}
+#' (verified live against production data; a plain \code{<Run>.fasta.gz}
+#' guess never matches anything).
 #' @param study_org data.table, this organism's metadata subset (needs
 #' \code{Run}, \code{LibraryLayout})
 #' @param out_dir character, where to save the table/plot
@@ -296,10 +301,18 @@ save_expanded_alignment_metrics <- function(bam_dir, collapsed_dir, study_org,
     }
 
     bam_files <- file.path(bam_dir, paste0(single_runs$Run, ".bam"))
-    fasta_files <- file.path(collapsed_dir, paste0(single_runs$Run, ".fasta.gz"))
-    missing_gz <- !file.exists(fasta_files)
-    fasta_files[missing_gz] <- sub("\\.gz$", "", fasta_files[missing_gz])
-    have_both <- file.exists(bam_files) & file.exists(fasta_files)
+    # Resolved one sample at a time (not in one run_files_organizer() call
+    # across the whole study) so one sample's unmatched/ambiguous fasta
+    # can't abort the rest -- run_files_organizer() itself hard-stops via
+    # stopifnot(!anyNA(file_vec)) the moment any row fails to resolve.
+    fasta_files <- vapply(seq_len(nrow(single_runs)), function(i) {
+      resolved <- tryCatch(
+        run_files_organizer(single_runs[i], collapsed_dir, format = ".fasta",
+                            extra_files_warning = FALSE)[[1]],
+        error = function(e) NA_character_)
+      if (length(resolved) != 1) NA_character_ else resolved
+    }, character(1))
+    have_both <- file.exists(bam_files) & !is.na(fasta_files) & file.exists(fasta_files)
     if (!any(have_both)) {
       message("-- No matching bam/collapsed-fasta pairs found, skipping expanded alignment metrics")
       return(invisible(NULL))

@@ -53,7 +53,9 @@ test_that("save_expanded_alignment_metrics() writes a CSV + PNG for SINGLE-end s
   study_org <- data.table::data.table(Run = c("SRR001", "SRR002"), LibraryLayout = "SINGLE")
   for (run in study_org$Run) {
     file.create(file.path(bam_dir, paste0(run, ".bam")))
-    file.create(file.path(collapsed_dir, paste0(run, ".fasta.gz")))
+    # Real naming convention written by pipeline_collapse() -- see the
+    # regression test below for why this prefix matters.
+    file.create(file.path(collapsed_dir, paste0("collapsed_trimmed_", run, ".fasta.gz")))
   }
 
   testthat::local_mocked_bindings(
@@ -78,7 +80,7 @@ test_that("save_expanded_alignment_metrics() skips PAIRED samples with a message
                                       LibraryLayout = c("SINGLE", "PAIRED"))
   for (run in study_org$Run) {
     file.create(file.path(bam_dir, paste0(run, ".bam")))
-    file.create(file.path(collapsed_dir, paste0(run, ".fasta.gz")))
+    file.create(file.path(collapsed_dir, paste0("collapsed_trimmed_", run, ".fasta.gz")))
   }
   testthat::local_mocked_bindings(
     get_expanded_alignment_metrics = function(fasta_file, bam_file) fake_metrics_row()
@@ -101,7 +103,7 @@ test_that("save_expanded_alignment_metrics() skips samples missing a bam or coll
   study_org <- data.table::data.table(Run = c("SRR001", "SRR002"), LibraryLayout = "SINGLE")
   # Only SRR001 gets both files; SRR002 is missing its collapsed fasta.
   file.create(file.path(bam_dir, "SRR001.bam"))
-  file.create(file.path(collapsed_dir, "SRR001.fasta.gz"))
+  file.create(file.path(collapsed_dir, "collapsed_trimmed_SRR001.fasta.gz"))
   file.create(file.path(bam_dir, "SRR002.bam"))
 
   testthat::local_mocked_bindings(
@@ -123,7 +125,7 @@ test_that("save_expanded_alignment_metrics() falls back to a plain .fasta when .
 
   study_org <- data.table::data.table(Run = "SRR001", LibraryLayout = "SINGLE")
   file.create(file.path(bam_dir, "SRR001.bam"))
-  file.create(file.path(collapsed_dir, "SRR001.fasta")) # no .gz
+  file.create(file.path(collapsed_dir, "collapsed_trimmed_SRR001.fasta")) # no .gz
 
   seen_fasta <- NULL
   testthat::local_mocked_bindings(
@@ -133,7 +135,36 @@ test_that("save_expanded_alignment_metrics() falls back to a plain .fasta when .
     }
   )
   save_expanded_alignment_metrics(bam_dir, collapsed_dir, study_org, out_dir = out_dir)
-  expect_identical(seen_fasta, file.path(collapsed_dir, "SRR001.fasta"))
+  expect_identical(seen_fasta, file.path(collapsed_dir, "collapsed_trimmed_SRR001.fasta"))
+})
+
+test_that("save_expanded_alignment_metrics() finds the real collapsed_trimmed_<Run> naming, not a plain <Run>.fasta.gz guess", {
+  # Regression test: pipeline_collapse() actually writes
+  # collapsed_trimmed_<Run>.fasta.gz (verified live against production
+  # data), not <Run>.fasta.gz -- a hardcoded paste0(Run, ".fasta.gz")
+  # guess silently matches nothing for every real study. Also covers the
+  # plain "<Run>.fasta.gz" (no prefix) and "trimmed_<Run>.fasta.gz"
+  # variants run_files_organizer() supports, so any of the three
+  # naming eras this pipeline has used resolve correctly.
+  bam_dir <- tempfile("bam_"); dir.create(bam_dir)
+  collapsed_dir <- tempfile("collapsed_"); dir.create(collapsed_dir)
+  out_dir <- tempfile("qc_")
+
+  study_org <- data.table::data.table(Run = c("SRR001", "SRR002", "SRR003"),
+                                      LibraryLayout = "SINGLE")
+  for (run in study_org$Run) file.create(file.path(bam_dir, paste0(run, ".bam")))
+  file.create(file.path(collapsed_dir, "collapsed_trimmed_SRR001.fasta.gz"))
+  file.create(file.path(collapsed_dir, "trimmed_SRR002.fasta.gz"))
+  file.create(file.path(collapsed_dir, "SRR003.fasta.gz"))
+
+  testthat::local_mocked_bindings(
+    get_expanded_alignment_metrics = function(fasta_file, bam_file) fake_metrics_row()
+  )
+
+  save_expanded_alignment_metrics(bam_dir, collapsed_dir, study_org, out_dir = out_dir)
+
+  dt <- data.table::fread(file.path(out_dir, "expanded_alignment_metrics.csv"))
+  expect_setequal(dt$Run, c("SRR001", "SRR002", "SRR003"))
 })
 
 test_that("save_expanded_alignment_metrics() does nothing (no error) when there are no SINGLE-end samples", {
@@ -158,7 +189,7 @@ test_that("save_expanded_alignment_metrics() never throws, even if the underlyin
   out_dir <- tempfile("qc_")
   study_org <- data.table::data.table(Run = "SRR001", LibraryLayout = "SINGLE")
   file.create(file.path(bam_dir, "SRR001.bam"))
-  file.create(file.path(collapsed_dir, "SRR001.fasta.gz"))
+  file.create(file.path(collapsed_dir, "collapsed_trimmed_SRR001.fasta.gz"))
 
   testthat::local_mocked_bindings(
     get_expanded_alignment_metrics = function(fasta_file, bam_file) stop("boom: corrupt bam")
