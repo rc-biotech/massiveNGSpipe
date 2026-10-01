@@ -4,7 +4,7 @@
 \alias{pipeline_checklist}
 \title{Nextflow-style stage checklist}
 \usage{
-pipeline_checklist(pipelines, config, print = TRUE)
+pipeline_checklist(pipelines, config, print = TRUE, run_status = NULL)
 }
 \arguments{
 \item{pipelines}{the pipelines list}
@@ -13,6 +13,15 @@ pipeline_checklist(pipelines, config, print = TRUE)
 
 \item{print}{logical, default TRUE. If TRUE, also render via message()
 (see Details above for why this alone is not enough in production).}
+
+\item{run_status}{character, default NULL. Parenthetical shown after
+the title line's timestamp. NULL means "still running": auto-computed
+as \code{"(running for N.N hours)"} from \code{config$init_time}
+(silently omitted if \code{init_time} isn't set, e.g. calling this
+outside a real \code{run_pipeline()} session). A caller passes an
+explicit string -- e.g. \code{"done after 5.2 hours"},
+\code{"aborted after 5.2 hours"} -- for a final, one-off status
+(see \code{\link{run_pipeline}}'s own on.exit handler).}
 }
 \value{
 invisible(data.table) with columns: stage, done, total, state

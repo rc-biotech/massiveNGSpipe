@@ -2,18 +2,22 @@
 % Please edit documentation in R/pipeline_checklist.R
 \name{format_system_usage_line}
 \alias{format_system_usage_line}
-\title{One-line system usage summary for the checklist, plus a separate
-fixed-slot cap-warning note}
+\title{One-line system usage summary for the checklist, plus two separate
+fixed-slot cap-warning notes}
 \usage{
-format_system_usage_line(config)
+format_system_usage_line(pipelines, config)
 }
 \arguments{
+\item{pipelines}{the pipelines list (needed for the backlog cap note;
+see \code{\link{unprocessed_downloads_count}})}
+
 \item{config}{the mNGSp config object}
 }
 \value{
-named character vector of length 2: \code{line} (the usage
-summary) and \code{cap_note} (the warning, or \code{""} when drive
-usage is below the cap)
+named character vector of length 3: \code{line} (the usage
+summary), \code{drive_cap_note} (the drive-usage warning, or
+\code{""} when below that cap), \code{backlog_cap_note} (the
+unprocessed-downloads warning, or \code{""} when below that cap)
 }
 \description{
 The usage line matches \code{ORFik::get_system_usage(one_liner = TRUE)}'s
@@ -24,9 +28,14 @@ gives the numeric drive percentage needed for the cap check below
 without a second \code{df}/\code{top} invocation).
 }
 \details{
-Returned as two separate elements (not one combined line) so the
-caller can always reserve a fixed line for the cap note, whether or
-not it has anything to say -- an appended note makes the usage line's
-length vary based on live drive usage, which wraps unpredictably in a
-narrow terminal/UI and pushes every line below it out of position.
+\code{pipe_fetch()} pauses new downloads for either of two independent
+reasons -- drive usage at/above \code{stop_downloading_new_data_at_drive_usage},
+or too many fetched-but-unprocessed experiments
+(\code{max_unprocessed_downloads}, see \code{\link{unprocessed_downloads_count}})
+-- and both are reported here as their own separate, always-reserved
+line (not one combined note): appending one note's text length onto
+the other's would make that line's length vary depending on which
+cap(s) are active, which wraps unpredictably in a narrow terminal/UI
+and pushes every line below it out of position. Same reasoning as
+why the usage line and cap notes are already split from each other.
 }

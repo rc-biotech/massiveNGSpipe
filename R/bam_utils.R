@@ -135,6 +135,14 @@ get_expanded_alignment_metrics <- function(fasta_file, bam_file) {
   dt[is.na(N), N := 0]
   table(dt$N)
 
+  # Note: the two "unique_aligned_reads" columns used to share the exact
+  # same name (a copy-paste slip missing "_collapsed" on the second one)
+  # -- data.table allows duplicate column names silently, and $-access
+  # picked the first (correct, true-read-count) one, so this wasn't
+  # causing a wrong ratio below, but it broke CSV export (two identically
+  # -headered columns) and any column-name-based access to the collapsed
+  # count. Fixed to match the naming convention every other pair here
+  # already uses.
   dt_summary <- data.table(total_input_seqs = sum(dt$scores),
                            total_input_seqs_collapsed = nrow(dt),
                            total_aligned_reads = sum(dt[N > 0]$scores),
@@ -142,7 +150,7 @@ get_expanded_alignment_metrics <- function(fasta_file, bam_file) {
                            total_alignments = sum(dt$scores*dt$N),
                            total_alignments_collapsed = sum(dt$N),
                            unique_aligned_reads = sum(dt[N == 1]$scores),
-                           unique_aligned_reads = nrow(dt[N == 1]),
+                           unique_aligned_reads_collapsed = nrow(dt[N == 1]),
                            multimapping_aligned_reads = sum(dt[N > 1]$scores),
                            multimapping_aligned_reads_collapsed = nrow(dt[N > 1]))
 
@@ -156,6 +164,14 @@ get_expanded_alignment_metrics <- function(fasta_file, bam_file) {
 
   dt_summary_relative_percentage <- 100*round(dt_summary_relative, 2)
   colnames(dt_summary_relative_percentage) <- paste0(colnames(dt_summary_relative_percentage), "%")
+
+  # dt_summary_relative's own (pre-"%") column names collide with
+  # dt_summary's raw counts -- both have e.g. "total_aligned_reads", one
+  # a count and one a 0-1 ratio. Same silent-duplicate-column issue as
+  # unique_aligned_reads above. Renamed only after being used to build
+  # dt_summary_relative_percentage's names above, so the final "%"
+  # columns keep their existing names unchanged.
+  colnames(dt_summary_relative) <- paste0(colnames(dt_summary_relative), "_ratio")
 
   res <- cbind(dt_summary, dt_summary_per_million, dt_summary_relative, dt_summary_relative_percentage)
   return(res)
@@ -187,6 +203,132 @@ get_expanded_alignment_metrics_exp <- function(df, fasta_dir = file.path(dirname
   dt_final[, `.id` := ORFik:::remove.file_ext(`.id`, TRUE)]
   dt_final[]
   return(dt_final)
+}
+
+#' Stacked bar plot of true (uncollapsed) per-sample alignment rate
+#'
+#' Reuses the already-computed relative/percentage columns from
+#' \code{\link{get_expanded_alignment_metrics}} (\code{unique_alignments%},
+#' \code{multimapping_aligned_reads%}) rather than recomputing anything,
+#' plus the complement of \code{total_aligned_reads%} for the unmapped
+#' share.
+#' @param dt data.table, as returned by \code{\link{save_expanded_alignment_metrics}}'s
+#' internal table build (one row per sample, with a \code{Run} column
+#' and the standard \code{get_expanded_alignment_metrics()} columns)
+#' @return a ggplot object
+#' @noRd
+expanded_alignment_metrics_plot <- function(dt) {
+  plot_dt <- data.table::data.table(
+    Run = rep(dt$Run, 3),
+    category = factor(rep(c("Unique", "Multimapping", "Unmapped"), each = nrow(dt)),
+                      levels = c("Unmapped", "Multimapping", "Unique")),
+    percent = c(dt[["unique_alignments%"]],
+               dt[["multimapping_aligned_reads%"]],
+               100 - dt[["total_aligned_reads%"]])
+  )
+  ggplot2::ggplot(plot_dt, ggplot2::aes(x = Run, y = percent, fill = category)) +
+    ggplot2::geom_col() +
+    ggplot2::scale_fill_manual(values = c(Unique = "#2c7bb6", Multimapping = "#fdae61",
+                                          Unmapped = "#d7191c")) +
+    ggplot2::labs(title = "True (uncollapsed) per-read alignment rate",
+                 subtitle = "Collapsed STAR reports weight every unique sequence equally, regardless of how many original reads it represents -- this reweights by each sequence's own collapse multiplicity.",
+                 x = NULL, y = "% of true input reads", fill = NULL) +
+    ggplot2::theme_bw() +
+    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
+}
+
+#' Save the uncollapsed (true per-read) STAR alignment metrics table + plot
+#'
+#' Collapsed-fasta-based alignment (the norm for Ribo-seq in this
+#' pipeline) means STAR's own Log.final.out/full_process.csv report
+#' alignment rate per UNIQUE collapsed sequence, not per true read: a
+#' library with one sequence collapsing 1,000,000 reads and a second,
+#' unrelated singleton sequence that fails to map would show as a 50%
+#' alignment rate, when in true-read terms it's over 99.9%.
+#' \code{\link{get_expanded_alignment_metrics}} reconstructs the true
+#' rate from each sequence's own collapse weight (its fasta header's
+#' \code{_x<N>} suffix); this saves that reconstruction (table + a
+#' stacked-percentage plot) to \code{out_dir}, following the same
+#' \code{QCfolder(df)}-style \code{<bam_dir>/QC_STATS/} convention every
+#' other QC output in this package already uses.
+#'
+#' Called from \code{\link{pipeline_cleanup}} as its final step, once
+#' BAMs already have their final \code{<Run>.bam} names, so no ORFik
+#' experiment object needs to exist yet (\code{pipeline_cleanup()} runs
+#' well before the "exp" step creates one). SINGLE-end samples only:
+#' collapsed PAIRED-end fasta live in a different location/shape
+#' (\code{trim/PAIRED/}, read-1-only -- see \code{pipeline_collapse()}'s
+#' own comment) and aren't covered by
+#' \code{get_expanded_alignment_metrics()}'s current design; PAIRED
+#' samples are skipped here with a message, not silently mishandled.
+#'
+#' Never throws: a failure anywhere in this (e.g. one sample's fasta/bam
+#' mismatch) must never fail \code{pipeline_cleanup()} itself -- every
+#' \code{pipe_*()} wrapper already wraps its whole per-study body in its
+#' own \code{try()}, and a hard error here would permanently skip the
+#' WHOLE study for the rest of the session (see
+#' \code{report_failed_pipe()}) over what is only a diagnostics gap.
+#' @param bam_dir character, this organism's final \code{<bam>/aligned}
+#' dir (already has the renamed \code{<Run>.bam} files by the time this
+#' is called)
+#' @param collapsed_dir character, where SINGLE-end collapsed fasta live
+#' (\code{<bam>/trim/SINGLE}, matching \code{pipeline_collapse()}'s own
+#' output location)
+#' @param study_org data.table, this organism's metadata subset (needs
+#' \code{Run}, \code{LibraryLayout})
+#' @param out_dir character, where to save the table/plot
+#' @param BPPARAM a BPPARAM object
+#' @return invisible(NULL)
+#' @noRd
+save_expanded_alignment_metrics <- function(bam_dir, collapsed_dir, study_org,
+                                            out_dir = file.path(bam_dir, "QC_STATS"),
+                                            BPPARAM = BiocParallel::SerialParam()) {
+  result <- try({
+    single_runs <- study_org[LibraryLayout != "PAIRED"]
+    if (nrow(single_runs) == 0) {
+      message("-- No SINGLE-end samples, skipping expanded alignment metrics")
+      return(invisible(NULL))
+    }
+    paired_runs <- study_org[LibraryLayout == "PAIRED"]
+    if (nrow(paired_runs) > 0) {
+      message("-- Skipping expanded alignment metrics for ", nrow(paired_runs),
+             " PAIRED-end sample(s) (not supported by get_expanded_alignment_metrics())")
+    }
+
+    bam_files <- file.path(bam_dir, paste0(single_runs$Run, ".bam"))
+    fasta_files <- file.path(collapsed_dir, paste0(single_runs$Run, ".fasta.gz"))
+    missing_gz <- !file.exists(fasta_files)
+    fasta_files[missing_gz] <- sub("\\.gz$", "", fasta_files[missing_gz])
+    have_both <- file.exists(bam_files) & file.exists(fasta_files)
+    if (!any(have_both)) {
+      message("-- No matching bam/collapsed-fasta pairs found, skipping expanded alignment metrics")
+      return(invisible(NULL))
+    }
+    if (!all(have_both)) {
+      message("-- Missing bam or collapsed fasta for ", sum(!have_both),
+             " sample(s), computing expanded alignment metrics for the rest")
+    }
+
+    dt_list <- BiocParallel::bpmapply(get_expanded_alignment_metrics,
+                                      fasta_files[have_both], bam_files[have_both],
+                                      SIMPLIFY = FALSE, BPPARAM = BPPARAM)
+    names(dt_list) <- single_runs$Run[have_both]
+    dt <- data.table::rbindlist(dt_list, idcol = "Run")
+
+    dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+    data.table::fwrite(dt, file.path(out_dir, "expanded_alignment_metrics.csv"))
+
+    plot <- expanded_alignment_metrics_plot(dt)
+    ggplot2::ggsave(file.path(out_dir, "expanded_alignment_metrics.png"), plot,
+                    width = max(7, 0.3 * nrow(dt) + 2), height = 6, dpi = 150,
+                    limitsize = FALSE)
+  }, silent = TRUE)
+
+  if (is(result, "try-error")) {
+    warning("save_expanded_alignment_metrics() failed (QC-only, not fatal): ",
+           conditionMessage(attr(result, "condition")))
+  }
+  invisible(NULL)
 }
 
 #' Detect if R1 or R2 of read pair is primary read direction

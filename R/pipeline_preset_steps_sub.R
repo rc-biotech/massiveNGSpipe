@@ -375,12 +375,17 @@ pipeline_align_contaminants <- function(pipeline, config, pipelines = list(pipel
 }
 
 #' Remove all files apart from logs and final aligned BAMs.
-#' Rename the BAMs into <run_accession>.bam format.
+#' Rename the BAMs into <run_accession>.bam format. As a final step, for
+#' presets that pre-alignment-collapse reads (e.g. Ribo-seq's "collapsed"
+#' flag), save the true (uncollapsed) per-read alignment metrics table +
+#' plot -- see \code{\link{save_expanded_alignment_metrics}} for why the
+#' native STAR/collapsed-level report can be badly misleading.
 #' @inheritParams pipeline_download
 pipeline_cleanup <- function(pipeline, config) {
     accession <- pipeline$accession
     study <- pipeline$study
     did_contamint_removal <- "contam" %in% names(config$flag)
+    did_collapse <- "collapsed" %in% names(config$flag)
     for (organism in names(pipeline$organisms)) {
         conf <- pipeline$organisms[[organism]]$conf
         if (!step_is_next_not_done(config, "cleanbam", conf["exp"])) next
@@ -404,6 +409,13 @@ pipeline_cleanup <- function(pipeline, config) {
         for (i in seq_along(old_file_names)) {
           fs::file_move(old_file_names[i], new_file_names[i])
         }
+
+        if (did_collapse) {
+          collapsed_dir <- fs::path(conf["bam"], "trim", "SINGLE")
+          save_expanded_alignment_metrics(bam_dir, collapsed_dir, study_org,
+                                          BPPARAM = bpparam_from_config(config, "trim"))
+        }
+
         set_flag(config, "cleanbam", conf["exp"])
     }
 }

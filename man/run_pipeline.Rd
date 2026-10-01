@@ -20,5 +20,17 @@ ready to continue with.}
 invisible(NULL)
 }
 \description{
-Run massive_NGS_pipe
+Leaves a final status note in \code{checklist.txt}'s title line no
+matter how the run ends: \code{"(done after N.N hours)"},
+\code{"(stopped gracefully after N.N hours)"} (a deliberate
+\code{request_stop()}, R/pipeline_abort.R), or \code{"(aborted after
+N.N hours)"} for anything else -- an uncaught R error propagating out
+of \code{bplapply()} (e.g. a worker error re-raised in the master
+under \code{stop.on.error = TRUE}), or an interrupt (Ctrl+C/Esc)
+delivered to this R session. This is an \code{on.exit()} handler, so
+it genuinely cannot catch everything: a hard kill of the whole R
+process (\code{kill -9}, an OOM-killer, a container/machine crash)
+gives no R code any chance to run at all -- in that case
+checklist.txt just goes stale (its own timestamp stops advancing),
+which is itself the signal, just not a labeled one.
 }

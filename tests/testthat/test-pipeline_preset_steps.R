@@ -43,3 +43,63 @@ test_that("safe_se_cbind reports a clear diagnostic error for mismatched row cou
   expect_match(conditionMessage(err), "bad", fixed = TRUE)
   expect_match(conditionMessage(err), "nrow=3", fixed = TRUE)
 })
+
+test_that("pipeline_cleanup() calls save_expanded_alignment_metrics() as its final step when this preset collapses reads", {
+  config <- fake_config(preset = "Ribo-seq", mode = "online")
+  bam_dir <- tempfile("bam_")
+  pipelines <- fake_pipelines(organism = "Homo sapiens", bam_dir = bam_dir,
+                              runs = data.table::data.table(
+                                Run = "SRR001", LibraryLayout = "SINGLE",
+                                LIBRARYTYPE = "RFP", ScientificName = "Homo sapiens"))
+  pipeline <- pipelines[[1]]
+  exp <- pipeline$organisms[["Homo sapiens"]]$conf["exp"]
+
+  fake_mark_all_done(config, c("start", "fetch", "trim", "collapsed", "aligned"), exp)
+
+  aligned_dir <- file.path(bam_dir, "aligned")
+  dir.create(aligned_dir, recursive = TRUE)
+  file.create(file.path(aligned_dir, "SRR001_Aligned.sortedByCoord.out.bam"))
+
+  seen_args <- NULL
+  testthat::local_mocked_bindings(
+    save_expanded_alignment_metrics = function(bam_dir, collapsed_dir, study_org, ...) {
+      seen_args <<- list(bam_dir = bam_dir, collapsed_dir = collapsed_dir, study_org = study_org)
+    }
+  )
+
+  pipeline_cleanup(pipeline, config)
+
+  expect_true(step_is_done(config, "cleanbam", exp))
+  expect_true(file.exists(file.path(aligned_dir, "SRR001.bam")))
+  expect_false(is.null(seen_args))
+  expect_identical(as.character(seen_args$bam_dir), as.character(aligned_dir))
+  expect_identical(as.character(seen_args$collapsed_dir), file.path(bam_dir, "trim", "SINGLE"))
+  expect_identical(seen_args$study_org$Run, "SRR001")
+})
+
+test_that("pipeline_cleanup() does NOT call save_expanded_alignment_metrics() for a preset without collapsing", {
+  config <- fake_config(preset = "RNA-seq", mode = "online") # no "collapsed" flag for RNA-seq
+  bam_dir <- tempfile("bam_")
+  pipelines <- fake_pipelines(organism = "Homo sapiens", bam_dir = bam_dir,
+                              runs = data.table::data.table(
+                                Run = "SRR001", LibraryLayout = "SINGLE",
+                                LIBRARYTYPE = "RNA", ScientificName = "Homo sapiens"))
+  pipeline <- pipelines[[1]]
+  exp <- pipeline$organisms[["Homo sapiens"]]$conf["exp"]
+
+  fake_mark_all_done(config, c("start", "fetch", "aligned"), exp)
+
+  aligned_dir <- file.path(bam_dir, "aligned")
+  dir.create(aligned_dir, recursive = TRUE)
+  file.create(file.path(aligned_dir, "SRR001_Aligned.sortedByCoord.out.bam"))
+
+  called <- FALSE
+  testthat::local_mocked_bindings(
+    save_expanded_alignment_metrics = function(...) called <<- TRUE
+  )
+
+  pipeline_cleanup(pipeline, config)
+
+  expect_true(step_is_done(config, "cleanbam", exp))
+  expect_false(called)
+})

@@ -3,7 +3,11 @@
 \name{pipeline_cleanup}
 \alias{pipeline_cleanup}
 \title{Remove all files apart from logs and final aligned BAMs.
-Rename the BAMs into <run_accession>.bam format.}
+Rename the BAMs into <run_accession>.bam format. As a final step, for
+presets that pre-alignment-collapse reads (e.g. Ribo-seq's "collapsed"
+flag), save the true (uncollapsed) per-read alignment metrics table +
+plot -- see \code{\link{save_expanded_alignment_metrics}} for why the
+native STAR/collapsed-level report can be badly misleading.}
 \usage{
 pipeline_cleanup(pipeline, config)
 }
@@ -14,5 +18,9 @@ pipeline_cleanup(pipeline, config)
 }
 \description{
 Remove all files apart from logs and final aligned BAMs.
-Rename the BAMs into <run_accession>.bam format.
+Rename the BAMs into <run_accession>.bam format. As a final step, for
+presets that pre-alignment-collapse reads (e.g. Ribo-seq's "collapsed"
+flag), save the true (uncollapsed) per-read alignment metrics table +
+plot -- see \code{\link{save_expanded_alignment_metrics}} for why the
+native STAR/collapsed-level report can be badly misleading.
 }
