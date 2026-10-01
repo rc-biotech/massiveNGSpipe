@@ -60,50 +60,108 @@ test_that("format_checklist: a running stage with no active_experiment shows the
   expect_match(format_checklist(tab), "no per-sample detail available")
 })
 
-test_that("format_system_usage_line reports the cap note only when at/above the cap", {
+test_that("format_system_usage_line reports the drive cap note only when at/above the cap", {
   testthat::local_mocked_bindings(
     detect_drive = function(...) "/dev/fake",
     get_system_usage = function(...) list(CPU_Usage_Percent = 1.2, Memory_Usage_Percent = 3.4,
                                           Drive = "/dev/fake", Drive_Usage_Percent = "50%")
   )
-  config <- fake_config(extra = list(stop_downloading_new_data_at_drive_usage = 92))
-  u <- format_system_usage_line(config)
+  config <- fake_config(extra = list(stop_downloading_new_data_at_drive_usage = 92,
+                                     max_unprocessed_downloads = 30))
+  pipelines <- fake_pipelines()
+  u <- format_system_usage_line(pipelines, config)
   expect_identical(u[["line"]], "CPU (1.2%), Memory (3.4%), Drive /dev/fake (50%%)")
-  expect_identical(u[["cap_note"]], "")
+  expect_identical(u[["drive_cap_note"]], "")
 })
 
-test_that("format_system_usage_line: cap note fires at exactly the boundary (>=, not >)", {
+test_that("format_system_usage_line: drive cap note fires at exactly the boundary (>=, not >)", {
   testthat::local_mocked_bindings(
     detect_drive = function(...) "/dev/fake",
     get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 1,
                                           Drive = "/dev/fake", Drive_Usage_Percent = "92%")
   )
-  config <- fake_config(extra = list(stop_downloading_new_data_at_drive_usage = 92))
-  u <- format_system_usage_line(config)
-  expect_match(u[["cap_note"]], "DRIVE AT/ABOVE 92% CAP")
-  expect_match(u[["cap_note"]], "pipe_fetch\\(\\) is pausing new downloads")
+  config <- fake_config(extra = list(stop_downloading_new_data_at_drive_usage = 92,
+                                     max_unprocessed_downloads = 30))
+  pipelines <- fake_pipelines()
+  u <- format_system_usage_line(pipelines, config)
+  expect_match(u[["drive_cap_note"]], "DRIVE AT/ABOVE 92% CAP")
+  expect_match(u[["drive_cap_note"]], "pipe_fetch\\(\\) is pausing new downloads")
 })
 
-test_that("format_system_usage_line: unparseable drive percent never errors, cap note stays empty", {
+test_that("format_system_usage_line: unparseable drive percent never errors, drive cap note stays empty", {
   testthat::local_mocked_bindings(
     detect_drive = function(...) NA_character_,
     get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 1,
                                           Drive = NA_character_, Drive_Usage_Percent = NA_character_)
   )
-  config <- fake_config(extra = list(stop_downloading_new_data_at_drive_usage = 92))
-  expect_no_error(u <- format_system_usage_line(config))
-  expect_identical(u[["cap_note"]], "")
+  config <- fake_config(extra = list(stop_downloading_new_data_at_drive_usage = 92,
+                                     max_unprocessed_downloads = 30))
+  pipelines <- fake_pipelines()
+  expect_no_error(u <- format_system_usage_line(pipelines, config))
+  expect_identical(u[["drive_cap_note"]], "")
 })
 
-test_that("pipeline_checklist writes a fixed-position header (usage/cap-note/2 blanks) before the stage table", {
+test_that("format_system_usage_line: backlog cap note fires when unprocessed downloads exceed the cap", {
   testthat::local_mocked_bindings(
     detect_drive = function(...) "/dev/fake",
     get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 1,
-                                          Drive = "/dev/fake", Drive_Usage_Percent = "99%")
+                                          Drive = "/dev/fake", Drive_Usage_Percent = "10%")
+  )
+  config <- fake_config(extra = list(stop_downloading_new_data_at_drive_usage = 92,
+                                     max_unprocessed_downloads = 30))
+  pipelines <- fake_pipelines()
+  testthat::local_mocked_bindings(unprocessed_downloads_count = function(...) 31L)
+
+  u <- format_system_usage_line(pipelines, config)
+  expect_match(u[["backlog_cap_note"]], "UNPROCESSED DOWNLOADS 31 > 30 CAP")
+  expect_match(u[["backlog_cap_note"]], "pipe_fetch\\(\\) is pausing new downloads")
+})
+
+test_that("format_system_usage_line: backlog cap note stays empty when under the cap", {
+  testthat::local_mocked_bindings(
+    detect_drive = function(...) "/dev/fake",
+    get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 1,
+                                          Drive = "/dev/fake", Drive_Usage_Percent = "10%"),
+    unprocessed_downloads_count = function(...) 5L
+  )
+  config <- fake_config(extra = list(stop_downloading_new_data_at_drive_usage = 92,
+                                     max_unprocessed_downloads = 30))
+  pipelines <- fake_pipelines()
+  u <- format_system_usage_line(pipelines, config)
+  expect_identical(u[["backlog_cap_note"]], "")
+})
+
+test_that("unprocessed_downloads_count returns 0 when this config has no fetch step (e.g. local mode)", {
+  config <- fake_config(extra = list(flag = c(trim = "trim"))) # no "fetch" name present
+  pipelines <- fake_pipelines()
+  expect_identical(unprocessed_downloads_count(pipelines, config), 0L)
+})
+
+test_that("unprocessed_downloads_count counts experiments whose progress is exactly at the fetch step, from real flags", {
+  config <- fake_config(mode = "online") # mode = "online" is what puts "fetch" in config$flag at all
+  pipelines <- fake_pipelines(exp_name = "PRJNA000001-homo_sapiens")
+  exp <- "PRJNA000001-homo_sapiens"
+
+  # Nothing done yet -- not counted (progress is at 0, not at the fetch index).
+  expect_identical(unprocessed_downloads_count(pipelines, config), 0L)
+
+  # start+fetch done, nothing past that -- now counted.
+  set_flag(config, "start", exp)
+  set_flag(config, "fetch", exp)
+  expect_identical(unprocessed_downloads_count(pipelines, config), 1L)
+})
+
+test_that("pipeline_checklist writes a fixed-position header (usage/2 cap-notes/2 blanks) before the stage table", {
+  testthat::local_mocked_bindings(
+    detect_drive = function(...) "/dev/fake",
+    get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 1,
+                                          Drive = "/dev/fake", Drive_Usage_Percent = "99%"),
+    unprocessed_downloads_count = function(...) 99L
   )
   session_dir <- tempfile("session_")
   config <- fake_config(session_dir = session_dir,
-                        extra = list(stop_downloading_new_data_at_drive_usage = 92))
+                        extra = list(stop_downloading_new_data_at_drive_usage = 92,
+                                    max_unprocessed_downloads = 30))
   pipelines <- fake_pipelines()
 
   tab <- suppressMessages(pipeline_checklist(pipelines, config, print = FALSE))
@@ -113,9 +171,32 @@ test_that("pipeline_checklist writes a fixed-position header (usage/cap-note/2 b
   expect_match(lines[1], "^Pipeline status as of")
   expect_match(lines[2], "^CPU \\(1%\\)")
   expect_match(lines[3], "DRIVE AT/ABOVE 92% CAP")
+  expect_match(lines[4], "UNPROCESSED DOWNLOADS 99 > 30 CAP")
+  expect_identical(lines[5], "")
+  expect_identical(lines[6], "")
+  expect_match(lines[7], "^\\[.\\] ") # stage table always starts on line 7
+})
+
+test_that("pipeline_checklist: header stays 6 lines with both blank cap-note slots when neither cap fires", {
+  testthat::local_mocked_bindings(
+    detect_drive = function(...) "/dev/fake",
+    get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 1,
+                                          Drive = "/dev/fake", Drive_Usage_Percent = "10%"),
+    unprocessed_downloads_count = function(...) 0L
+  )
+  session_dir <- tempfile("session_")
+  config <- fake_config(session_dir = session_dir,
+                        extra = list(stop_downloading_new_data_at_drive_usage = 92,
+                                    max_unprocessed_downloads = 30))
+  pipelines <- fake_pipelines()
+
+  suppressMessages(pipeline_checklist(pipelines, config, print = FALSE))
+  lines <- readLines(checklist_path(config))
+  expect_identical(lines[3], "")
   expect_identical(lines[4], "")
   expect_identical(lines[5], "")
-  expect_match(lines[6], "^\\[.\\] ") # stage table always starts on line 6
+  expect_identical(lines[6], "")
+  expect_match(lines[7], "^\\[.\\] ") # stage table stays on line 7 regardless
 })
 
 test_that("pipeline_checklist: an experiment with zero started samples stays 'queued', not 'running'", {
@@ -129,4 +210,65 @@ test_that("pipeline_checklist: an experiment with zero started samples stays 'qu
   tab <- suppressMessages(pipeline_checklist(pipelines, config, print = FALSE))
   first_stage_with_marker <- tab[stage == "pipe_align_clean"]
   expect_identical(first_stage_with_marker$state, "queued")
+})
+
+test_that("format_elapsed_hours formats to one decimal place", {
+  now <- as.POSIXct("2026-10-01 12:00:00", tz = "UTC")
+  expect_identical(format_elapsed_hours(now - 3600 * 5.23, now), "5.2 hours")
+  expect_identical(format_elapsed_hours(now, now), "0 hours")
+})
+
+test_that("pipeline_checklist title line has no fractional seconds", {
+  testthat::local_mocked_bindings(
+    detect_drive = function(...) "/dev/fake",
+    get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 1,
+                                          Drive = "/dev/fake", Drive_Usage_Percent = "1%")
+  )
+  config <- fake_config(session_dir = tempfile("session_"))
+  pipelines <- fake_pipelines()
+  suppressMessages(pipeline_checklist(pipelines, config, print = FALSE))
+  title <- readLines(checklist_path(config))[1]
+  expect_match(title, "^Pipeline status as of \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}( |$)")
+  expect_false(grepl("\\.\\d+", title)) # no decimal/fractional-second remnant
+})
+
+test_that("pipeline_checklist: run_status = NULL auto-shows elapsed time from config$init_time", {
+  testthat::local_mocked_bindings(
+    detect_drive = function(...) "/dev/fake",
+    get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 1,
+                                          Drive = "/dev/fake", Drive_Usage_Percent = "1%")
+  )
+  config <- fake_config(session_dir = tempfile("session_"),
+                        extra = list(init_time = Sys.time() - 3600 * 5.2))
+  pipelines <- fake_pipelines()
+  suppressMessages(pipeline_checklist(pipelines, config, print = FALSE))
+  title <- readLines(checklist_path(config))[1]
+  expect_match(title, "\\(running for 5\\.2 hours\\)$")
+})
+
+test_that("pipeline_checklist: an explicit run_status overrides the auto elapsed-time note", {
+  testthat::local_mocked_bindings(
+    detect_drive = function(...) "/dev/fake",
+    get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 1,
+                                          Drive = "/dev/fake", Drive_Usage_Percent = "1%")
+  )
+  config <- fake_config(session_dir = tempfile("session_"),
+                        extra = list(init_time = Sys.time() - 3600 * 5.2))
+  pipelines <- fake_pipelines()
+  suppressMessages(pipeline_checklist(pipelines, config, print = FALSE, run_status = "aborted after 5.2 hours"))
+  title <- readLines(checklist_path(config))[1]
+  expect_match(title, "\\(aborted after 5\\.2 hours\\)$")
+})
+
+test_that("pipeline_checklist: no parenthetical at all when init_time isn't set and run_status isn't given", {
+  testthat::local_mocked_bindings(
+    detect_drive = function(...) "/dev/fake",
+    get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 1,
+                                          Drive = "/dev/fake", Drive_Usage_Percent = "1%")
+  )
+  config <- fake_config(session_dir = tempfile("session_")) # no init_time
+  pipelines <- fake_pipelines()
+  suppressMessages(pipeline_checklist(pipelines, config, print = FALSE))
+  title <- readLines(checklist_path(config))[1]
+  expect_false(grepl("\\(", title))
 })

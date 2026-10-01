@@ -7,11 +7,7 @@ pipe_fetch <- function(pipelines, config) {
     return(invisible(NULL))
   }
 
-  flag_step <- which(names(config$flag) == "fetch") # Step after fetch
-  unprocessed_downloads <- sum(progress_report(pipelines, config,
-                                          show_status_per_exp = FALSE,
-                                          show_done = FALSE,
-                                          return_progress_vector = T) == flag_step)
+  unprocessed_downloads <- unprocessed_downloads_count(pipelines, config)
   if (unprocessed_downloads > config$max_unprocessed_downloads) {
     message("Max unprocessed downloads reached, will pause downloading data for a while..")
     return(invisible(NULL))

@@ -1,4 +1,18 @@
 #' Run massive_NGS_pipe
+#'
+#' Leaves a final status note in \code{checklist.txt}'s title line no
+#' matter how the run ends: \code{"(done after N.N hours)"},
+#' \code{"(stopped gracefully after N.N hours)"} (a deliberate
+#' \code{request_stop()}, R/pipeline_abort.R), or \code{"(aborted after
+#' N.N hours)"} for anything else -- an uncaught R error propagating out
+#' of \code{bplapply()} (e.g. a worker error re-raised in the master
+#' under \code{stop.on.error = TRUE}), or an interrupt (Ctrl+C/Esc)
+#' delivered to this R session. This is an \code{on.exit()} handler, so
+#' it genuinely cannot catch everything: a hard kill of the whole R
+#' process (\code{kill -9}, an OOM-killer, a container/machine crash)
+#' gives no R code any chance to run at all -- in that case
+#' checklist.txt just goes stale (its own timestamp stops advancing),
+#' which is itself the signal, just not a labeled one.
 #' @param pipelines list, output of pipeline_init_all
 #' @param config list, output from pipeline_config(), the global config for your
 #' NGS pipeline
@@ -11,6 +25,15 @@ run_pipeline <- function(pipelines, config, wait = 100) {
 
   config <- run_pipeline_set_up_session(pipelines, config)
 
+  completed <- FALSE
+  on.exit({
+    if (!completed) {
+      try(pipeline_checklist(pipelines, config, print = FALSE,
+                             run_status = paste0("aborted after ", format_elapsed_hours(config$init_time))),
+         silent = TRUE)
+    }
+  }, add = TRUE)
+
   # Run pipeline
   BiocParallel::bplapply(seq_along(config$pipeline_steps),
                          function(i, config, pipelines, wait)
@@ -19,6 +42,13 @@ run_pipeline <- function(pipelines, config, wait = 100) {
                     stage_name = names(config$flag_steps)[i]),
     pipelines = pipelines, wait = wait, config = config,
     BPPARAM = config$BPPARAM_MAIN)
+
+  completed <- TRUE
+  all_done <- all(pipeline_checklist(pipelines, config, print = FALSE)$state == "done")
+  final_label <- if (all_done) "done" else if (stop_requested(config)) "stopped gracefully" else "finished early"
+  try(pipeline_checklist(pipelines, config, print = FALSE,
+                         run_status = paste0(final_label, " after ", format_elapsed_hours(config$init_time))),
+     silent = TRUE)
 
   return(run_pipeline_end_session(pipelines, config))
 }

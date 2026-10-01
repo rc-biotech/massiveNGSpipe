@@ -21,6 +21,46 @@ stage_marker_step <- function(stage_name) {
         NA_character_)
 }
 
+#' Format elapsed time since a start time as "N.N hours"
+#' @param start POSIXct, e.g. config$init_time
+#' @param end POSIXct, default Sys.time()
+#' @return character, e.g. "5.2 hours"
+#' @noRd
+format_elapsed_hours <- function(start, end = Sys.time()) {
+  paste0(round(as.numeric(difftime(end, start, units = "hours")), 1), " hours")
+}
+
+#' Count of experiments fetched but not yet past the fetch step
+#'
+#' Mirrors \code{pipe_fetch()}'s own gating computation exactly (factored
+#' out here so \code{pipeline_checklist()} can display the same live
+#' number \code{pipe_fetch()} uses to decide whether to pause -- see
+#' \code{config$max_unprocessed_downloads}). \code{progress_report()}
+#' itself is fairly verbose (prints a status table, queries system usage
+#' again); suppressed here since this helper's only job is to return a
+#' number, not to print -- in production this output is already silently
+#' buffered away by BiocParallel's own log capture regardless (see
+#' \code{\link{pipeline_checklist}}'s own docs), so suppressing it here
+#' changes nothing observable for \code{pipe_fetch()}'s existing caller.
+#' @param pipelines the pipelines list
+#' @param config the mNGSp config object
+#' @return integer, count of experiments whose progress is exactly at
+#' the "fetch" step (fetched, but the next step -- normally "trim" --
+#' isn't done yet). 0 if this config has no "fetch" step at all (e.g.
+#' \code{mode = "local"}, where \code{pipe_fetch()} is never even
+#' included in \code{config$pipeline_steps}).
+#' @noRd
+unprocessed_downloads_count <- function(pipelines, config) {
+  if (!("fetch" %in% names(config$flag))) return(0L)
+  flag_step <- which(names(config$flag) == "fetch")
+  invisible(capture.output(suppressMessages({
+    progress <- progress_report(pipelines, config, show_status_per_exp = FALSE,
+                                show_done = FALSE, return_progress_vector = TRUE,
+                                system_usage_stats = FALSE)
+  })))
+  sum(progress == flag_step)
+}
+
 #' Total sample count per experiment, from the live pipelines object
 #'
 #' Not derivable from flags alone -- needs the actual per-run metadata rows.
@@ -95,10 +135,18 @@ checklist_path <- function(config) file.path(pipeline_log_base(config), "checkli
 #' @param config the mNGSp config object
 #' @param print logical, default TRUE. If TRUE, also render via message()
 #' (see Details above for why this alone is not enough in production).
+#' @param run_status character, default NULL. Parenthetical shown after
+#' the title line's timestamp. NULL means "still running": auto-computed
+#' as \code{"(running for N.N hours)"} from \code{config$init_time}
+#' (silently omitted if \code{init_time} isn't set, e.g. calling this
+#' outside a real \code{run_pipeline()} session). A caller passes an
+#' explicit string -- e.g. \code{"done after 5.2 hours"},
+#' \code{"aborted after 5.2 hours"} -- for a final, one-off status
+#' (see \code{\link{run_pipeline}}'s own on.exit handler).
 #' @return invisible(data.table) with columns: stage, done, total, state
 #' ("done"/"running"/"queued"), active_experiment, active_done, active_total
 #' (the latter three NA when no marker evidence is available/applicable)
-pipeline_checklist <- function(pipelines, config, print = TRUE) {
+pipeline_checklist <- function(pipelines, config, print = TRUE, run_status = NULL) {
   exps <- pipelines_names(pipelines)
   sample_totals <- experiment_sample_counts(pipelines)
 
@@ -133,25 +181,34 @@ pipeline_checklist <- function(pipelines, config, print = TRUE) {
   })
   tab <- data.table::rbindlist(rows)
   txt <- format_checklist(tab)
-  usage <- format_system_usage_line(config)
+  usage <- format_system_usage_line(pipelines, config)
 
-  # Fixed-height header, always exactly 5 lines before the stage table
-  # (title / usage / cap-note-or-blank / blank / blank) whether or not
-  # the cap note has anything to say -- so the stage table always starts
-  # on the same line number and a live-redrawing viewer (or someone just
-  # watching the plain file) doesn't get thrown off by the line count
-  # shifting as the cap note appears/disappears between polls.
+  # Fixed-height header, always exactly 6 lines before the stage table
+  # (title / usage / drive-cap-note-or-blank / backlog-cap-note-or-blank /
+  # blank / blank) whether or not either cap note has anything to say --
+  # so the stage table always starts on the same line number and a
+  # live-redrawing viewer (or someone just watching the plain file)
+  # doesn't get thrown off by the line count shifting as either note
+  # appears/disappears between polls.
+  status_note <- if (!is.null(run_status)) {
+    paste0(" (", run_status, ")")
+  } else if (!is.null(config$init_time)) {
+    paste0(" (running for ", format_elapsed_hours(config$init_time), ")")
+  } else ""
+
   path <- checklist_path(config)
   dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
-  header <- c(sprintf("Pipeline status as of %s", Sys.time()), usage["line"], usage["cap_note"], "", "")
+  header <- c(sprintf("Pipeline status as of %s%s", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), status_note),
+             usage["line"], usage["drive_cap_note"], usage["backlog_cap_note"], "", "")
   cat(paste(c(header, txt), collapse = "\n"), "\n", sep = "", file = path)
 
-  if (print) message(paste(c(usage["line"], usage["cap_note"], "", "", txt), collapse = "\n"))
+  if (print) message(paste(c(usage["line"], usage["drive_cap_note"], usage["backlog_cap_note"],
+                             "", "", txt), collapse = "\n"))
   invisible(tab)
 }
 
-#' One-line system usage summary for the checklist, plus a separate
-#' fixed-slot cap-warning note
+#' One-line system usage summary for the checklist, plus two separate
+#' fixed-slot cap-warning notes
 #'
 #' The usage line matches \code{ORFik::get_system_usage(one_liner = TRUE)}'s
 #' own format (\code{"CPU (x%), Memory (y%), Drive <drive> (z%)"} -- built
@@ -160,16 +217,24 @@ pipeline_checklist <- function(pipelines, config, print = TRUE) {
 #' gives the numeric drive percentage needed for the cap check below
 #' without a second \code{df}/\code{top} invocation).
 #'
-#' Returned as two separate elements (not one combined line) so the
-#' caller can always reserve a fixed line for the cap note, whether or
-#' not it has anything to say -- an appended note makes the usage line's
-#' length vary based on live drive usage, which wraps unpredictably in a
-#' narrow terminal/UI and pushes every line below it out of position.
+#' \code{pipe_fetch()} pauses new downloads for either of two independent
+#' reasons -- drive usage at/above \code{stop_downloading_new_data_at_drive_usage},
+#' or too many fetched-but-unprocessed experiments
+#' (\code{max_unprocessed_downloads}, see \code{\link{unprocessed_downloads_count}})
+#' -- and both are reported here as their own separate, always-reserved
+#' line (not one combined note): appending one note's text length onto
+#' the other's would make that line's length vary depending on which
+#' cap(s) are active, which wraps unpredictably in a narrow terminal/UI
+#' and pushes every line below it out of position. Same reasoning as
+#' why the usage line and cap notes are already split from each other.
+#' @param pipelines the pipelines list (needed for the backlog cap note;
+#' see \code{\link{unprocessed_downloads_count}})
 #' @param config the mNGSp config object
-#' @return named character vector of length 2: \code{line} (the usage
-#' summary) and \code{cap_note} (the warning, or \code{""} when drive
-#' usage is below the cap)
-format_system_usage_line <- function(config) {
+#' @return named character vector of length 3: \code{line} (the usage
+#' summary), \code{drive_cap_note} (the drive-usage warning, or
+#' \code{""} when below that cap), \code{backlog_cap_note} (the
+#' unprocessed-downloads warning, or \code{""} when below that cap)
+format_system_usage_line <- function(pipelines, config) {
   drive <- detect_drive(path.expand(config$config["ref"]))
   usage <- get_system_usage(drive)
   line <- paste0("CPU (", usage$CPU_Usage_Percent, "%),",
@@ -178,11 +243,19 @@ format_system_usage_line <- function(config) {
 
   cap <- config$stop_downloading_new_data_at_drive_usage
   drive_pct <- suppressWarnings(as.numeric(gsub("%", "", usage$Drive_Usage_Percent)))
-  cap_note <- ""
+  drive_cap_note <- ""
   if (!is.null(cap) && !is.na(drive_pct) && drive_pct >= cap) {
-    cap_note <- paste0("[DRIVE AT/ABOVE ", cap, "% CAP -- pipe_fetch() is pausing new downloads]")
+    drive_cap_note <- paste0("[DRIVE AT/ABOVE ", cap, "% CAP -- pipe_fetch() is pausing new downloads]")
   }
-  c(line = line, cap_note = cap_note)
+
+  backlog_cap <- config$max_unprocessed_downloads
+  unprocessed <- unprocessed_downloads_count(pipelines, config)
+  backlog_cap_note <- ""
+  if (!is.null(backlog_cap) && !is.na(unprocessed) && unprocessed > backlog_cap) {
+    backlog_cap_note <- paste0("[UNPROCESSED DOWNLOADS ", unprocessed, " > ", backlog_cap,
+                               " CAP -- pipe_fetch() is pausing new downloads]")
+  }
+  c(line = line, drive_cap_note = drive_cap_note, backlog_cap_note = backlog_cap_note)
 }
 
 #' Live-watch the pipeline checklist in place, like a download progress bar
