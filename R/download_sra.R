@@ -268,6 +268,23 @@ validate_fastq_download <- function(filenames, accession, PAIRED_END, is_compres
       filenames <- filenames[!(filenames %in% compressed_version)]
     }
   }
+  # The old fastq-dump fallback (used when both the AWS/SRA-toolkit path
+  # and the EBI fallback fail, e.g. no EBI network access -- verified
+  # live for SRR27790697) names its SINGLE-end output <accession>_1.fastq,
+  # not the plain <accession>.fastq every other download path and the
+  # rest of the pipeline expects. Rather than erroring and deleting a
+  # fully, correctly downloaded file over a naming quirk, a lone
+  # <accession>_1.fastq for a SINGLE-end run is renamed to the plain
+  # name and treated as valid.
+  single_end_1_suffix_only <- !PAIRED_END && setequal(filenames, paste0(accession, "_1", suffix))
+  if (single_end_1_suffix_only) {
+    old_path <- file.path(outdir, paste0(accession, "_1", suffix))
+    new_path <- file.path(outdir, paste0(accession, suffix))
+    message("fastq-dump fallback returned ", basename(old_path),
+           " for a SINGLE-end run -- renaming to ", basename(new_path))
+    file.rename(old_path, new_path)
+    filenames <- paste0(accession, suffix)
+  }
   if (setequal(filenames, paste0(accession, suffix))) {
     stopifnot(
       "extracted one fastq, but LibraryLayout is not SINGLE" =

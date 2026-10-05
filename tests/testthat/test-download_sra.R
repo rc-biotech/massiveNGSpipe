@@ -84,6 +84,33 @@ test_that("validate_fastq_download: single fastq present, PAIRED_END=FALSE, matc
   expect_identical(result, "SRR001.fastq")
 })
 
+test_that("validate_fastq_download: renames a lone <accession>_1.fastq to the plain name for SINGLE-end", {
+  # Regression test: the old fastq-dump fallback (used when both the
+  # AWS/SRA-toolkit path and the EBI fallback fail -- verified live for
+  # SRR27790697, PRJNA1071171-homo_sapiens, in a network-restricted
+  # environment) names its SINGLE-end output <accession>_1.fastq, not the
+  # plain name every other path expects. Before this fix, a fully and
+  # correctly downloaded file was deleted and the whole download treated
+  # as failed purely over this naming difference.
+  d <- tempfile(); dir.create(d)
+  file.create(file.path(d, "SRR001_1.fastq"))
+  result <- validate_fastq_download("SRR001_1.fastq", "SRR001", PAIRED_END = FALSE,
+                                    is_compressed = FALSE, outdir = d)
+  expect_identical(result, "SRR001.fastq")
+  expect_true(file.exists(file.path(d, "SRR001.fastq")))
+  expect_false(file.exists(file.path(d, "SRR001_1.fastq")))
+})
+
+test_that("validate_fastq_download: a lone <accession>_1.fastq still fails when PAIRED_END=TRUE (missing _2)", {
+  d <- tempfile(); dir.create(d)
+  file.create(file.path(d, "SRR001_1.fastq"))
+  expect_error(
+    validate_fastq_download("SRR001_1.fastq", "SRR001", PAIRED_END = TRUE,
+                            is_compressed = FALSE, outdir = d),
+    "invalid filenames"
+  )
+})
+
 test_that("validate_fastq_download: single fastq present but PAIRED_END=TRUE fails", {
   d <- tempfile(); dir.create(d)
   expect_error(
