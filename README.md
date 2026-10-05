@@ -467,10 +467,75 @@ The pipeline uses ORFik read length and offset calculation.
 Most likely reasons this can fail:
 
 1. A sample in the study is RNA-seq, not Ribo-seq (misclassified)
-2. The automatic barcode / adapter detector failed (if so specify manually by inspecting the processed_data/<study-organism>/trim/adapter_barcode_table.csv). 
-A proper Ribo-seq sample should have total adapter + barcode shrink average trimmed reads down to <= 37. 
-A common case are lets say you have 20 libraries and 2 of them are low quality outliers, it will find correct for 
-the 18 and fail both adapter and barcode for the 2 etc.
+2. The automatic barcode / adapter detector failed -- see "Trimming / adapter / barcode detection failures" below
+for how to inspect and fix this.
+
+### Trimming / adapter / barcode detection failures
+
+Every study's adapter/barcode detection result is recorded in
+`processed_data/<study-organism>/trim/adapter_barcode_table.csv`, one row per
+sample: `id, adapter, barcode_detected, max_length_raw, mean_length_raw,
+mean_length_adapter_filtered, mean_length_adapter_barcode_filtered,
+barcode5p_size, barcode3p_size, reads_no_adapter_removed fastp(%),
+reads_no_adapter_removed ORFik(%), consensus_string_5p, consensus_string_3p`.
+A proper Ribo-seq sample should have total adapter + barcode trimming shrink
+the average read down to a normal footprint length (roughly 25-33nt).
+`mean_length_adapter_filtered` much longer than that, with
+`barcode_detected == FALSE`, usually means a real barcode was never actually
+removed.
+
+A common pattern: a 20-sample study where 18 samples detect their barcode
+correctly and 2 don't -- inspecting those 2 outliers against their own
+study's siblings (not against some fixed global rule) is usually the fastest
+way to tell a real detection failure from a sample that genuinely has no
+barcode.
+
+**A known detector limitation to check for first:** the detector has an
+early-exit -- if a sample already has a trimming report on disk showing
+`trim_mean_length <= 33` (the default threshold), it returns immediately
+*without ever running barcode detection*, reporting `barcode_detected = FALSE`
+purely from that shortcut, not a real negative. A sample whose
+`mean_length_adapter_filtered` sits at or near exactly 33 is the
+characteristic signature of this -- it is worth forcing a real detection
+pass rather than trusting the stored value (call
+`barcode_detector_single(..., check_at_mean_size = 0)` directly to bypass
+the shortcut and confirm either way).
+
+**Fixing one sample once you know the correct adapter/barcode:** write
+(or update) that sample's row in `barcodes_manual.csv`/`adapters_manual.csv`
+in the study's `trim/` folder -- any sample present in one of these files
+skips auto-detection entirely and uses the given value instead. Do this with
+`apply_trim_fix_to_sample()` rather than editing the CSV by hand: it upserts
+the row (every other sample's existing override is preserved), clears this
+one sample's per-sample progress markers for every per-sample-tracked step
+(`trim`, `collapsed`, `aligned`, `ofst`, `covrle`, `bigwig`), and clears the
+experiment-level flags from `trim` onward so the next pipeline run re-enters
+every stage -- per-sample-tracked stages then skip every already-correct
+sibling and reprocess *only* this one sample; stages with no per-sample
+granularity (`pshift`, `pcounts`, `merged_lib`, etc, since they build one
+object across every sample at once) necessarily redo the whole study, which
+is expected, not a bug.
+
+```r
+library(massiveNGSpipe)
+config <- pipeline_config() # same config the study was originally processed with
+
+apply_trim_fix_to_sample(
+  exp = "PRJNA1071171-homo_sapiens", run = "SRR27790697", config = config,
+  barcode5p_size = 5, barcode3p_size = 2,
+  note = "undetected barcode -- confirmed via forced redetection, insert was 27nt not 33nt"
+)
+
+# Then just run the pipeline again as normal for that experiment --
+# only SRR27790697 gets retrimmed/recollapsed/realigned/reconverted;
+# whole-study steps (pshift, pcounts, ...) redo the full study.
+pipelines <- pipeline_init_all(config, gene_symbols = FALSE)
+run_pipeline(pipelines["PRJNA1071171"], config, wait = 20)
+```
+
+If you only have an adapter correction (no barcode-size correction), pass
+just `adapter = "..."` and leave the barcode arguments out -- the two
+corrections are independent, and either (or both) can be given.
 
 ### Tempdrive optimization for .sra -> .fastq extraction
 

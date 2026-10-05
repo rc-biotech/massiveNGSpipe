@@ -6,15 +6,35 @@
 Collapse trimmed single-end fasta/fastq reads and move them into "trim/SINGLE"
 subdirectory. PE reads are moved into "trim/PAIRED" without modification.}
 \usage{
-pipeline_collapse(pipeline, config)
+pipeline_collapse(pipeline, config, pipelines = list(pipeline))
 }
 \arguments{
 \item{pipeline}{a pipeline object, subset of init_pipelines output}
 
 \item{config}{a pipeline_config object}
+
+\item{pipelines}{the full pipelines list, used only to render the
+checklist; defaults to just this pipeline if called standalone.}
 }
 \description{
-Collapse fastq/fasta
-Collapse trimmed single-end fasta/fastq reads and move them into "trim/SINGLE"
-subdirectory. PE reads are moved into "trim/PAIRED" without modification.
+Per-sample resume support, matching \code{\link{pipeline_trim}}/
+\code{\link{pipeline_align}}'s pattern: a sample already marked done
+for this experiment+step (\code{samples_done()}, R/pipeline_sample_flags.R)
+is skipped even if the experiment-level "collapsed" flag itself is
+still unset -- e.g. after a single sample's trim output was
+regenerated (a barcode/adapter fix) and the experiment-level flags
+from "trim" onward cleared, this redoes only that sample's collapse,
+not the whole study's.
+}
+\details{
+Runs inside \code{\link{run_experiment_subprocess}} (like trim/align),
+for log capture and checklist polling -- unlike align, the per-sample
+work itself (\code{\link[ORFik]{collapse.fastq}}) is not internally
+multi-threaded, so it still needs its own \code{BiocParallel::bplapply()}
+dispatch \emph{inside} that subprocess, bounded by
+\code{\link{memory_safe_worker_count}()} (collapsing many large fastq
+files at once is memory-heavy per worker) and \code{config$threads$collapse}
+(both the paired and single-end branches now go through the same
+config-aware, memory-checked path -- previously only the single-end
+branch checked memory at all, and paired always used a flat 16 workers).
 }

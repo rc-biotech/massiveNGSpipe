@@ -96,3 +96,61 @@ test_that("get_pgid_all's own logic applies no spurious filter to get_running_pr
   )
   expect_setequal(get_pgid_all(), c(10L, 20L))
 })
+
+# save_report() barcode/adapter enrichment (added 2026-10-02): a sample
+# with a real but undetected barcode (e.g. SRR27790697, found live in
+# production) shows up in adapter_barcode_table.csv as
+# barcode_detected == FALSE with an anomalously long
+# mean_length_adapter_filtered -- information trimming.table() alone
+# can't surface, since it only reports pre/post-trim read counts and
+# mean length, not WHY a sample's length looks off.
+test_that("save_report() merges adapter_barcode_table.csv into the trimming stats by Run ID", {
+  trim_dir <- tempfile("trim_"); dir.create(trim_dir, recursive = TRUE)
+  data.table::fwrite(
+    data.table::data.table(id = c("SRR001", "SRR002"), adapter = "AGATCGGAAGAG",
+                           barcode_detected = c(TRUE, FALSE),
+                           mean_length_adapter_filtered = c(28, 33)),
+    file.path(trim_dir, "adapter_barcode_table.csv")
+  )
+  report_dir <- tempfile("report_"); dir.create(report_dir, recursive = TRUE)
+
+  testthat::local_mocked_bindings(
+    trimming.table = function(trim_folder, ...) data.table::data.table(
+      raw_library = c("SRR001", "SRR002"), raw_reads = c(1e6, 1e6),
+      trim_reads = c(9e5, 9e5), `% trimmed` = c(10, 10),
+      raw_mean_length = c(36, 36), trim_mean_length = c(28, 33)
+    ),
+    .package = "ORFik"
+  )
+
+  status_list <- list(alignment.stats.all = character(), trimmed.out.all = trim_dir,
+                      done = 1L, n_bioprojects = 1L, report_dir = report_dir)
+  invisible(capture.output(save_report(status_list)))
+
+  out <- data.table::fread(file.path(report_dir, "summary_statistics", "raw_trimmed_reads_stats.csv"))
+  expect_true(all(c("barcode_detected", "mean_length_adapter_filtered") %in% colnames(out)))
+  expect_identical(out[raw_library == "SRR002"]$barcode_detected, FALSE)
+  expect_equal(out[raw_library == "SRR002"]$mean_length_adapter_filtered, 33)
+  expect_identical(out[raw_library == "SRR001"]$barcode_detected, TRUE)
+})
+
+test_that("save_report() still writes trimming stats when adapter_barcode_table.csv is absent (older studies)", {
+  trim_dir <- tempfile("trim_"); dir.create(trim_dir, recursive = TRUE) # no adapter_barcode_table.csv
+  report_dir <- tempfile("report_"); dir.create(report_dir, recursive = TRUE)
+
+  testthat::local_mocked_bindings(
+    trimming.table = function(trim_folder, ...) data.table::data.table(
+      raw_library = "SRR001", raw_reads = 1e6, trim_reads = 9e5,
+      `% trimmed` = 10, raw_mean_length = 36, trim_mean_length = 28
+    ),
+    .package = "ORFik"
+  )
+
+  status_list <- list(alignment.stats.all = character(), trimmed.out.all = trim_dir,
+                      done = 1L, n_bioprojects = 1L, report_dir = report_dir)
+  invisible(capture.output(save_report(status_list)))
+
+  out <- data.table::fread(file.path(report_dir, "summary_statistics", "raw_trimmed_reads_stats.csv"))
+  expect_identical(out$raw_library, "SRR001")
+  expect_false("barcode_detected" %in% colnames(out))
+})

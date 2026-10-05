@@ -39,7 +39,7 @@ pipe_trim_collapse <- function(pipelines, config) {
     if (status) {
       try <- try({
         if (do_collapse)
-          pipeline_collapse(pipeline, config)
+          pipeline_collapse(pipeline, config, pipelines)
       })
       report_failed_pipe(try, config, "collapse", pipeline$accession)
     }

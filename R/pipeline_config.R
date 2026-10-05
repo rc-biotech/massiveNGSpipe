@@ -87,6 +87,15 @@
 #'  stop.on.error = TRUE)}
 #' Specific pipeline config for parallel settings and log directory for BPPARAM_MAIN
 #' @param verbose logical, default TRUE, give start up message
+#' @param threads named list, worker counts per step, read via
+#' \code{\link{bpparam_from_config}(config, step)}. Every step started
+#' with \code{bpparam_from_config()} must have a matching name here
+#' (checked there, not here). \code{collapse} defaults to
+#' \code{min(threads_default, 16)} -- 16 has worked well in practice as
+#' an upper bound, but the real worker count used is further capped at
+#' runtime by available memory (see \code{memory_safe_worker_count()},
+#' R/pipeline_collapse.R) since collapsing large fastq files is memory-
+#' heavy per worker.
 #' @param discord_webhook = discord_connection_default_cached()
 #' @param BPPARAM_MAIN BiocParallel::MulticoreParam(length(pipeline_steps))
 #' The main parallel backend for pipeline, specifying logging behavoir etc.
@@ -137,6 +146,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             threads = list(main = length(pipeline_steps),
                                            default = threads_default,
                                            trim = min(threads_default, 8),
+                                           collapse = min(threads_default, 16),
                                            pshifted = threads_default,
                                            valid_pshift = threads_default,
                                            pcounts = threads_default

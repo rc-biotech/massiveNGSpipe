@@ -2,8 +2,8 @@
 #'
 #' How many studies have finished etc
 #' @inheritParams run_pipeline
-#' @param show_stats logical, default TRUE, output trim/alignment stats
-#' + plots, set to FALSE if you only want progress report.
+#' @param show_stats logical, default FALSE, if TRUE output trim/alignment stats
+#' + plots, FALSE if you only want progress report and save some time.
 #' @param show_done logical, default TRUE. If FALSE, display only status
 #' of projects that are not done. Stats will still show for all.
 #' @param status_plot plot an  interactive plot of total status
@@ -272,6 +272,32 @@ save_report <- function(status_per_study_list) {
     if (is(dt.trim.single, "try-error")) dt.trim.single <- data.table()
     return(dt.trim.single)
   }), fill = TRUE)
+
+  # Enrich with each study's own adapter_barcode_table.csv (written by
+  # pipeline_trim() for RFP libraries, see check_adapter_barcode_quality()
+  # in R/pshift_diagnostics.R) -- trimming.table() alone only reports
+  # whether reads were trimmed, not WHY a given sample's post-adapter
+  # length looks off: a sample with a real but undetected barcode shows
+  # up here as barcode_detected == FALSE with an anomalously long
+  # mean_length_adapter_filtered relative to its own study's other
+  # samples (the adapter itself is still found/removed correctly; only
+  # the barcode step is skipped). Columns kept distinct (not renamed into
+  # trimming.table()'s own naming) so a missing adapter_barcode_table.csv
+  # for an older study just leaves these columns NA, not an error.
+  message("- Loading adapter/barcode detection stats for all studies..")
+  dt.barcode <- rbindlist(lapply(trimmed.out.all, function(f) {
+    bc_path <- file.path(f, "adapter_barcode_table.csv")
+    if (!file.exists(bc_path)) return(data.table())
+    dt.bc.single <- try(fread(bc_path), silent = TRUE)
+    if (is(dt.bc.single, "try-error")) dt.bc.single <- data.table()
+    return(dt.bc.single)
+  }), fill = TRUE)
+  if (nrow(dt.trim) > 0 && nrow(dt.barcode) > 0 && "raw_library" %in% colnames(dt.trim) &&
+      "id" %in% colnames(dt.barcode)) {
+    dt.barcode <- unique(dt.barcode, by = "id") # one row per Run, in case of any upstream duplication
+    dt.trim <- merge(dt.trim, dt.barcode, by.x = "raw_library", by.y = "id", all.x = TRUE, sort = FALSE)
+  }
+
   if (nrow(dt.trim)) {
     trimming_file <- file.path(summary_stats_dir, "raw_trimmed_reads_stats.csv")
     message("-- Saving trimming statistics to: ", trimming_file)

@@ -346,10 +346,21 @@ path_config <- function(experiment, assembly_name, config, type = ifelse(config$
   return(conf)
 }
 
-bpparam_from_config <- function(config, step) {
+#' Build a BPPARAM for one pipeline step from config
+#'
+#' @param config the mNGSp config object
+#' @param step character, must be a name in \code{config$threads}
+#' @param workers numeric, default \code{config$threads[[step]]}. Pass
+#' an explicit override to use a dynamically-computed worker count
+#' instead of the static config value for this one call (e.g.
+#' \code{\link{memory_safe_worker_count}()} for a memory-heavy step) --
+#' every other behavior (thread_type, logging) still comes from
+#' \code{config} as usual.
+#' @return a BPPARAM object
+#' @noRd
+bpparam_from_config <- function(config, step, workers = config$threads[[step]]) {
   stopifnot(is(config$threads, "list"))
   stopifnot(step %in% names(config$threads))
-  workers <- config$threads[[step]]
   stopifnot(length(workers) == 1 && is.numeric(workers))
   stopifnot(is(config$thread_type, "function"))
   parallel_conf <- config$parallel_conf

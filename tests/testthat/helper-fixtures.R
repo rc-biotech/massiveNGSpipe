@@ -53,13 +53,30 @@ fake_config <- function(project = tempfile("mNGSp_test_"), preset = "RNA-seq",
     session_dir = session_dir,
     error_dir = NULL,
     discord_webhook = NULL,
+    # FALSE by default -- safe/conservative for a test (never deletes
+    # whatever fixture files a test created), matching real
+    # pipeline_config()'s own default of mode == "online" rather than
+    # hardcoding TRUE.
+    delete_raw_files = FALSE,
+    delete_trimmed_files = FALSE,
+    delete_collapsed_files = FALSE,
     stop_downloading_new_data_at_drive_usage = 92,
     compress_raw_data = TRUE,
     min_raw_reads_pshift = 1e5,
     min_alignment_rate_pshift = 10,
     max_no_adapter_removed_pct = 80,
     skip_pshift_on_low_reads = FALSE,
-    skip_pshift_on_low_alignment = FALSE
+    skip_pshift_on_low_alignment = FALSE,
+    # SerialParam by default -- fast and deterministic for a unit test;
+    # bpparam_from_config() needs config$threads to have an entry for
+    # every step it's asked about, config$thread_type to be a function,
+    # and config$parallel_conf to have exactly these 4 names (see its
+    # own stopifnot()s, R/pipeline_init_helpers.R).
+    threads = list(main = 1, default = 1, trim = 1, collapse = 1,
+                  pshifted = 1, valid_pshift = 1, pcounts = 1),
+    thread_type = BiocParallel::SerialParam,
+    parallel_conf = BiocParallel::bpoptions(log = FALSE, logdir = NA_character_,
+                                            jobname = "test", stop.on.error = TRUE)
   )
   # utils::modifyList (not c()) so that names present in `extra` REPLACE
   # the default above rather than being appended as a duplicate --

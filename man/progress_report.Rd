@@ -31,9 +31,9 @@ of projects that are not done. Stats will still show for all.}
 
 \item{status_plot}{plot an  interactive plot of total status}
 
-\item{show_stats}{logical, default TRUE, output trim/alignment stats
+\item{show_stats}{logical, default FALSE, if TRUE output trim/alignment stats
 \itemize{
-\item plots, set to FALSE if you only want progress report.
+\item plots, FALSE if you only want progress report and save some time.
 }}
 
 \item{return_progress_vector}{logical, default FALSE. If true,
