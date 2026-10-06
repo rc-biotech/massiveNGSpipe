@@ -71,9 +71,20 @@ pipeline_collapse <- function(pipeline, config, pipelines = list(pipeline)) {
     runs_single <- study[ScientificName == organism &
                            LibraryLayout != "PAIRED"]
 
+    # Filter to the not-yet-done subset BEFORE resolving files (not
+    # after): run_files_organizer() requires every row it's given to
+    # resolve to a real file, but an already-collapsed sibling's trimmed
+    # intermediate is typically already gone (config$delete_trimmed_files
+    # is the online-mode default) -- resolving against the full study
+    # here would error on that missing file even when only reprocessing
+    # one already-done study's single fixed sample. Same class of bug as
+    # pipeline_trim()'s run_files_organizer() call, R/pipeline_preset_steps_sub.R
+    # -- confirmed there to silently loop forever (not actually hang) via
+    # run_pipeline()'s per-stage retry-skip-on-error design, easy to
+    # misread as a BiocParallel/fork deadlock.
     done_runs <- samples_done(config, "collapsed", experiment)
-    todo_paired <- which(!(runs_paired$Run %in% done_runs))
-    todo_single <- which(!(runs_single$Run %in% done_runs))
+    runs_paired <- runs_paired[!(Run %in% done_runs)]
+    runs_single <- runs_single[!(Run %in% done_runs)]
 
     all_files <- c()
     outdir_paired <- files_paired <- NULL
@@ -92,41 +103,40 @@ pipeline_collapse <- function(pipeline, config, pipelines = list(pipeline)) {
     }
 
     run_experiment_subprocess(
-      func = function(runs_paired, files_paired, outdir_paired, todo_paired,
-                      runs_single, files_single, outdir_single, todo_single,
+      func = function(runs_paired, files_paired, outdir_paired,
+                      runs_single, files_single, outdir_single,
                       config, experiment) {
-        if (length(todo_paired) > 0) {
+        if (length(files_paired) > 0) {
           fs::dir_create(outdir_paired)
-          read1_paths <- heads(files_paired[todo_paired], 1)
+          read1_paths <- heads(files_paired, 1)
           BPPARAM <- bpparam_from_config(config, "collapse",
             workers = memory_safe_worker_count(unlist(read1_paths), config$threads$collapse))
-          BiocParallel::bplapply(seq_along(todo_paired), function(i, read1_paths, outdir_paired,
-                                                                  runs_paired, todo_paired,
-                                                                  config, experiment) {
-            ORFik::collapse.fastq(read1_paths[[i]], outdir_paired, compress = TRUE)
-            set_sample_flag(config, "collapsed", experiment, runs_paired$Run[todo_paired[i]])
-          }, read1_paths = read1_paths, outdir_paired = outdir_paired, runs_paired = runs_paired,
-             todo_paired = todo_paired, config = config, experiment = experiment, BPPARAM = BPPARAM)
-        }
-        if (length(todo_single) > 0) {
-          fs::dir_create(outdir_single)
-          files_todo <- files_single[todo_single]
-          BPPARAM <- bpparam_from_config(config, "collapse",
-            workers = memory_safe_worker_count(unlist(files_todo), config$threads$collapse))
-          BiocParallel::bplapply(seq_along(todo_single), function(i, files_todo, outdir_single,
-                                                                   runs_single, todo_single,
+          BiocParallel::bplapply(seq_along(read1_paths), function(i, read1_paths, outdir_paired,
+                                                                   runs_paired,
                                                                    config, experiment) {
-            ORFik::collapse.fastq(files_todo[[i]], outdir_single, compress = TRUE)
-            set_sample_flag(config, "collapsed", experiment, runs_single$Run[todo_single[i]])
-          }, files_todo = files_todo, outdir_single = outdir_single, runs_single = runs_single,
-             todo_single = todo_single, config = config, experiment = experiment, BPPARAM = BPPARAM)
+            ORFik::collapse.fastq(read1_paths[[i]], outdir_paired, compress = TRUE)
+            set_sample_flag(config, "collapsed", experiment, runs_paired$Run[i])
+          }, read1_paths = read1_paths, outdir_paired = outdir_paired, runs_paired = runs_paired,
+             config = config, experiment = experiment, BPPARAM = BPPARAM)
+        }
+        if (length(files_single) > 0) {
+          fs::dir_create(outdir_single)
+          BPPARAM <- bpparam_from_config(config, "collapse",
+            workers = memory_safe_worker_count(unlist(files_single), config$threads$collapse))
+          BiocParallel::bplapply(seq_along(files_single), function(i, files_single, outdir_single,
+                                                                    runs_single,
+                                                                    config, experiment) {
+            ORFik::collapse.fastq(files_single[[i]], outdir_single, compress = TRUE)
+            set_sample_flag(config, "collapsed", experiment, runs_single$Run[i])
+          }, files_single = files_single, outdir_single = outdir_single, runs_single = runs_single,
+             config = config, experiment = experiment, BPPARAM = BPPARAM)
         }
         invisible(NULL)
       },
       args = list(runs_paired = runs_paired, files_paired = files_paired,
-                  outdir_paired = outdir_paired, todo_paired = todo_paired,
+                  outdir_paired = outdir_paired,
                   runs_single = runs_single, files_single = files_single,
-                  outdir_single = outdir_single, todo_single = todo_single,
+                  outdir_single = outdir_single,
                   config = config, experiment = experiment),
       logfile_out = file.path(pipeline_log_base(config), "console", "collapse", paste0(experiment, ".out.log")),
       logfile_err = file.path(pipeline_log_base(config), "console", "collapse", paste0(experiment, ".err.log")),

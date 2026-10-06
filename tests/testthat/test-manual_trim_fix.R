@@ -99,3 +99,59 @@ test_that("apply_trim_fix_to_sample() requires at least one correction and both 
   expect_error(apply_trim_fix_to_sample("exp1", "SRR001", config))
   expect_error(apply_trim_fix_to_sample("exp1", "SRR001", config, barcode5p_size = 5))
 })
+
+test_that("apply_trim_fix_to_sample() backfills sibling markers for a study with NO pre-existing per-sample markers at all", {
+  # Reproduces a study fully processed before the per-sample-resume
+  # feature existed: experiment-level flags are TRUE, but samples_done()
+  # is empty for every sample, not just the one being fixed. Without the
+  # backfill, pipeline_trim()/pipeline_collapse() would treat every
+  # sibling as not-done too, not just the fixed sample -- confirmed live
+  # on PRJNA926112-homo_sapiens, 2026-10-05.
+  config <- fake_config(preset = "Ribo-seq")
+  stub <- fake_experiment_stub(run_ids = c("SRR001", "SRR002", "SRR003"), exp_name = "PRJNA000001-homo_sapiens")
+  bam_dir <- tempfile("bam_")
+  testthat::local_mocked_bindings(
+    read.experiment = function(exp, ...) stub,
+    bam_dir_from_df = function(df) bam_dir
+  )
+  # No set_sample_flag() calls at all -- only the experiment-level flags,
+  # matching a pre-feature study's actual on-disk state.
+  fake_mark_all_done(config, names(config$flag), "PRJNA000001-homo_sapiens")
+
+  apply_trim_fix_to_sample("PRJNA000001-homo_sapiens", "SRR001", config,
+                           barcode5p_size = 7, barcode3p_size = 0, note = "legacy study backfill")
+
+  # Siblings backfilled to "done"; the fixed sample has no marker.
+  for (step_id in c("trim", "collapsed", "aligned", "ofst", "covrle", "bigwig")) {
+    expect_setequal(samples_done(config, step_id, "PRJNA000001-homo_sapiens"), c("SRR002", "SRR003"))
+  }
+})
+
+test_that("apply_trim_fix_to_sample()'s backfilled 'trim' markers are rbindlist()-compatible, reusing the existing adapter_barcode_table.csv row when present", {
+  # pipeline_trim() reconstructs adapter_barcode_table.csv via
+  # rbindlist(sample_flag_values(config, "trim", experiment), fill = TRUE)
+  # -- a plain TRUE backfill value breaks that with "Item 1 of input is
+  # not a data.frame, data.table or list" (confirmed live, 2026-10-05,
+  # PRJNA926112-homo_sapiens, right after the real fastp trim for the
+  # fixed sample itself had already succeeded).
+  config <- fake_config(preset = "Ribo-seq")
+  stub <- fake_experiment_stub(run_ids = c("SRR001", "SRR002"), exp_name = "PRJNA000001-homo_sapiens")
+  bam_dir <- tempfile("bam_")
+  dir.create(file.path(bam_dir, "trim"), recursive = TRUE)
+  data.table::fwrite(
+    data.table::data.table(id = c("SRR001", "SRR002"), adapter = "passed",
+                           barcode_detected = c(FALSE, TRUE), barcode5p_size = c(0, 7)),
+    file.path(bam_dir, "trim", "adapter_barcode_table.csv"))
+  testthat::local_mocked_bindings(
+    read.experiment = function(exp, ...) stub,
+    bam_dir_from_df = function(df) bam_dir
+  )
+  fake_mark_all_done(config, names(config$flag), "PRJNA000001-homo_sapiens")
+
+  apply_trim_fix_to_sample("PRJNA000001-homo_sapiens", "SRR001", config,
+                           barcode5p_size = 5, barcode3p_size = 2, note = "rbindlist compatibility")
+
+  rebuilt <- data.table::rbindlist(sample_flag_values(config, "trim", "PRJNA000001-homo_sapiens"), fill = TRUE)
+  expect_identical(rebuilt$id, "SRR002")
+  expect_equal(rebuilt$barcode5p_size, 7)
+})

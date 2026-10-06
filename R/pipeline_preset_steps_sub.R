@@ -83,8 +83,6 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
         trimmed_dir <- fs::path(process_dir, "trim")
 
         runs_full <- study[ScientificName == organism]
-        # Files to run (Single end / Paired end)
-        all_files_full <- run_files_organizer(runs_full, source_dir)
         experiment <- conf["exp"]
 
         # Resume support: skip runs already marked done for this
@@ -94,10 +92,25 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
         # one run, and re-running a not-yet-done run naturally overwrites
         # its own output files, so no separate output-existence check is
         # needed.
+        #
+        # Filter to the not-yet-done subset BEFORE resolving files (not
+        # after): run_files_organizer() requires every row it's given to
+        # resolve to a real file, but an already-trimmed sibling's raw
+        # fastq is typically already gone (config$delete_raw_files is the
+        # online-mode default) -- resolving against the full study here
+        # would error on that missing file even when only reprocessing
+        # one already-done study's single fixed sample. Confirmed live:
+        # this previously errored instantly, correctly got caught by
+        # pipe_trim_collapse()'s try(), but because the "trim" flag could
+        # then never be set, the step's own retry-skip-forever design
+        # continued permanently and silently (warnings deferred in a
+        # never-returning top-level call) -- hours of near-zero-CPU
+        # "nothing happening", easy to misread as a BiocParallel/fork
+        # deadlock when it is neither.
         done_runs <- samples_done(config, "trim", experiment)
         not_done <- !(runs_full$Run %in% done_runs)
         runs <- runs_full[not_done]
-        all_files <- all_files_full[not_done]
+        all_files <- if (nrow(runs) > 0) run_files_organizer(runs, source_dir) else list()
 
         if (nrow(runs) > 0) {
           run_experiment_subprocess(
@@ -150,7 +163,7 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
         check_too_few_reads(conf["bam"], trimmed_dir, config$min_raw_reads_pshift)
 
         set_flag(config, "trim", conf["exp"])
-        if (config$delete_raw_files) fs::file_delete(unlist(all_files_full))
+        if (config$delete_raw_files && length(all_files) > 0) fs::file_delete(unlist(all_files))
     }
 }
 
@@ -188,7 +201,8 @@ pipeline_align <- function(pipeline, config, pipelines = list(pipeline)) {
     conf <- pipeline$organisms[[organism]]$conf
     if (!step_is_next_not_done(config, "aligned", conf["exp"])) next
     index <- pipeline$organisms[[organism]]$index
-    runs <- study[ScientificName == organism]
+    runs_full <- study[ScientificName == organism]
+    experiment <- conf["exp"]
     # browser()
     trimmed_dir <- fs::path(conf["bam"], "trim")
     raw_fastq_dir <- conf["fastq"]
@@ -201,7 +215,19 @@ pipeline_align <- function(pipeline, config, pipelines = list(pipeline)) {
       c(fs::path(trimmed_dir, "SINGLE"), fs::path(trimmed_dir, "PAIRED"))
     } else ifelse(did_trim, trimmed_dir, raw_fastq_dir)
     input_dir <- input_dir[dir.exists(input_dir)]
-    pairs <- run_files_organizer(runs, input_dir)
+
+    # Resume support: filter to the not-yet-done subset BEFORE resolving
+    # files (not after): run_files_organizer() requires every row it's
+    # given to resolve to a real file, but an already-aligned sibling's
+    # trimmed/collapsed input can be gone (config$delete_trimmed_files/
+    # delete_collapsed_files) -- resolving against the full study here
+    # would error on that missing file even when only reprocessing one
+    # already-done study's single fixed sample. Same class of bug as
+    # pipeline_trim()/pipeline_collapse()'s own run_files_organizer()
+    # calls.
+    done_runs <- samples_done(config, "aligned", experiment)
+    runs <- runs_full[!(Run %in% done_runs)]
+    pairs <- if (nrow(runs) > 0) run_files_organizer(runs, input_dir) else list()
 
     first_pair_index <- which(lengths(pairs) == 2)[1]
     any_paired <- !is.na(first_pair_index)
@@ -220,59 +246,55 @@ pipeline_align <- function(pipeline, config, pipelines = list(pipeline)) {
       } else strandMode <- readRDS(file.path(output_dir, "strandMode.rds"))
     }
 
-    experiment <- conf["exp"]
-
-    # Resume support: skip pairs already marked done for this experiment.
-    # todo_indices (not a filtered copy of `pairs`/`runs`) keeps
-    # keep.index.in.memory's tail(pairs, 1)[[1]] comparison and
-    # runs[pair_index]$Run indexing correct even when some pairs are
-    # skipped -- both still refer to the true, original, full pairs/runs.
-    done_runs <- samples_done(config, "aligned", experiment)
-    todo_indices <- which(!(runs$Run %in% done_runs))
-
-    run_experiment_subprocess(
-      func = function(pairs, runs, strandMode, output_dir, index, steps,
-                      keep.unaligned.genome, star.path, fastp.path,
-                      input_dir, config, experiment, todo_indices) {
-        cat("Total number of files are:\n")
-        cat(length(pairs)); cat("\n")
-        for (pair_index in todo_indices) {
-          R1_R2 <- pairs[[pair_index]]
-          cat("Single end mode\n")
-          cat("Run ", pair_index, " / ", length(pairs), "\n")
-          single_end <- lengths(pairs[pair_index]) == 1
-          run <- runs[pair_index]$Run
-          keep.index.in.memory <- !identical(R1_R2, tail(pairs, 1)[[1]])
-          file1 <- R1_R2[ifelse(single_end, 1, strandMode)]
-          file2 <- if (!is.na(R1_R2[2]) & FALSE) {R1_R2[ifelse(strandMode == 1, 2, 1)]}
-          ORFik::STAR.align.single(file1, file2,
-                                   output.dir = output_dir,
-                                   index.dir = index, steps = steps,
-                                   resume = "ge",
-                                   keep.index.in.memory = keep.index.in.memory,
-                                   keep.unaligned.genome = keep.unaligned.genome,
-                                   star.path = star.path, fastp = fastp.path
-          )
-          #TODO: Now _1 and _2 will be kept, but fixed in cleanup, do I want it like that ?
-          set_sample_flag(config, "aligned", experiment, run)
-        }
-        alignment_final_checks(input_dir, output_dir, runs, config, steps)
-      },
-      args = list(pairs = pairs, runs = runs, strandMode = strandMode,
-                  output_dir = output_dir, index = index, steps = steps,
-                  keep.unaligned.genome = keep.unaligned.genome,
-                  star.path = star.path, fastp.path = fastp.path,
-                  input_dir = input_dir, config = config, experiment = experiment,
-                  todo_indices = todo_indices),
-      logfile_out = file.path(pipeline_log_base(config), "console", "align", paste0(experiment, ".out.log")),
-      logfile_err = file.path(pipeline_log_base(config), "console", "align", paste0(experiment, ".err.log")),
-      on_poll = function() pipeline_checklist(pipelines, config)
-    )
+    if (nrow(runs) > 0) {
+      run_experiment_subprocess(
+        func = function(pairs, runs, strandMode, output_dir, index, steps,
+                        keep.unaligned.genome, star.path, fastp.path,
+                        input_dir, config, experiment) {
+          cat("Total number of files are:\n")
+          cat(length(pairs)); cat("\n")
+          for (pair_index in seq_along(pairs)) {
+            R1_R2 <- pairs[[pair_index]]
+            cat("Single end mode\n")
+            cat("Run ", pair_index, " / ", length(pairs), "\n")
+            single_end <- lengths(pairs[pair_index]) == 1
+            run <- runs[pair_index]$Run
+            keep.index.in.memory <- !identical(R1_R2, tail(pairs, 1)[[1]])
+            file1 <- R1_R2[ifelse(single_end, 1, strandMode)]
+            file2 <- if (!is.na(R1_R2[2]) & FALSE) {R1_R2[ifelse(strandMode == 1, 2, 1)]}
+            ORFik::STAR.align.single(file1, file2,
+                                     output.dir = output_dir,
+                                     index.dir = index, steps = steps,
+                                     resume = "ge",
+                                     keep.index.in.memory = keep.index.in.memory,
+                                     keep.unaligned.genome = keep.unaligned.genome,
+                                     star.path = star.path, fastp = fastp.path
+            )
+            #TODO: Now _1 and _2 will be kept, but fixed in cleanup, do I want it like that ?
+            set_sample_flag(config, "aligned", experiment, run)
+          }
+          alignment_final_checks(input_dir, output_dir, runs, pairs, config, steps)
+        },
+        args = list(pairs = pairs, runs = runs, strandMode = strandMode,
+                    output_dir = output_dir, index = index, steps = steps,
+                    keep.unaligned.genome = keep.unaligned.genome,
+                    star.path = star.path, fastp.path = fastp.path,
+                    input_dir = input_dir, config = config, experiment = experiment),
+        logfile_out = file.path(pipeline_log_base(config), "console", "align", paste0(experiment, ".out.log")),
+        logfile_err = file.path(pipeline_log_base(config), "console", "align", paste0(experiment, ".err.log")),
+        on_poll = function() pipeline_checklist(pipelines, config)
+      )
+    }
     set_flag(config, "aligned", conf["exp"])
   }
 }
 
-alignment_final_checks <- function(input_dir, output_dir, runs, config, steps) {
+#' @param pairs the resolved input files (one list element per sample
+#' just processed by this call) -- used ONLY to know exactly which
+#' input files are safe to delete below, never the whole directory. A
+#' sibling's own input file, already deleted after ITS OWN earlier,
+#' separate pipeline_align() call, must never be touched again here.
+alignment_final_checks <- function(input_dir, output_dir, runs, pairs, config, steps) {
   cleanup_script <- system.file("STAR_Aligner", "cleanup_folders.sh",
                                 package = "ORFik")
   system2("/bin/bash", c(cleanup_script, output_dir))
@@ -291,7 +313,16 @@ alignment_final_checks <- function(input_dir, output_dir, runs, config, steps) {
     stop("You have empty bam files in your aligned folder!")
   }
   if (config$delete_collapsed_files) {
-    fs::dir_delete(input_dir)
+    # Only the input files actually resolved/used for the samples JUST
+    # processed here -- never the whole directory (fs::dir_delete(input_dir)
+    # used to do exactly that), which would also destroy every sibling's
+    # still-needed collapsed/trimmed input the moment any single sample
+    # gets reprocessed on its own. Confirmed live this is a real,
+    # reachable path, not just a theoretical risk -- see the identical
+    # class of bug already fixed in pipeline_trim()/pipeline_collapse().
+    used_files <- unlist(pairs, use.names = FALSE)
+    used_files <- used_files[!is.na(used_files) & file.exists(used_files)]
+    if (length(used_files) > 0) fs::file_delete(used_files)
   }
 }
 
@@ -397,17 +428,34 @@ pipeline_cleanup <- function(pipeline, config) {
             glob = "**/*.out.*"
           ))
         }
-        old_file_names <- match_bam_to_metadata(bam_dir, study_org, FALSE,
-                                                format = c("_Aligned.sortedByCoord.out.bam"))
+        # Resume support: a sample whose BAM already sits at its final
+        # <Run>.bam name (an earlier, already-finished run, or an
+        # earlier interrupted attempt at this very step) needs no
+        # further renaming -- skip it before resolving the STAR-native
+        # name. Without this, match_bam_to_metadata()/run_files_organizer()'s
+        # loose substring match can match that ALREADY-renamed file for
+        # a sample that needed no work at all, and fs::file_move() then
+        # tries to move it onto itself, reporting [ENOENT] "no such
+        # file" instead of the no-op it should be. Confirmed live,
+        # PRJNA926112-homo_sapiens, 2026-10-05 (5 siblings already
+        # cleaned in 2025, one sample reprocessed fresh).
+        new_file_names_full <- fs::path(bam_dir, study_org$Run, ext = "bam")
+        needs_rename <- !file.exists(new_file_names_full)
+        rename_study_org <- study_org[needs_rename]
+        new_file_names <- new_file_names_full[needs_rename]
 
-        new_file_names <- fs::path(bam_dir, study_org$Run, ext = "bam")
-        file_names_to_delete <- new_file_names[new_file_names != old_file_names]
-        file_names_to_delete <- file_names_to_delete[file.exists(file_names_to_delete)]
-        if (length(file_names_to_delete) > 0) try(file.remove(file_names_to_delete), silent = TRUE)
+        if (nrow(rename_study_org) > 0) {
+          old_file_names <- match_bam_to_metadata(bam_dir, rename_study_org, FALSE,
+                                                  format = c("_Aligned.sortedByCoord.out.bam"))
 
-        stopifnot(length(old_file_names) == length(new_file_names))
-        for (i in seq_along(old_file_names)) {
-          fs::file_move(old_file_names[i], new_file_names[i])
+          file_names_to_delete <- new_file_names[new_file_names != old_file_names]
+          file_names_to_delete <- file_names_to_delete[file.exists(file_names_to_delete)]
+          if (length(file_names_to_delete) > 0) try(file.remove(file_names_to_delete), silent = TRUE)
+
+          stopifnot(length(old_file_names) == length(new_file_names))
+          for (i in seq_along(old_file_names)) {
+            fs::file_move(old_file_names[i], new_file_names[i])
+          }
         }
 
         if (did_collapse) {
