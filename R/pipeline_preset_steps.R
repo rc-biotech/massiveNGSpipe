@@ -76,6 +76,13 @@ pipe_exp_ofst <- function(pipelines, config) {
     exp <- pipeline$accession
     if (file.exists(report_failed_pipe_path(config, exp))) next
     if (stop_requested(config)) break
+    # Initialized before try(): if pipeline_create_experiment() errors
+    # partway through, the df_list <- assignment inside try() never
+    # completes, so df_list would otherwise not exist at all here --
+    # masking the real error behind "object 'df_list' not found"
+    # instead of surfacing report_failed_pipe()'s actual recorded one.
+    # Confirmed live, PRJNA770650-homo_sapiens, 2026-10-06.
+    df_list <- NULL
     try <- try({
       df_list <- pipeline_create_experiment(pipeline, config)
     })

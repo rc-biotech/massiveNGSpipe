@@ -126,3 +126,43 @@ test_that("pipeline_cleanup() skips renaming a sample whose BAM already has its 
   # SRR001's already-correct file must never even be considered for a move.
   expect_true(file.exists(file.path(aligned_dir, "SRR001.bam")))
 })
+
+test_that("pipeline_cleanup() still renames a sample with a STALE <Run>.bam left over from an earlier run, when a fresh pending STAR-native output also exists", {
+  # A sample being freshly reprocessed (e.g. a per-sample barcode fix)
+  # can have BOTH its old <Run>.bam (from its previous, now-superseded
+  # run) AND a fresh pending native-output file waiting to replace it.
+  # Checking only "does <Run>.bam already exist" (an earlier version of
+  # this fix) wrongly treated this sample as already-done and skipped
+  # it entirely, leaving the stale BAM in place forever. Confirmed
+  # live, PRJNA770650-homo_sapiens, 2026-10-06.
+  config <- fake_config(preset = "Ribo-seq")
+  bam_dir <- tempfile("bam_")
+  pipelines <- fake_pipelines(
+    bam_dir = bam_dir,
+    runs = data.table::data.table(Run = c("SRR001", "SRR002"), LibraryLayout = "SINGLE",
+                                  LIBRARYTYPE = "RFP", ScientificName = "Homo sapiens")
+  )
+  exp_name <- "PRJNA000001-homo_sapiens"
+  fake_mark_all_done(config, c("trim", "collapsed", "aligned"), exp_name)
+  aligned_dir <- file.path(bam_dir, "aligned")
+  dir.create(aligned_dir, recursive = TRUE)
+  # SRR001: genuinely already-done, no pending native output -- must stay untouched.
+  file.create(file.path(aligned_dir, "SRR001.bam"))
+  # SRR002: being freshly reprocessed -- stale old BAM AND a fresh
+  # pending native output (STAR aligned the collapsed fasta input,
+  # whose basename prefixes the native output name) both present.
+  file.create(file.path(aligned_dir, "SRR002.bam"))
+  file.create(file.path(aligned_dir, "collapsed_trimmed_SRR002_Aligned.sortedByCoord.out.bam"))
+
+  moved <- list()
+  testthat::local_mocked_bindings(
+    file_move = function(from, to) { moved[[length(moved) + 1]] <<- list(from = from, to = to) },
+    .package = "fs"
+  )
+
+  pipeline_cleanup(pipelines[["PRJNA000001"]], config)
+
+  expect_length(moved, 1)
+  expect_identical(basename(moved[[1]]$from), "collapsed_trimmed_SRR002_Aligned.sortedByCoord.out.bam")
+  expect_identical(basename(moved[[1]]$to), "SRR002.bam")
+})

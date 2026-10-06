@@ -127,8 +127,19 @@ apply_trim_fix_to_sample <- function(exp, run, config, barcode5p_size = NULL,
     to_backfill <- setdiff(sibling_runs, samples_done(config, step_id, exp))
     for (sibling in to_backfill) {
       value <- TRUE
-      if (step_id == "trim" && !is.null(existing_trim_table) && sibling %in% existing_trim_table$id)
-        value <- existing_trim_table[id == sibling]
+      if (step_id == "trim") {
+        # Always a data.table-compatible value for "trim" (never plain
+        # TRUE), regardless of whether this sibling has a row in the
+        # existing table: an experiment can predate the per-sample-
+        # resume feature badly enough that adapter_barcode_table.csv
+        # itself is missing most siblings' rows (confirmed live,
+        # PRJNA770650-homo_sapiens: 9 of 52 rows present) -- the
+        # rbindlist() crash this guards against would otherwise still
+        # happen for every sibling without a row, not just when the
+        # table is entirely absent.
+        value <- if (!is.null(existing_trim_table) && sibling %in% existing_trim_table$id)
+          existing_trim_table[id == sibling] else data.table::data.table(id = sibling)
+      }
       set_sample_flag(config, step_id, exp, sibling, value = value)
     }
   }

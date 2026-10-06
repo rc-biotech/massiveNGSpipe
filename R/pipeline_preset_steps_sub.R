@@ -428,21 +428,28 @@ pipeline_cleanup <- function(pipeline, config) {
             glob = "**/*.out.*"
           ))
         }
-        # Resume support: a sample whose BAM already sits at its final
-        # <Run>.bam name (an earlier, already-finished run, or an
-        # earlier interrupted attempt at this very step) needs no
-        # further renaming -- skip it before resolving the STAR-native
-        # name. Without this, match_bam_to_metadata()/run_files_organizer()'s
-        # loose substring match can match that ALREADY-renamed file for
-        # a sample that needed no work at all, and fs::file_move() then
-        # tries to move it onto itself, reporting [ENOENT] "no such
-        # file" instead of the no-op it should be. Confirmed live,
-        # PRJNA926112-homo_sapiens, 2026-10-05 (5 siblings already
-        # cleaned in 2025, one sample reprocessed fresh).
-        new_file_names_full <- fs::path(bam_dir, study_org$Run, ext = "bam")
-        needs_rename <- !file.exists(new_file_names_full)
-        rename_study_org <- study_org[needs_rename]
-        new_file_names <- new_file_names_full[needs_rename]
+        # Resume support: a sample needs renaming here only if a
+        # pending, not-yet-renamed STAR-native output actually exists
+        # for it -- NOT simply "does <Run>.bam not exist yet". A sample
+        # being freshly reprocessed can have BOTH a stale <Run>.bam
+        # left over from its previous run AND a fresh pending native
+        # output waiting to replace it; checking only "does the target
+        # already exist" (an earlier version of this fix) wrongly
+        # skipped that sample, leaving the stale old BAM in place and
+        # the fresh realignment never promoted. Confirmed live,
+        # PRJNA770650-homo_sapiens, 2026-10-06. Checking for a pending
+        # native output also still skips a truly already-done sibling
+        # (no such file exists for it), avoiding the original bug this
+        # guarded against: match_bam_to_metadata()/run_files_organizer()'s
+        # loose substring match otherwise matching an already-renamed
+        # file and fs::file_move() moving it onto itself, which
+        # reports [ENOENT] "no such file" and DELETES it instead of
+        # no-op'ing (PRJNA926112-homo_sapiens, 2026-10-05).
+        has_pending_native_output <- vapply(study_org$Run, function(run) {
+          length(list.files(bam_dir, pattern = paste0("^.*", run, ".*_Aligned\\.sortedByCoord\\.out\\.bam$"))) > 0
+        }, logical(1))
+        rename_study_org <- study_org[has_pending_native_output]
+        new_file_names <- fs::path(bam_dir, rename_study_org$Run, ext = "bam")
 
         if (nrow(rename_study_org) > 0) {
           old_file_names <- match_bam_to_metadata(bam_dir, rename_study_org, FALSE,

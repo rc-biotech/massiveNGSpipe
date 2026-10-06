@@ -155,3 +155,33 @@ test_that("apply_trim_fix_to_sample()'s backfilled 'trim' markers are rbindlist(
   expect_identical(rebuilt$id, "SRR002")
   expect_equal(rebuilt$barcode5p_size, 7)
 })
+
+test_that("apply_trim_fix_to_sample()'s 'trim' backfill is still rbindlist()-compatible for a sibling MISSING from an otherwise-present adapter_barcode_table.csv", {
+  # A table can exist but still not cover every sibling -- confirmed
+  # live, PRJNA770650-homo_sapiens: adapter_barcode_table.csv existed
+  # but had rows for only 9 of its 52 samples (that experiment predates
+  # per-sample resume badly enough that the table itself was never
+  # fully backfilled either). The sibling missing from the table must
+  # still get an rbindlist()-compatible placeholder, not plain TRUE.
+  config <- fake_config(preset = "Ribo-seq")
+  stub <- fake_experiment_stub(run_ids = c("SRR001", "SRR002", "SRR003"), exp_name = "PRJNA000001-homo_sapiens")
+  bam_dir <- tempfile("bam_")
+  dir.create(file.path(bam_dir, "trim"), recursive = TRUE)
+  # Only SRR002 has a row; SRR003 (a sibling, not the one being fixed) has none.
+  data.table::fwrite(
+    data.table::data.table(id = "SRR002", adapter = "passed", barcode_detected = TRUE, barcode5p_size = 6),
+    file.path(bam_dir, "trim", "adapter_barcode_table.csv"))
+  testthat::local_mocked_bindings(
+    read.experiment = function(exp, ...) stub,
+    bam_dir_from_df = function(df) bam_dir
+  )
+  fake_mark_all_done(config, names(config$flag), "PRJNA000001-homo_sapiens")
+
+  apply_trim_fix_to_sample("PRJNA000001-homo_sapiens", "SRR001", config,
+                           barcode5p_size = 5, barcode3p_size = 2, note = "partial table")
+
+  rebuilt <- data.table::rbindlist(sample_flag_values(config, "trim", "PRJNA000001-homo_sapiens"), fill = TRUE)
+  expect_setequal(rebuilt$id, c("SRR002", "SRR003"))
+  expect_equal(rebuilt[id == "SRR002"]$barcode5p_size, 6)
+  expect_true(is.na(rebuilt[id == "SRR003"]$barcode5p_size))
+})
