@@ -289,11 +289,13 @@ pipeline_align <- function(pipeline, config, pipelines = list(pipeline)) {
   }
 }
 
+#' Post-alignment checks/cleanup for one pipeline_align() call
 #' @param pairs the resolved input files (one list element per sample
 #' just processed by this call) -- used ONLY to know exactly which
 #' input files are safe to delete below, never the whole directory. A
 #' sibling's own input file, already deleted after ITS OWN earlier,
 #' separate pipeline_align() call, must never be touched again here.
+#' @noRd
 alignment_final_checks <- function(input_dir, output_dir, runs, pairs, config, steps) {
   cleanup_script <- system.file("STAR_Aligner", "cleanup_folders.sh",
                                 package = "ORFik")
@@ -499,6 +501,18 @@ pipeline_create_experiment <- function(pipeline, config) {
         metadata_clean <- cleanup_metadata_for_exp(study)
         bam_dir <- fs::path(conf["bam"], "aligned")
         bam_files <- match_bam_to_metadata(bam_dir, study, metadata_clean$paired_end)
+        # ORFik::create.experiment()'s own `if (author != "")` check
+        # errors ("missing value where TRUE/FALSE needed") on a literal
+        # NA, not just an empty string -- confirmed live,
+        # PRJEB50305-saccharomyces_cerevisiae, 2026-10-06: AUTHOR was
+        # genuinely NA for every sample in that study's metadata at run
+        # time (a real metadata gap, not something this call can fix),
+        # and unique(study$AUTHOR) passed that NA straight through.
+        # Collapse to the safe, already-expected "no author" value
+        # instead, and tolerate more than one distinct author too
+        # (create.experiment() expects a single scalar).
+        author_value <- unique(study$AUTHOR[!is.na(study$AUTHOR) & study$AUTHOR != ""])
+        author_value <- if (length(author_value) == 0) "" else paste(author_value, collapse = "; ")
         ORFik::create.experiment(
             dir = bam_dir,
             exper = experiment, txdb = paste0(annotation["gtf"], ".db"),
@@ -508,7 +522,7 @@ pipeline_create_experiment <- function(pipeline, config) {
             condition = metadata_clean$condition,
             fraction = metadata_clean$fraction,
             pairedEndBam = metadata_clean$paired_end,
-            author = unique(study$AUTHOR),
+            author = author_value,
             files = bam_files, runIDs = study$Run
         )
         df <- ORFik::read.experiment(experiment,
