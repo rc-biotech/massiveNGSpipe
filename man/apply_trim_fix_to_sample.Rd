@@ -59,4 +59,17 @@ investigation this session). Stages with no per-sample tracking
 finer granularity to use and necessarily redo the whole study, since
 they build one object across every sample at once -- this is
 expected, not a bug in this function.
+
+Before clearing anything, this also backfills a sibling marker for
+every OTHER sample in the experiment that doesn't already have one,
+for any per-sample step whose experiment-level flag is currently
+TRUE. This matters for any study processed before the per-sample-
+resume feature existed: such a study has an experiment-level "done"
+flag but no per-sample markers at all, for any sample -- without the
+backfill, \code{samples_done()} would read as empty for every
+sibling too, and \code{pipeline_trim()}/\code{pipeline_collapse()}
+would try to reprocess the whole study again, which for trim means
+re-resolving already-deleted raw files for the untouched siblings
+and erroring immediately (confirmed live, 2026-10-05,
+PRJNA926112-homo_sapiens).
 }

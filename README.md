@@ -537,6 +537,65 @@ If you only have an adapter correction (no barcode-size correction), pass
 just `adapter = "..."` and leave the barcode arguments out -- the two
 corrections are independent, and either (or both) can be given.
 
+### Automating the redetect/fix/rerun cycle (`R/ai_trim_fix_workflow.R`)
+
+Fixing one sample by hand is: find a candidate, force-redetect its real
+adapter/barcode parameters, sanity-check that result against its siblings'
+own `adapter_barcode_table.csv` (not just a study-wide summary number -- a
+study can mix several different barcode sizes across sub-batches), apply
+the fix, rerun the pipeline for just that study, and confirm no sibling's
+own files changed. Doing each step by hand, one at a time, is slow and
+easy to get wrong in exactly the ways this package's own history shows
+(see the fixes to `pipeline_trim()`/`pipeline_collapse()`/`pipeline_align()`/
+`pipeline_cleanup()` for the real bugs this surfaced). The functions below
+collapse that into fewer calls, and are what an automated/AI-driven fix
+session should use instead of reimplementing each step from scratch.
+
+- **`barcode_fix_candidates(config, outliers_per_sample_path)`** -- ranks
+  candidates by sibling-majority confidence (what fraction of a study's
+  other samples DID detect a barcode), automatically excluding any sample
+  already present in `manual_trim_fix_log.csv` (so a sample already fixed,
+  or already investigated and intentionally declined, is never
+  re-suggested), anything currently being processed by something else
+  (`sample_currently_processing()`), and optionally anything touched more
+  recently than `min_days_untouched` days (`last_real_touch()`, which
+  already excludes this package's own diagnostic-only file writes --
+  read-length distributions, reshift markers, summary-statistics CSVs --
+  from counting as a "touch").
+- **`redetect_barcode_for_sample(exp, run, config)`** -- the actual
+  `barcode_detector_single(..., check_at_mean_size = 0,
+  redownload_raw_if_needed = TRUE)` call, wrapped. Still just evidence: read
+  the result's consensus strings against the sample's own siblings before
+  deciding it's correct, exactly as the manual workflow above does.
+- **`apply_trim_fix_and_rerun(exp, run, config, barcode5p_size =,
+  barcode3p_size =, adapter =, note =)`** -- the big one: refuses to run if
+  `sample_currently_processing(exp)` is TRUE, calls
+  `apply_trim_fix_to_sample()`, builds a config/pipelines pair scoped to
+  ONLY this study's accession, calls `run_pipeline()`, and then compares
+  every OTHER sample's own files' modification times from before to after
+  -- any change there means something touched a sibling it shouldn't have,
+  and is treated as a failure even if every flag came back done. Writes its
+  result to `<config$project>/ai_fix_status/<exp>.rds` (and returns it), so
+  checking back later is one cheap `readRDS()` instead of re-deriving flags
+  or tailing a multi-hundred-line pipeline log.
+
+```r
+library(massiveNGSpipe)
+config <- pipeline_config()
+outliers_path <- "~/livemount/shared_scripts/massiveNGSpipe_scripts/aa_fix_scripts/barcode_adapter_outliers_per_sample.csv"
+
+candidates <- barcode_fix_candidates(config, outliers_path, min_majority_frac = 0.5)
+ev <- redetect_barcode_for_sample(candidates$exp[1], candidates$run[1], config)
+# ... inspect ev against the sibling table yourself before trusting it ...
+
+result <- apply_trim_fix_and_rerun(candidates$exp[1], candidates$run[1], config,
+                                   barcode5p_size = ev$barcode5p_size,
+                                   barcode3p_size = ev$barcode3p_size,
+                                   note = "redetected, confirmed against siblings")
+result$success           # TRUE only if every flag is done AND no sibling file changed
+result$touched_sibling_files  # should be character(0)
+```
+
 ### Tempdrive optimization for .sra -> .fastq extraction
 
 During download of .sra files, the extraction to .fastq is very hard drive intensive, we therefor implemented a tempdrive system to only run this step on the tempdrive (which is usually a scratch ssd on servers, i.e. much faster I/O).

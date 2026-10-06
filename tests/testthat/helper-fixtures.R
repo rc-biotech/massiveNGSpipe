@@ -50,6 +50,8 @@ fake_config <- function(project = tempfile("mNGSp_test_"), preset = "RNA-seq",
     flag_steps = flag_steps,
     config = c(ref = file.path(project, "ref"), bam = file.path(project, "bam"),
               fastq = file.path(project, "fastq"), exp = file.path(project, "exp")),
+    # Matches pipeline_config()'s own default (file.path(project_dir, "FINAL_LIST.csv")).
+    complete_metadata = file.path(project, "FINAL_LIST.csv"),
     session_dir = session_dir,
     error_dir = NULL,
     discord_webhook = NULL,
