@@ -64,6 +64,26 @@ test_that("sibling_file_snapshot() returns empty for no siblings, without touchi
   expect_length(sibling_file_snapshot("/nonexistent", character()), 0)
 })
 
+test_that("sibling_file_snapshot() excludes pshifted/ and QC_STATS/ files -- pshift/pcounts legitimately rewrite these for every sample on every run", {
+  # Confirmed live, PRJNA1071171-homo_sapiens, 2026-10-06: a correct,
+  # successful single-sample fix regenerates every sibling's own
+  # pshifted/*_pshifted.ofst and QC_STATS/ files too (pshift/pcounts
+  # have no per-sample resume) -- including these in the integrity
+  # check would flag every real fix as a false-positive failure.
+  bam_dir <- tempfile("bam_")
+  dir.create(file.path(bam_dir, "pshifted"), recursive = TRUE)
+  dir.create(file.path(bam_dir, "QC_STATS"), recursive = TRUE)
+  dir.create(file.path(bam_dir, "ofst"), recursive = TRUE)
+  writeLines("x", file.path(bam_dir, "pshifted", "SRR002_pshifted.ofst"))
+  writeLines("x", file.path(bam_dir, "QC_STATS", "Ribo_frames_all.csv"))
+  real_sibling_file <- file.path(bam_dir, "ofst", "SRR002.ofst")
+  writeLines("x", real_sibling_file)
+
+  snap <- sibling_file_snapshot(bam_dir, "SRR002")
+
+  expect_identical(names(snap), real_sibling_file)
+})
+
 test_that("barcode_fix_candidates() excludes samples already present in manual_trim_fix_log.csv", {
   config <- fake_config()
   outliers <- data.table::data.table(
