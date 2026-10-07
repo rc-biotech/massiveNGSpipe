@@ -6,6 +6,33 @@
 # this suite: tests here use a mock convert_fun (for convert_per_sample())
 # or mock convert_per_sample() itself (for the three wrappers), never real
 # bam/genomic files.
+#
+# convert_per_sample() dispatches via BiocParallel::bplapply() rather
+# than a serial for loop (confirmed live, GSE151959-homo_sapiens,
+# 2026-10-07: bigwig conversion alone took ~7.5 minutes for 25 samples
+# done one at a time). fake_config()'s own default thread_type is
+# SerialParam -- bplapply(..., BPPARAM = SerialParam()) runs in-process,
+# sequentially, so every existing test above still works unchanged
+# (same <<- side-effect visibility a real for loop would have); the
+# test below locks in that a caller-supplied BPPARAM is actually passed
+# through to bplapply(), which is the new behavior.
+
+test_that("convert_per_sample() passes its BPPARAM through to BiocParallel::bplapply()", {
+  config <- fake_config()
+  stub <- fake_experiment_stub(run_ids = c("SRR001", "SRR002"))
+  convert_fun <- function(x) invisible(NULL)
+  custom_bpparam <- BiocParallel::SerialParam(stop.on.error = FALSE) # distinguishable from the default
+
+  seen_bpparam <- NULL
+  testthat::local_mocked_bindings(
+    bplapply = function(X, FUN, ..., BPPARAM) { seen_bpparam <<- BPPARAM; lapply(X, FUN, ...) },
+    .package = "BiocParallel"
+  )
+
+  convert_per_sample(stub, config, "ofst", convert_fun, BPPARAM = custom_bpparam)
+
+  expect_identical(seen_bpparam, custom_bpparam)
+})
 
 test_that("convert_per_sample() calls convert_fun once per row and records a flag for each", {
   config <- fake_config()

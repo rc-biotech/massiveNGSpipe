@@ -120,22 +120,63 @@ fake_mark_all_done <- function(config, steps, experiment) {
 #' real ORFik experiment (needs real bam/reference files) just to test
 #' massiveNGSpipe's own per-sample resume orchestration.
 methods::setClass("fake_exp_stub", representation(name = "character", run_ids = "character",
-                                                   unique_mappers = "logical"),
-                  prototype(unique_mappers = FALSE))
+                                                   unique_mappers = "logical", base_dir = "character"),
+                  prototype(unique_mappers = FALSE, base_dir = NA_character_))
 methods::setMethod("name", "fake_exp_stub", function(x) x@name)
 methods::setMethod("runIDs", "fake_exp_stub", function(x) x@run_ids)
 methods::setMethod("[", "fake_exp_stub", function(x, i, ...) {
   methods::new("fake_exp_stub", name = x@name, run_ids = x@run_ids[i],
-              unique_mappers = x@unique_mappers)
+              unique_mappers = x@unique_mappers, base_dir = x@base_dir)
 })
 methods::setMethod("uniqueMappers<-", "fake_exp_stub", function(x, value) {
   x@unique_mappers <- value
   x
 })
+methods::setMethod("uniqueMappers", "fake_exp_stub", function(x) x@unique_mappers)
+methods::setMethod("nrow", "fake_exp_stub", function(x) length(x@run_ids))
+# QCfolder(): a real S4 generic in ORFik (setGeneric("QCfolder", ...)),
+# so setMethod() for the new class works normally. filepath() is
+# deliberately NOT given a setMethod() here -- it's a plain function in
+# ORFik (`filepath <- function(df, type, ...)`), not an S4 generic, and
+# internally does `stopifnot(is(df, "experiment"))`, so it can never
+# dispatch on fake_exp_stub no matter what method is registered (confirmed
+# live: methods:: silently promotes it to an implicit generic using ITS
+# OWN formals as the signature, which then fails to match a setMethod()
+# written with different argument names). Code under test must call
+# filepath() through massiveNGSpipe's own pshifted_filepath() wrapper
+# (R/shift_qc_cache.R) instead, which tests mock directly via
+# testthat::local_mocked_bindings() -- see fake_qc_stub_pshifted_path()
+# below.
+methods::setMethod("QCfolder", "fake_exp_stub", function(x) {
+  stopifnot(!is.na(x@base_dir))
+  file.path(x@base_dir, "QC_STATS")
+})
+methods::setMethod("resFolder", "fake_exp_stub", function(x) {
+  stopifnot(!is.na(x@base_dir))
+  file.path(x@base_dir, "aligned")
+})
+
+#' Deterministic pshifted-file path for a fake_exp_stub sample, used by
+#' tests to mock massiveNGSpipe's pshifted_filepath() wrapper (see note
+#' above) -- real, auto-created (empty) per-run files under
+#' \code{x@base_dir}, so mtime-based freshness checks
+#' (e.g. R/shift_qc_cache.R's shift_qc_cache_valid()) have a real file
+#' to stat().
+#' @param x a fake_exp_stub (one or more rows)
+#' @return character vector, one path per row of \code{x}
+fake_qc_stub_pshifted_path <- function(x) {
+  stopifnot(!is.na(x@base_dir))
+  subdir <- if (isTRUE(x@unique_mappers)) "pshifted_unique" else "pshifted"
+  paths <- file.path(x@base_dir, subdir, paste0(x@run_ids, "_pshifted.ofst"))
+  for (d in unique(dirname(paths))) dir.create(d, showWarnings = FALSE, recursive = TRUE)
+  for (p in paths) if (!file.exists(p)) file.create(p)
+  paths
+}
 
 fake_experiment_stub <- function(run_ids = c("SRR001", "SRR002", "SRR003"),
-                                 exp_name = "PRJNA000001-homo_sapiens") {
-  methods::new("fake_exp_stub", name = exp_name, run_ids = run_ids)
+                                 exp_name = "PRJNA000001-homo_sapiens",
+                                 base_dir = NA_character_) {
+  methods::new("fake_exp_stub", name = exp_name, run_ids = run_ids, base_dir = base_dir)
 }
 
 #' Synthetic Ribo-seq-like fastq data with a fixed 5'/3' barcode and a

@@ -568,6 +568,19 @@ pipeline_create_experiment <- function(pipeline, config) {
 #' build one \code{SummarizedExperiment} -- neither has a safe per-sample
 #' subset-and-resume equivalent the way a plain per-file conversion loop
 #' does.
+#'
+#' Dispatches across not-yet-done samples via \code{BPPARAM} rather than
+#' a serial \code{for} loop -- each \code{convert_fun()} call is
+#' independent (its own file in, its own file out), so there was no
+#' reason this needed to be serial. Confirmed live, GSE151959-homo_sapiens,
+#' 2026-10-07: bigwig conversion alone took ~7.5 minutes for 25 samples
+#' run one at a time (~15-18s each); this and the other two conversions
+#' (ofst, covrle) all shared the exact same unnecessary serial pattern.
+#' \code{config$threads} has no per-step entry for "ofst"/"covrle"/
+#' "bigwig" (only trim/collapse/pshifted/valid_pshift/pcounts are
+#' defined there) -- uses \code{config$threads$default} (the full
+#' configured worker count), same as any other step without its own
+#' dedicated, narrower thread budget.
 #' @param df an ORFik experiment, already at the correct
 #' \code{uniqueMappers()} setting for this pass (see \code{step_id})
 #' @param config the mNGSp config object
@@ -579,16 +592,20 @@ pipeline_create_experiment <- function(pipeline, config) {
 #' \code{convert_bam_to_ofst()}/\code{convert_to_covRleList()}/
 #' \code{convert_to_bigWig()} (the last one wrapped to also supply its
 #' \code{in_files} argument per-row)
+#' @param BPPARAM BiocParallel param, default \code{bpparam_from_config(config, "default")}
 #' @return invisible(NULL)
 #' @noRd
-convert_per_sample <- function(df, config, step_id, convert_fun) {
+convert_per_sample <- function(df, config, step_id, convert_fun,
+                               BPPARAM = bpparam_from_config(config, "default")) {
   experiment <- name(df)
   run_ids <- runIDs(df)
   done <- samples_done(config, step_id, experiment)
-  for (i in which(!(run_ids %in% done))) {
+  idx <- which(!(run_ids %in% done))
+  BiocParallel::bplapply(idx, function(i, df, convert_fun, config, step_id, experiment, run_ids) {
     convert_fun(df[i, ])
     set_sample_flag(config, step_id, experiment, run_ids[i])
-  }
+  }, df = df, convert_fun = convert_fun, config = config, step_id = step_id,
+     experiment = experiment, run_ids = run_ids, BPPARAM = BPPARAM)
   invisible(NULL)
 }
 
@@ -726,10 +743,10 @@ pipeline_validate_shifts <- function(df_list, config) {
     if (!step_is_next_not_done(config, "valid_pshift", name(df))) next
     BPPARAM <- bpparam_from_config(config, "valid_pshift")
     if (config$all_mappers)
-      shift_qc(df, BPPARAM, config$max_no_adapter_removed_pct)
+      shift_qc_cached(df, BPPARAM, config$max_no_adapter_removed_pct)
     if (config$split_unique_mappers) {
       uniqueMappers(df) <- TRUE
-      shift_qc(df, BPPARAM, config$max_no_adapter_removed_pct)
+      shift_qc_cached(df, BPPARAM, config$max_no_adapter_removed_pct)
     }
     set_flag(config, "valid_pshift", name(df))
   }
