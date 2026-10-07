@@ -248,24 +248,40 @@ cleanup_and_validate_fastq_download <- function(accession, outdir, PAIRED_END,
 validate_fastq_download <- function(filenames, accession, PAIRED_END, is_compressed = FALSE,
                                     outdir, suffix = ".fastq", compression_format = ".gz") {
 
+  # Both cleanup passes below used to check only the bare accession name
+  # (accession.fastq / accession.fastq.gz) -- for a PAIRED-END download
+  # the real files are accession_1.* / accession_2.*, so this
+  # duplicate-compression cleanup never ran for paired-end at all. A
+  # paired-end download left with both a stray compressed AND
+  # uncompressed copy of each read (a real, reproducible leftover from
+  # a retried/interrupted download, confirmed live,
+  # PRJNA673613/SRR12958771, 2026-10-06) fell through to the final
+  # "invalid filenames" branch below and got deleted outright,
+  # discarding an otherwise fully successful download. Loop over both
+  # expected base names for paired-end instead of just the one.
+  expected_bases <- if (PAIRED_END) paste0(accession, c("_1", "_2")) else accession
   if (is_compressed) {
     suffix_old <- suffix
-    non_compressed_version <- paste0(accession, suffix_old)
-    if (non_compressed_version %in% filenames) {
-      warning("Non compressed version of ", suffix, " found in directory,
-              deleting noncompressed version!")
-      file.remove(file.path(outdir, non_compressed_version))
-      filenames <- filenames[!(filenames %in% non_compressed_version)]
+    for (base in expected_bases) {
+      non_compressed_version <- paste0(base, suffix_old)
+      if (non_compressed_version %in% filenames) {
+        warning("Non compressed version of ", suffix, " found in directory,
+                deleting noncompressed version!")
+        file.remove(file.path(outdir, non_compressed_version))
+        filenames <- filenames[!(filenames %in% non_compressed_version)]
+      }
     }
     suffix <- paste0(suffix, compression_format)
   } else {
     suffix_old <- paste0(suffix, compression_format)
-    compressed_version <- paste0(accession, suffix_old)
-    if (compressed_version %in% filenames) {
-      warning("Compressed version of ", suffix, " found in directory,
-              deleting compressed version!")
-      file.remove(file.path(outdir, compressed_version))
-      filenames <- filenames[!(filenames %in% compressed_version)]
+    for (base in expected_bases) {
+      compressed_version <- paste0(base, suffix_old)
+      if (compressed_version %in% filenames) {
+        warning("Compressed version of ", suffix, " found in directory,
+                deleting compressed version!")
+        file.remove(file.path(outdir, compressed_version))
+        filenames <- filenames[!(filenames %in% compressed_version)]
+      }
     }
   }
   # The old fastq-dump fallback (used when both the AWS/SRA-toolkit path

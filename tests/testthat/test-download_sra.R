@@ -139,6 +139,31 @@ test_that("validate_fastq_download: deletes a wrong-compression duplicate with a
   expect_identical(result, "SRR001.fastq.gz")
 })
 
+test_that("validate_fastq_download: deletes BOTH paired-end wrong-compression duplicates with a warning (not just the single-end bare name)", {
+  # Confirmed live, PRJNA673613-drosophila_melanogaster/SRR12958771,
+  # 2026-10-06: the duplicate-compression cleanup only ever checked the
+  # bare accession name, never the paired-end _1/_2 suffixed names, so
+  # a paired-end download left with stray duplicate compressed +
+  # uncompressed copies of each read fell through to the final
+  # "invalid filenames" branch and got deleted outright, discarding an
+  # otherwise fully successful download.
+  d <- tempfile(); dir.create(d)
+  file.create(file.path(d, "SRR001_1.fastq"))
+  file.create(file.path(d, "SRR001_2.fastq"))
+  expect_warning(
+    expect_warning(
+      result <- validate_fastq_download(
+        c("SRR001_1.fastq.gz", "SRR001_1.fastq", "SRR001_2.fastq.gz", "SRR001_2.fastq"),
+        "SRR001", PAIRED_END = TRUE, is_compressed = TRUE, outdir = d),
+      "Non compressed version"
+    ),
+    "Non compressed version"
+  )
+  expect_false(file.exists(file.path(d, "SRR001_1.fastq")))
+  expect_false(file.exists(file.path(d, "SRR001_2.fastq")))
+  expect_setequal(result, c("SRR001_1.fastq.gz", "SRR001_2.fastq.gz"))
+})
+
 test_that("validate_fastq_download: totally unrecognized filenames get deleted and it stops", {
   d <- tempfile(); dir.create(d)
   file.create(file.path(d, "SRR001_weird_name.fastq"))
