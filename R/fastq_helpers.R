@@ -785,7 +785,15 @@ resolve_adapter_for_trim <- function(file, process_dir,
   is_fastq <- !grepl("\\.fasta$|\\.fasta\\.gz$", file)
   polyN_adapter <- FALSE
   if (is_fastq) {
-    polyN_adapter <- !is(adapter, "try-error") && identical(adapter, "NNNNNNNNNN")
+    # unname(): fastqc_adapters_info() tags its returned adapter with a
+    # names() attribute (e.g. c(polyN = "NNNNNNNNNN"), the matched
+    # candidate's name) -- identical() treats that as unequal to the
+    # plain "NNNNNNNNNN" literal even when the value matches, which
+    # skipped this branch entirely and let a literal "NNNNNNNNNN" reach
+    # fastp's --adapter_sequence (fastp then aborts: "the adapter
+    # <adapter_sequence> can only have bases in {A, T, C, G}"). Confirmed
+    # live, PRJNA659894-plasmodium_falciparum/SRR12538978, 2026-10-07.
+    polyN_adapter <- !is(adapter, "try-error") && identical(unname(adapter), "NNNNNNNNNN")
     if (is(adapter, "try-error")) {
       message("This is a fasta file, fastqc adapter detection disabled")
       adapter <- "disable"

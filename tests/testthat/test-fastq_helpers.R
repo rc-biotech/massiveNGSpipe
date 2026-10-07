@@ -386,3 +386,36 @@ test_that("resolve_adapter_for_trim() strips a polyN tail and switches to a fixe
   expect_true(all(Biostrings::width(ShortRead::sread(stripped)) == 32))
   file.remove(result$tempfile)
 })
+
+test_that("resolve_adapter_for_trim() still detects polyN when the adapter carries fastqc_adapters_info()'s own names() attribute", {
+  # fastqc_adapters_info() returns its matched candidate's VALUE with a
+  # names() attribute set to the candidate's NAME (R/fastq_helpers.R:
+  # `names(found_adapter) <- candidates[name %in% adapter_name]$name`) --
+  # e.g. c(polyN = "NNNNNNNNNN"), not a plain "NNNNNNNNNN". Before this
+  # fix, identical(adapter, "NNNNNNNNNN") compared a named vector against
+  # an unnamed literal and was always FALSE, so this branch never fired
+  # for a real, non-manually-constructed call: the raw "NNNNNNNNNN" was
+  # passed straight through as --adapter_sequence, which fastp rejects
+  # ("the adapter <adapter_sequence> can only have bases in {A, T, C, G}",
+  # exit 255). Confirmed live, PRJNA659894-plasmodium_falciparum/
+  # SRR12538978, 2026-10-07.
+  reads <- Biostrings::DNAStringSet(c(
+    "ACGTACGTACGTACGTACGTACGTACGTACGTNNNNNNNN",
+    "TTTTGGGGCCCCAAAATTTTGGGGCCCCAAAANNNNNNNN"
+  ))
+  quals <- Biostrings::BStringSet(rep(strrep("I", Biostrings::width(reads)[1]), length(reads)))
+  fq <- ShortRead::ShortReadQ(sread = reads, quality = ShortRead::FastqQuality(quals),
+                              id = Biostrings::BStringSet(paste0("read", seq_along(reads))))
+  raw_dir <- file.path(tempdir(), "resolve_adapter_polyN_named_test")
+  dir.create(raw_dir, showWarnings = FALSE)
+  raw_file <- file.path(raw_dir, "raw.fastq")
+  ShortRead::writeFastq(fq, raw_file, compress = FALSE)
+
+  named_adapter <- c(polyN = "NNNNNNNNNN")
+  invisible(capture.output(suppressMessages(
+    result <- resolve_adapter_for_trim(raw_file, tempdir(), adapter = named_adapter)
+  )))
+  expect_identical(result$adapter, "AGATCGGAAGAG")
+  expect_true(result$polyN_adapter)
+  file.remove(result$tempfile)
+})
