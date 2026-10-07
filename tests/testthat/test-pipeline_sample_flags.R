@@ -36,6 +36,24 @@ test_that("sample_flag_values reads back every marker, old and new alike", {
   expect_identical(sort(combined$x), c(1, 2))
 })
 
+test_that("sample_flag_values names its result by run id", {
+  # A caller needs to know WHICH run a marker belongs to in order to
+  # look up that run's own row elsewhere (e.g. pipeline_trim()'s
+  # adapter_barcode_table.csv reconstruction falling back to an
+  # existing on-disk row for a legacy plain-TRUE marker) -- confirmed
+  # live, 2026-10-07: this used to return an unnamed list, silently
+  # breaking exactly that kind of lookup.
+  config <- fake_config()
+  exp <- "study1-organism"
+  set_sample_flag(config, "trim", exp, "SRR001", value = data.table::data.table(x = 1))
+  set_sample_flag(config, "trim", exp, "SRR002", value = data.table::data.table(x = 2))
+
+  values <- sample_flag_values(config, "trim", exp)
+
+  expect_setequal(names(values), c("SRR001", "SRR002"))
+  expect_identical(values[["SRR002"]]$x, 2)
+})
+
 test_that("reset_sample_flags clears markers for one experiment only", {
   config <- fake_config()
   set_sample_flag(config, "aligned", "exp1", "SRR001")

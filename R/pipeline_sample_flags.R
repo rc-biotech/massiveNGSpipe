@@ -103,11 +103,13 @@ samples_done <- function(config, step_id, experiment) {
 #' some markers were written in an earlier, interrupted attempt, others
 #' just now, and this reads all of them uniformly.
 #' @inheritParams sample_flag_dir
-#' @return list of stored marker values, \code{list()} if the marker
-#' directory doesn't exist yet
+#' @return list of stored marker values, named by run id (the marker
+#' filename without its \code{.rds} extension), \code{list()} if the
+#' marker directory doesn't exist yet
 #' @noRd
 sample_flag_values <- function(config, step_id, experiment) {
   d <- sample_flag_dir(config, step_id, experiment)
   if (!dir.exists(d)) return(list())
-  lapply(list.files(d, pattern = "\\.rds$", full.names = TRUE), readRDS)
+  files <- list.files(d, pattern = "\\.rds$", full.names = TRUE)
+  stats::setNames(lapply(files, readRDS), sub("\\.rds$", "", basename(files)))
 }

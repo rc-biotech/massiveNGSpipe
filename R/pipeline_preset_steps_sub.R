@@ -160,14 +160,40 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
         # 20 markers) -- rbindlist() errors ("Item N of input is not a
         # data.frame...") on any such entry, not just ones this package's
         # own backfill writes (already fixed there separately, see
-        # apply_trim_fix_to_sample()). Coerce any non-data.frame marker to
-        # an empty row here too, so one old marker can never block the
-        # whole study's trim step from ever completing again -- that row's
-        # real detection detail is already unrecoverable either way; an
-        # empty row (dropped by fill = TRUE) is the honest result, not a
-        # crash.
+        # apply_trim_fix_to_sample()).
+        #
+        # A plain TRUE marker must NOT simply be dropped here (an earlier
+        # version of this fix did exactly that, reasoning the row's real
+        # detection detail was unrecoverable either way) -- this table is
+        # read back by later code as a "what's already been
+        # detected/trimmed" cache, so silently dropping a sample's row
+        # makes it look never-processed and triggers a wasteful full
+        # redo for it next time. Confirmed live, 2026-10-07,
+        # PRJNA637713-zea_mays (296 samples) and
+        # PRJEB36473-schizosaccharomyces_pombe (12 samples): after a
+        # single-sample fix, the rebuilt table had ONLY that one sample's
+        # row -- every other (legacy-marker) sibling's row vanished from
+        # the file entirely. The real per-sample detail for a legacy
+        # TRUE marker genuinely isn't recoverable from the marker alone,
+        # but it typically still exists in THIS table from before this
+        # rebuild overwrites it (the table was written wholesale by
+        # older code, predating per-sample markers) -- reuse it from
+        # there, matching apply_trim_fix_to_sample()'s own backfill
+        # logic exactly. Only synthesize an id-only placeholder row (not
+        # drop the sample) when no prior row exists anywhere.
         trim_marker_values <- sample_flag_values(config, "trim", experiment)
-        trim_marker_values <- lapply(trim_marker_values, function(v) if (is.data.frame(v)) v else data.table())
+        existing_table_path <- file.path(trimmed_dir, "adapter_barcode_table.csv")
+        existing_table <- if (file.exists(existing_table_path)) {
+          tryCatch(fread(existing_table_path), error = function(e) NULL)
+        } else NULL
+        trim_marker_values <- stats::setNames(
+          lapply(names(trim_marker_values), function(run) {
+            v <- trim_marker_values[[run]]
+            if (is.data.frame(v)) return(v)
+            if (!is.null(existing_table) && run %in% existing_table$id)
+              return(existing_table[id == run])
+            data.table(id = run)
+          }), names(trim_marker_values))
         barcodes_dt <- rbindlist(trim_marker_values, fill = TRUE)
         fwrite(barcodes_dt, file.path(trimmed_dir, "adapter_barcode_table.csv"))
 

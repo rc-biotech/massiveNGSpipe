@@ -10,7 +10,7 @@
 # and fixed on PRJNA926112-homo_sapiens, 2026-10-05/06; these tests lock
 # that fix in so it can't silently regress.
 
-test_that("pipeline_trim() reconstructs adapter_barcode_table.csv even when an old on-disk marker predates the data.table convention (plain TRUE, not a row)", {
+test_that("pipeline_trim() reconstructs adapter_barcode_table.csv even when an old on-disk marker predates the data.table convention (plain TRUE, not a row), WITHOUT dropping that sample's row", {
   # Confirmed live, PRJNA750456-mus_musculus, 2026-10-06: 2 of 20
   # "trim" per-sample markers were plain TRUE (from some older backfill
   # pass predating this reconstruction existing at all), crashing
@@ -18,6 +18,20 @@ test_that("pipeline_trim() reconstructs adapter_barcode_table.csv even when an o
   # completely ordinary, non-backfill pipeline_trim() call tried to
   # rebuild the table -- not specific to this package's own backfill
   # path, which was already hardened separately.
+  #
+  # An earlier version of this fix (and this very test) handled that
+  # crash by simply dropping any non-data.frame marker from the
+  # rebuild -- which "fixed" the crash by silently corrupting the
+  # table instead: this table is read elsewhere as a cache of
+  # already-processed samples, so a missing row makes that sample look
+  # never-done and triggers a wasteful full redo. User-reported live,
+  # 2026-10-07, PRJNA637713-zea_mays (296 samples) and
+  # PRJEB36473-schizosaccharomyces_pombe (12 samples): after a
+  # single-sample fix+rerun, the rebuilt table had ONLY that one
+  # sample's row. Fixed properly: a legacy TRUE marker with no prior
+  # on-disk row now gets an id-only placeholder row instead of being
+  # dropped (see the next test for the case where a prior row DOES
+  # exist and must be reused instead of flattened to an id-only row).
   config <- fake_config(preset = "Ribo-seq")
   bam_dir <- tempfile("bam_")
   pipelines <- fake_pipelines(
@@ -30,14 +44,55 @@ test_that("pipeline_trim() reconstructs adapter_barcode_table.csv even when an o
   # SRR001: a proper row (as pipeline_trim() itself would have written).
   set_sample_flag(config, "trim", exp_name, "SRR001",
                   value = data.table::data.table(id = "SRR001", barcode5p_size = 5))
-  # SRR002: an old-style malformed marker.
+  # SRR002: an old-style malformed marker, with no prior on-disk row
+  # anywhere (no adapter_barcode_table.csv exists yet in this test).
   set_sample_flag(config, "trim", exp_name, "SRR002", value = TRUE)
 
   pipeline_trim(pipelines[["PRJNA000001"]], config)
 
   result <- data.table::fread(file.path(bam_dir, "trim", "adapter_barcode_table.csv"))
-  expect_identical(result$id, "SRR001")
+  expect_setequal(result$id, c("SRR001", "SRR002"))
+  expect_identical(result[id == "SRR001"]$barcode5p_size, 5L)
   expect_true(step_is_done(config, "trim", exp_name))
+})
+
+test_that("pipeline_trim() reuses a legacy-marker sample's PRIOR row from the existing on-disk table, instead of flattening it to an id-only placeholder", {
+  # The common real-world case: a study's adapter_barcode_table.csv was
+  # originally written wholesale by older code (predating per-sample
+  # markers existing at all), so every sibling's real detection detail
+  # already lives in that file even though its own per-sample marker
+  # is just a legacy TRUE. Losing that detail on a resumed/fixed run
+  # would be a regression in its own right, even once the "row goes
+  # missing entirely" bug above is fixed.
+  config <- fake_config(preset = "Ribo-seq")
+  bam_dir <- tempfile("bam_")
+  pipelines <- fake_pipelines(
+    bam_dir = bam_dir,
+    runs = data.table::data.table(Run = c("SRR001", "SRR002"), LibraryLayout = "SINGLE",
+                                  LIBRARYTYPE = "RFP", ScientificName = "Homo sapiens")
+  )
+  exp_name <- "PRJNA000001-homo_sapiens"
+  trim_dir <- file.path(bam_dir, "trim")
+  dir.create(trim_dir, recursive = TRUE)
+  # Pre-existing table, as if written wholesale by older code, with
+  # SRR002's real historical detection detail.
+  data.table::fwrite(
+    data.table::data.table(id = c("SRR001", "SRR002"), barcode5p_size = c(5, 7)),
+    file.path(trim_dir, "adapter_barcode_table.csv")
+  )
+  # SRR001 is being freshly fixed/reprocessed this run (new row).
+  set_sample_flag(config, "trim", exp_name, "SRR001",
+                  value = data.table::data.table(id = "SRR001", barcode5p_size = 99))
+  # SRR002 is untouched this run -- only a legacy TRUE marker exists
+  # for it, but its real row is sitting in the existing table above.
+  set_sample_flag(config, "trim", exp_name, "SRR002", value = TRUE)
+
+  pipeline_trim(pipelines[["PRJNA000001"]], config)
+
+  result <- data.table::fread(file.path(trim_dir, "adapter_barcode_table.csv"))
+  expect_setequal(result$id, c("SRR001", "SRR002"))
+  expect_identical(result[id == "SRR001"]$barcode5p_size, 99L) # freshly updated
+  expect_identical(result[id == "SRR002"]$barcode5p_size, 7L)  # reused from prior table, not dropped or placeholder-ed
 })
 
 test_that("pipeline_align() only resolves/aligns samples not yet marked done, and only deletes THEIR input files", {
