@@ -10,6 +10,36 @@
 # and fixed on PRJNA926112-homo_sapiens, 2026-10-05/06; these tests lock
 # that fix in so it can't silently regress.
 
+test_that("pipeline_trim() reconstructs adapter_barcode_table.csv even when an old on-disk marker predates the data.table convention (plain TRUE, not a row)", {
+  # Confirmed live, PRJNA750456-mus_musculus, 2026-10-06: 2 of 20
+  # "trim" per-sample markers were plain TRUE (from some older backfill
+  # pass predating this reconstruction existing at all), crashing
+  # rbindlist() ("Item N of input is not a data.frame...") the moment a
+  # completely ordinary, non-backfill pipeline_trim() call tried to
+  # rebuild the table -- not specific to this package's own backfill
+  # path, which was already hardened separately.
+  config <- fake_config(preset = "Ribo-seq")
+  bam_dir <- tempfile("bam_")
+  pipelines <- fake_pipelines(
+    bam_dir = bam_dir,
+    runs = data.table::data.table(Run = c("SRR001", "SRR002"), LibraryLayout = "SINGLE",
+                                  LIBRARYTYPE = "RFP", ScientificName = "Homo sapiens")
+  )
+  exp_name <- "PRJNA000001-homo_sapiens"
+  dir.create(file.path(bam_dir, "trim"), recursive = TRUE)
+  # SRR001: a proper row (as pipeline_trim() itself would have written).
+  set_sample_flag(config, "trim", exp_name, "SRR001",
+                  value = data.table::data.table(id = "SRR001", barcode5p_size = 5))
+  # SRR002: an old-style malformed marker.
+  set_sample_flag(config, "trim", exp_name, "SRR002", value = TRUE)
+
+  pipeline_trim(pipelines[["PRJNA000001"]], config)
+
+  result <- data.table::fread(file.path(bam_dir, "trim", "adapter_barcode_table.csv"))
+  expect_identical(result$id, "SRR001")
+  expect_true(step_is_done(config, "trim", exp_name))
+})
+
 test_that("pipeline_align() only resolves/aligns samples not yet marked done, and only deletes THEIR input files", {
   config <- fake_config(preset = "Ribo-seq", extra = list(delete_collapsed_files = TRUE))
   bam_dir <- tempfile("bam_")

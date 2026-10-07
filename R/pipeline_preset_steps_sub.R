@@ -154,7 +154,21 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
 
         # Reconstruct the full barcode table across both samples done in
         # this run and any completed in an earlier, interrupted attempt.
-        barcodes_dt <- rbindlist(sample_flag_values(config, "trim", experiment), fill = TRUE)
+        # A handful of on-disk "trim" markers predate this reconstruction
+        # existing at all and store plain TRUE rather than a barcode_dt
+        # row (confirmed live, PRJNA750456-mus_musculus, 2026-10-06: 2 of
+        # 20 markers) -- rbindlist() errors ("Item N of input is not a
+        # data.frame...") on any such entry, not just ones this package's
+        # own backfill writes (already fixed there separately, see
+        # apply_trim_fix_to_sample()). Coerce any non-data.frame marker to
+        # an empty row here too, so one old marker can never block the
+        # whole study's trim step from ever completing again -- that row's
+        # real detection detail is already unrecoverable either way; an
+        # empty row (dropped by fill = TRUE) is the honest result, not a
+        # crash.
+        trim_marker_values <- sample_flag_values(config, "trim", experiment)
+        trim_marker_values <- lapply(trim_marker_values, function(v) if (is.data.frame(v)) v else data.table())
+        barcodes_dt <- rbindlist(trim_marker_values, fill = TRUE)
         fwrite(barcodes_dt, file.path(trimmed_dir, "adapter_barcode_table.csv"))
 
         # Record-only P-shift-failure-cause signal (see
