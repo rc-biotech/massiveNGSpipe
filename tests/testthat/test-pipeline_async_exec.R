@@ -90,3 +90,69 @@ test_that("run_experiment_subprocess calls on_poll at least once for a function 
   )
   expect_gte(poll_env$n, 1)
 })
+
+test_that("is_install_race_error matches the confirmed-live massiveNGSpipe install-race messages, and no others", {
+  mk <- function(msg) tryCatch(stop(msg), error = function(e) e)
+  expect_true(is_install_race_error(mk(
+    "lazy-load database '/usr/local/lib/R/site-library/massiveNGSpipe/R/massiveNGSpipe.rdb' is corrupt")))
+  expect_true(is_install_race_error(mk(
+    "read failed on /usr/local/lib/R/site-library/massiveNGSpipe/R/massiveNGSpipe.rdb")))
+  expect_true(is_install_race_error(mk("there is no package called 'massiveNGSpipe'")))
+  # Scoped to massiveNGSpipe specifically -- a real lazy-load problem in a
+  # DIFFERENT package must not be silently retried/masked.
+  expect_false(is_install_race_error(mk(
+    "lazy-load database '/usr/local/lib/R/site-library/otherpkg/R/otherpkg.rdb' is corrupt")))
+  expect_false(is_install_race_error(mk("some unrelated real error")))
+})
+
+test_that("run_experiment_subprocess retries once on a matching install-race error, then returns the retry's result", {
+  # Confirmed live, 2026-10-07: PRJNA244941/PRJNA880902 both hit this
+  # exact error class within ~2 minutes of an unrelated massiveNGSpipe
+  # reinstall mid-run (see run_experiment_subprocess()'s own doc).
+  out <- tempfile(); err <- tempfile()
+  counter_file <- tempfile(); writeLines("0", counter_file)
+  result <- run_experiment_subprocess(
+    function(counter_file) {
+      n <- as.integer(readLines(counter_file)) + 1L
+      writeLines(as.character(n), counter_file)
+      if (n == 1L) stop("lazy-load database '/usr/local/lib/R/site-library/massiveNGSpipe/R/massiveNGSpipe.rdb' is corrupt")
+      42
+    },
+    args = list(counter_file = counter_file),
+    logfile_out = out, logfile_err = err, poll_interval = 0.1,
+    install_race_wait = 0.1
+  )
+  expect_identical(result, 42)
+  expect_identical(readLines(counter_file), "2") # exactly one retry happened
+})
+
+test_that("run_experiment_subprocess does NOT retry an unrelated real error, even with retries available", {
+  out <- tempfile(); err <- tempfile()
+  counter_file <- tempfile(); writeLines("0", counter_file)
+  expect_error(
+    run_experiment_subprocess(
+      function(counter_file) {
+        n <- as.integer(readLines(counter_file)) + 1L
+        writeLines(as.character(n), counter_file)
+        stop("some unrelated real error, not an install race")
+      },
+      args = list(counter_file = counter_file),
+      logfile_out = out, logfile_err = err, poll_interval = 0.1,
+      install_race_wait = 0.1
+    ),
+    "unrelated real error"
+  )
+  expect_identical(readLines(counter_file), "1") # never retried
+})
+
+test_that("run_experiment_subprocess does not retry at all when install_race_retries = 0, even for a matching error", {
+  out <- tempfile(); err <- tempfile()
+  expect_error(
+    run_experiment_subprocess(
+      function() stop("lazy-load database '/usr/local/lib/R/site-library/massiveNGSpipe/R/massiveNGSpipe.rdb' is corrupt"),
+      logfile_out = out, logfile_err = err, poll_interval = 0.1,
+      install_race_retries = 0
+    ),
+    "is corrupt"
+  )
+})
