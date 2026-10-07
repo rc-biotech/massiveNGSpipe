@@ -95,13 +95,29 @@ last_real_touch <- function(exp, config = pipeline_config()) {
 #' many days -- useful when avoiding interference with other concurrent
 #' work matters, not just avoiding already-fixed samples
 #' @param n integer, default 10. Max rows to return, ranked best first
+#' @param verify_live logical, default TRUE. Re-check each remaining
+#' candidate against its CURRENT on-disk \code{adapter_barcode_table.csv}
+#' (see \code{\link{verify_candidate_live}}) and drop/re-rank using that
+#' instead of trusting \code{outliers_per_sample_path}'s snapshot number.
+#' That snapshot can go stale fast: confirmed live, 2026-10-07, checking
+#' 9 candidates from a 5-day-old CSV by hand -- 4 were stale (one
+#' study's majority_frac had flipped from 98.6% to 29%; one candidate's
+#' target run was already \code{barcode_detected=TRUE}; two others had
+#' only 1-2 rows on disk, not the 13-16 the snapshot claimed), each
+#' costing a real download+redetection cycle to discover by hand. Set to
+#' FALSE to restore the old snapshot-only behavior (e.g. if
+#' \code{outliers_per_sample_path} was just freshly regenerated and a
+#' live re-check would only add cost for no benefit).
 #' @return data.table(exp, run, study_accession, organism,
 #' majority_frac, n_study_samples, n_study_barcode_true,
 #' trim_mean_length, study_median_len, days_untouched), sorted by
-#' majority_frac descending
+#' majority_frac descending. \code{majority_frac}/\code{n_study_samples}/
+#' \code{n_study_barcode_true} reflect the live table when
+#' \code{verify_live = TRUE} and live data was available, the original
+#' snapshot otherwise.
 #' @export
 barcode_fix_candidates <- function(config, outliers_per_sample_path, min_majority_frac = 0.5,
-                                   min_days_untouched = 0, n = 10) {
+                                   min_days_untouched = 0, n = 10, verify_live = TRUE) {
   dt <- data.table::fread(outliers_per_sample_path)
   dt <- dt[flag_reason %in% c("barcode_outlier", "barcode_and_length_outlier")]
   dt[, majority_frac := n_study_barcode_true / n_study_samples]
@@ -117,7 +133,20 @@ barcode_fix_candidates <- function(config, outliers_per_sample_path, min_majorit
 
   dt <- dt[order(-majority_frac)]
   if (nrow(dt) == 0) return(dt)
-  dt <- dt[seq_len(min(nrow(dt), max(n * 4, 20)))] # bound how many get an mtime/process check below
+  dt <- dt[seq_len(min(nrow(dt), max(n * 4, 20)))] # bound how many get checked below
+
+  if (verify_live) {
+    live <- lapply(seq_len(nrow(dt)), function(i) verify_candidate_live(dt$exp[i], dt$raw_library[i], config))
+    dt[, live_valid := vapply(live, `[[`, logical(1), "valid")]
+    dt[, live_majority_frac := vapply(live, `[[`, numeric(1), "live_majority_frac")]
+    dt[, live_n_samples := vapply(live, `[[`, integer(1), "n_live_samples")]
+    dt <- dt[live_valid == TRUE]
+    # Live numbers supersede the (possibly stale) snapshot for ranking
+    # and for what gets reported back.
+    dt[, majority_frac := live_majority_frac]
+    dt[, n_study_samples := live_n_samples]
+    dt[, n_study_barcode_true := round(live_majority_frac * live_n_samples)]
+  }
 
   dt[, currently_active := vapply(exp, sample_currently_processing, logical(1))]
   dt <- dt[currently_active == FALSE]
@@ -128,6 +157,49 @@ barcode_fix_candidates <- function(config, outliers_per_sample_path, min_majorit
   dt <- dt[order(-majority_frac)][seq_len(min(nrow(dt), n))]
   dt[, .(exp, run = raw_library, study_accession, organism = ScientificName, majority_frac,
         n_study_samples, n_study_barcode_true, trim_mean_length, study_median_len, days_untouched)]
+}
+
+#' Re-check one barcode-fix candidate directly against the CURRENT
+#' on-disk \code{adapter_barcode_table.csv}
+#'
+#' \code{\link{barcode_fix_candidates}}'s own \code{outliers_per_sample_path}
+#' snapshot can go stale fast -- see its own roxygen for the confirmed
+#' live incident this was built from. This re-derives the true/false
+#' split directly from the experiment's current trim table instead of
+#' trusting a potentially days-old number.
+#' @param exp,run character
+#' @param config the mNGSp config object
+#' @return list(valid = logical, reason = character,
+#' live_majority_frac = numeric (NA if not computable),
+#' n_live_samples = integer (NA if not computable))
+#' @noRd
+verify_candidate_live <- function(exp, run, config) {
+  not_computable <- list(live_majority_frac = NA_real_, n_live_samples = NA_integer_)
+  df <- tryCatch(read.experiment(exp, validate = FALSE), error = function(e) NULL)
+  if (is.null(df))
+    return(c(list(valid = FALSE, reason = "experiment not readable"), not_computable))
+
+  table_path <- file.path(bam_dir_from_df(df), "trim", "adapter_barcode_table.csv")
+  if (!file.exists(table_path))
+    return(c(list(valid = FALSE, reason = "no adapter_barcode_table.csv on disk"), not_computable))
+
+  current <- data.table::fread(table_path)
+  if (!(run %in% current$id))
+    return(list(valid = FALSE, reason = "target run missing from current table",
+               live_majority_frac = NA_real_, n_live_samples = nrow(current)))
+
+  target_detected <- current[id == run]$barcode_detected[1]
+  if (isTRUE(target_detected))
+    return(list(valid = FALSE, reason = "target already barcode_detected=TRUE",
+               live_majority_frac = NA_real_, n_live_samples = nrow(current)))
+
+  n_live <- nrow(current)
+  n_true <- sum(current$barcode_detected == TRUE, na.rm = TRUE)
+  live_majority_frac <- n_true / n_live
+  valid <- live_majority_frac > 0.5 && n_live >= 3
+  list(valid = valid,
+      reason = if (valid) "ok" else if (n_live < 3) "too few live samples" else "live majority_frac <= 0.5",
+      live_majority_frac = round(live_majority_frac, 4), n_live_samples = n_live)
 }
 
 #' Force-redetect one sample's adapter/barcode parameters, bypassing
@@ -163,7 +235,20 @@ redetect_barcode_for_sample <- function(exp, run, config = pipeline_config()) {
   bam_root <- bam_dir_from_df(df)
   fastq_dir <- file.path(config$config["fastq"], exp)
   trimmed_dir <- file.path(bam_root, "trim")
-  barcode_detector_single(study_org[1, .(Run, LibraryLayout)], fastq_dir, bam_root, trimmed_dir,
+  # Pass the FULL metadata row, not just .(Run, LibraryLayout): when
+  # redownload_raw_if_needed triggers a fresh download,
+  # barcode_detector_single() forwards this same data.table on to
+  # download_sra() -> download_raw_srr() -> sra_to_fastq() ->
+  # check_tempdir_has_space_sra_to_fastq() -> estimate_fastq_tmp_gb(),
+  # which needs avgLength/spots/bases to estimate disk space for the
+  # fast AWS/.sra path. A 2-column subset silently breaks that estimate
+  # (the column is simply absent, not NA), which errors inside
+  # sra_to_fastq()'s try() (R/download_sra.R's download_raw_srr()) and
+  # falls through to the much slower EBI fallback every single time --
+  # confirmed live, 2026-10-07: 100% of redetect_barcode_for_sample()'s
+  # own downloads hit this, none used the fast path. FINAL_LIST.csv
+  # does carry all of these columns; only this stripped subset dropped them.
+  barcode_detector_single(study_org[1, ], fastq_dir, bam_root, trimmed_dir,
                           redownload_raw_if_needed = TRUE, check_at_mean_size = 0)
 }
 

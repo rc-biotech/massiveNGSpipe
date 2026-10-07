@@ -116,7 +116,7 @@ test_that("barcode_fix_candidates() excludes samples already present in manual_t
   testthat::local_mocked_bindings(sample_currently_processing = function(exp) FALSE)
   testthat::local_mocked_bindings(last_real_touch = function(exp, config) as.POSIXct("2020-01-01", tz = "UTC"))
 
-  cands <- barcode_fix_candidates(config, outliers_path)
+  cands <- barcode_fix_candidates(config, outliers_path, verify_live = FALSE)
   expect_identical(cands$run, "SRR002")
 })
 
@@ -133,7 +133,7 @@ test_that("barcode_fix_candidates() excludes a study that is currently being pro
   testthat::local_mocked_bindings(sample_currently_processing = function(exp) TRUE)
   testthat::local_mocked_bindings(last_real_touch = function(exp, config) as.POSIXct("2020-01-01", tz = "UTC"))
 
-  cands <- barcode_fix_candidates(config, outliers_path)
+  cands <- barcode_fix_candidates(config, outliers_path, verify_live = FALSE)
   expect_identical(nrow(cands), 0L)
 })
 
@@ -151,8 +151,151 @@ test_that("barcode_fix_candidates() respects min_majority_frac and ranks by it d
   testthat::local_mocked_bindings(sample_currently_processing = function(exp) FALSE)
   testthat::local_mocked_bindings(last_real_touch = function(exp, config) as.POSIXct("2020-01-01", tz = "UTC"))
 
-  cands <- barcode_fix_candidates(config, outliers_path, min_majority_frac = 0.7)
+  cands <- barcode_fix_candidates(config, outliers_path, min_majority_frac = 0.7, verify_live = FALSE)
   expect_identical(cands$run, "SRR005")
+})
+
+test_that("verify_candidate_live() is FALSE when the experiment can't be read at all", {
+  config <- fake_config()
+  testthat::local_mocked_bindings(read.experiment = function(exp, ...) stop("no such experiment"))
+
+  result <- verify_candidate_live("PRJNA_GONE-homo_sapiens", "SRR001", config)
+
+  expect_false(result$valid)
+  expect_match(result$reason, "not readable")
+  expect_true(is.na(result$live_majority_frac))
+})
+
+test_that("verify_candidate_live() is FALSE when no adapter_barcode_table.csv exists on disk", {
+  config <- fake_config()
+  stub <- fake_experiment_stub(run_ids = "SRR001")
+  bam_dir <- tempfile("bam_")
+  testthat::local_mocked_bindings(
+    read.experiment = function(exp, ...) stub,
+    bam_dir_from_df = function(df) bam_dir
+  )
+
+  result <- verify_candidate_live("PRJNA001-homo_sapiens", "SRR001", config)
+
+  expect_false(result$valid)
+  expect_match(result$reason, "no adapter_barcode_table.csv")
+})
+
+test_that("verify_candidate_live() is FALSE when the target run is already barcode_detected=TRUE", {
+  # Confirmed live, 2026-10-07: PRJNA940452-nicotiana_tabacum's flagged
+  # candidate had already been fixed/resolved by the time it was
+  # checked, but the 5-day-old outliers snapshot still listed it.
+  config <- fake_config()
+  stub <- fake_experiment_stub(run_ids = "SRR001")
+  bam_dir <- tempfile("bam_")
+  dir.create(file.path(bam_dir, "trim"), recursive = TRUE)
+  data.table::fwrite(data.table::data.table(id = "SRR001", barcode_detected = TRUE),
+                     file.path(bam_dir, "trim", "adapter_barcode_table.csv"))
+  testthat::local_mocked_bindings(
+    read.experiment = function(exp, ...) stub,
+    bam_dir_from_df = function(df) bam_dir
+  )
+
+  result <- verify_candidate_live("PRJNA001-homo_sapiens", "SRR001", config)
+
+  expect_false(result$valid)
+  expect_match(result$reason, "already barcode_detected")
+})
+
+test_that("verify_candidate_live() is FALSE when the target run is missing from the current table", {
+  # Confirmed live, 2026-10-07: PRJNA750456-mus_musculus's flagged
+  # candidate run didn't even appear in the current on-disk table.
+  config <- fake_config()
+  stub <- fake_experiment_stub(run_ids = c("SRR001", "SRR002"))
+  bam_dir <- tempfile("bam_")
+  dir.create(file.path(bam_dir, "trim"), recursive = TRUE)
+  data.table::fwrite(data.table::data.table(id = "SRR002", barcode_detected = TRUE),
+                     file.path(bam_dir, "trim", "adapter_barcode_table.csv"))
+  testthat::local_mocked_bindings(
+    read.experiment = function(exp, ...) stub,
+    bam_dir_from_df = function(df) bam_dir
+  )
+
+  result <- verify_candidate_live("PRJNA001-homo_sapiens", "SRR001", config)
+
+  expect_false(result$valid)
+  expect_match(result$reason, "missing from current table")
+})
+
+test_that("verify_candidate_live() recomputes majority_frac from the live table and can flip valid to FALSE", {
+  # Confirmed live, 2026-10-07: PRJNA874814-mus_musculus's snapshot
+  # claimed majority_frac = 0.986 (72/73); the current on-disk table
+  # actually had 21/73 TRUE (0.29) -- a complete flip from "confident
+  # fix" to "do not touch".
+  config <- fake_config()
+  stub <- fake_experiment_stub(run_ids = paste0("SRR00", 1:10))
+  bam_dir <- tempfile("bam_")
+  dir.create(file.path(bam_dir, "trim"), recursive = TRUE)
+  current <- data.table::data.table(id = paste0("SRR00", 1:10),
+                                    barcode_detected = c(FALSE, rep(FALSE, 8), FALSE)) # 0/10 true
+  data.table::fwrite(current, file.path(bam_dir, "trim", "adapter_barcode_table.csv"))
+  testthat::local_mocked_bindings(
+    read.experiment = function(exp, ...) stub,
+    bam_dir_from_df = function(df) bam_dir
+  )
+
+  result <- verify_candidate_live("PRJNA001-homo_sapiens", "SRR001", config)
+
+  expect_false(result$valid) # 0/10 true -> majority_frac 0, not > 0.5
+  expect_equal(result$live_majority_frac, 0)
+  expect_identical(result$n_live_samples, 10L)
+})
+
+test_that("verify_candidate_live() is valid=TRUE when the live table genuinely confirms a majority", {
+  config <- fake_config()
+  stub <- fake_experiment_stub(run_ids = paste0("SRR00", 1:5))
+  bam_dir <- tempfile("bam_")
+  dir.create(file.path(bam_dir, "trim"), recursive = TRUE)
+  current <- data.table::data.table(id = paste0("SRR00", 1:5),
+                                    barcode_detected = c(FALSE, TRUE, TRUE, TRUE, TRUE)) # 4/5 true
+  data.table::fwrite(current, file.path(bam_dir, "trim", "adapter_barcode_table.csv"))
+  testthat::local_mocked_bindings(
+    read.experiment = function(exp, ...) stub,
+    bam_dir_from_df = function(df) bam_dir
+  )
+
+  result <- verify_candidate_live("PRJNA001-homo_sapiens", "SRR001", config)
+
+  expect_true(result$valid)
+  expect_equal(result$live_majority_frac, 0.8)
+  expect_identical(result$n_live_samples, 5L)
+})
+
+test_that("barcode_fix_candidates(verify_live = TRUE) drops a candidate whose live data no longer supports it", {
+  config <- fake_config()
+  outliers <- data.table::data.table(
+    study_accession = c("PRJNA006", "PRJNA007"), ScientificName = "Homo sapiens",
+    raw_library = c("SRR006", "SRR007"), flag_reason = "barcode_outlier",
+    n_study_samples = c(10, 10), n_study_barcode_true = c(9, 9), # snapshot: both look great (0.9)
+    trim_mean_length = 33, study_median_len = 35
+  )
+  outliers_path <- tempfile(fileext = ".csv")
+  data.table::fwrite(outliers, outliers_path)
+
+  testthat::local_mocked_bindings(sample_currently_processing = function(exp) FALSE)
+  testthat::local_mocked_bindings(last_real_touch = function(exp, config) as.POSIXct("2020-01-01", tz = "UTC"))
+  # PRJNA006's live table still backs up the snapshot (4/5 true); PRJNA007's
+  # does not (0/5 true) -- simulating the same kind of staleness confirmed
+  # live, 2026-10-07 (PRJNA874814's majority_frac had silently collapsed).
+  testthat::local_mocked_bindings(
+    verify_candidate_live = function(exp, run, config) {
+      if (exp == "PRJNA006-homo_sapiens") {
+        list(valid = TRUE, reason = "ok", live_majority_frac = 0.8, n_live_samples = 5L)
+      } else {
+        list(valid = FALSE, reason = "live majority_frac <= 0.5", live_majority_frac = 0, n_live_samples = 5L)
+      }
+    }
+  )
+
+  cands <- barcode_fix_candidates(config, outliers_path, verify_live = TRUE)
+
+  expect_identical(cands$run, "SRR006")
+  expect_equal(cands$majority_frac, 0.8) # live number, not the stale snapshot's 0.9
 })
 
 test_that("redetect_barcode_for_sample() calls barcode_detector_single() with check_at_mean_size forced to 0", {
@@ -176,6 +319,38 @@ test_that("redetect_barcode_for_sample() calls barcode_detector_single() with ch
   expect_identical(res$id, "SRR001")
   expect_equal(captured$check_at_mean_size, 0)
   expect_true(captured$redownload_raw_if_needed)
+})
+
+test_that("redetect_barcode_for_sample() passes the FULL metadata row through, not just Run/LibraryLayout", {
+  # Confirmed live, 2026-10-07: a 2-column .(Run, LibraryLayout) subset
+  # silently breaks download_raw_srr()'s fast AWS/.sra size-estimation
+  # path (estimate_fastq_tmp_gb() needs avgLength/spots/bases, which are
+  # just absent -- not NA -- from the stripped subset), making every
+  # single redownload triggered through this function fall through to
+  # the much slower EBI fallback regardless of whether the fast path
+  # would have worked.
+  config <- fake_config()
+  dir.create(dirname(config$complete_metadata), showWarnings = FALSE, recursive = TRUE)
+  data.table::fwrite(data.table::data.table(
+    Run = "SRR001", LibraryLayout = "SINGLE",
+    avgLength = 100, spots = 1e6, bases = 1e8, size_MB = 150
+  ), config$complete_metadata)
+  stub <- fake_experiment_stub(run_ids = "SRR001", exp_name = "PRJNA001-homo_sapiens")
+  bam_dir <- tempfile("bam_")
+  captured_sample <- NULL
+  testthat::local_mocked_bindings(
+    read.experiment = function(exp, ...) stub,
+    bam_dir_from_df = function(df) bam_dir,
+    barcode_detector_single = function(study_sample, ...) {
+      captured_sample <<- study_sample
+      data.table::data.table(id = study_sample$Run)
+    }
+  )
+
+  redetect_barcode_for_sample("PRJNA001-homo_sapiens", "SRR001", config)
+
+  expect_true(all(c("avgLength", "spots", "bases", "size_MB") %in% colnames(captured_sample)))
+  expect_equal(captured_sample$avgLength, 100)
 })
 
 test_that("redetect_barcode_for_sample() errors clearly when the run isn't in complete_metadata", {
