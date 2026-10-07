@@ -718,6 +718,118 @@ save_pshifted_length_distributions <- function(df) {
   invisible(NULL)
 }
 
+#' Thin wrapper around \code{ORFik::filepath(df_one_row, "ofst")}
+#'
+#' Same rationale as \code{\link{pshifted_filepath}} (R/shift_qc_cache.R):
+#' exists purely so tests can mock ONE plain massiveNGSpipe function
+#' instead of needing \code{filepath()} itself to dispatch on a fake
+#' experiment class -- \code{filepath()} is a plain function in ORFik
+#' (not an S4 generic) with an internal \code{stopifnot(is(df, "experiment"))},
+#' so it can never be given a method for a test stub class.
+#' @param df an ORFik experiment subset, one or more rows
+#' @return character vector, one path per row of \code{df}
+#' @noRd
+ofst_filepath <- function(df) filepath(df, "ofst")
+
+#' Is this one sample's pshifted file already valid (present and at
+#' least as new as its own raw ofst file)?
+#'
+#' The freshness check (not just existence) is what makes a redone
+#' sample (e.g. a barcode fix followed by a reshift) correctly trigger
+#' recomputation -- its ofst file gets a newer mtime than the old
+#' pshifted file, which was shifted from the PREVIOUS version of that
+#' ofst. Same pattern as \code{\link{shift_qc_cache_valid}}.
+#' @param df_one_row an ORFik experiment subset to exactly one row,
+#' already at the correct \code{uniqueMappers()} setting for this pass
+#' @return logical
+#' @noRd
+pshift_sample_valid <- function(df_one_row) {
+  ofst_path <- ofst_filepath(df_one_row)
+  if (!file.exists(ofst_path)) return(FALSE)
+  pshifted_path <- pshifted_filepath(df_one_row)
+  if (!file.exists(pshifted_path)) return(FALSE)
+  file.info(pshifted_path)$mtime >= file.info(ofst_path)$mtime
+}
+
+#' One mapper-mode pass of pshift, subsetting to only the samples that
+#' actually need it
+#'
+#' \code{ORFik::shiftFootprintsByExperiment()} (called inside
+#' \code{shiftFootprintsByExperimentSafe()}) reloads, reshifts, and
+#' rewrites EVERY sample it's given, even the ones whose shift it
+#' reuses from an existing \code{shift.list} entry instead of
+#' re-detecting -- re-detection is skipped per-sample, but the
+#' load/apply/write cost is not. Subsetting \code{df} to only the
+#' not-yet-valid samples before calling it skips that cost entirely for
+#' everyone else, with no scratch-dir/copy-back needed: confirmed
+#' directly from ORFik's own source that this is already safe --
+#' \code{libFolder()} (hence \code{out.dir}) resolves from
+#' \code{dirname(x$filepath[1])}, identical for a subset or the full
+#' experiment, and \code{shifts_save()} already merges a subset's
+#' shifts into an existing \code{shifting_table.rds} by name rather
+#' than overwriting it (\code{old_shifts[names(shifts)] <- shifts}) --
+#' this is exactly the "pshift a subset, the existing shift file gets
+#' the new entries merged in" mechanism, already built into ORFik,
+#' not something added here. \code{shift.list = NULL} for the subset
+#' call: every sample in it lacks a valid pshifted file by construction,
+#' so none has anything worth reusing -- a few extra seconds of fresh
+#' auto-detection per sample is a non-issue next to the reload/rewrite
+#' cost this whole function exists to avoid.
+#'
+#' One real caveat, informational only: \code{shiftFootprintsByExperimentSafe()}'s
+#' own FFT-strength marker file (\code{strong_periodicity.rds} etc.,
+#' \code{\link{fft_strength_files}}) is experiment-level, not
+#' per-sample -- calling it on a small subset overwrites that marker
+#' with just this call's own outcome, which may not represent the
+#' whole experiment's shift history anymore. Doesn't affect the actual
+#' shifted data or the shift table, only that one diagnostic file.
+#'
+#' \code{reuse_shifts_if_existing} is still honored for the narrow edge
+#' case where a sample's pshifted FILE is missing/stale but its
+#' shift-table ENTRY is still present and usable (e.g. the file was
+#' deleted by something else while the table itself wasn't touched):
+#' that entry is reused (skips re-detection, matching the pre-subsetting
+#' behavior) rather than always forcing a fresh auto-detect for
+#' everything in the subset.
+#' @param df an ORFik experiment, already at the correct
+#' \code{uniqueMappers()} setting for this pass
+#' @param accepted_lengths,allowed_hard12_species,BPPARAM,max_no_adapter_removed_pct
+#' passed straight through to \code{shiftFootprintsByExperimentSafe()}
+#' @param reuse_shifts_if_existing logical
+#' @return whatever \code{shiftFootprintsByExperimentSafe()} returns
+#' when there was anything to do; \code{1} (matching the no-op default
+#' elsewhere in this file) if every sample was already valid
+#' @noRd
+pshift_needed_subset <- function(df, accepted_lengths, allowed_hard12_species, BPPARAM,
+                                 max_no_adapter_removed_pct, reuse_shifts_if_existing) {
+  needs <- !vapply(seq_len(nrow(df)), function(i) pshift_sample_valid(df[i, ]), logical(1))
+  if (!any(needs)) return(1)
+  df_subset <- df[needs, ]
+
+  shifting_table <- NULL
+  if (reuse_shifts_if_existing) {
+    full_table <- try(shifts_load_safe(df, TRUE), silent = TRUE)
+    if (!is(full_table, "try-error") && !is.null(full_table)) {
+      subset_paths <- ofst_filepath(df_subset)
+      candidate <- full_table[subset_paths]
+      # shifts_load_safe() pads any sample the table doesn't cover with
+      # a NULL/NA placeholder (so its own length check against nrow(df)
+      # still passes) -- that placeholder must fall through to fresh
+      # auto-detection inside shiftFootprintsByExperiment()'s own
+      # per-file `if (is.null(shifts))` check, never be passed through
+      # as if it were a real known shift.
+      has_real_entry <- !vapply(candidate, function(x) is.null(x) || (length(x) == 1 && is.na(x)), logical(1))
+      if (any(has_real_entry)) shifting_table <- candidate[has_real_entry]
+    }
+  }
+
+  res <- shiftFootprintsByExperimentSafe(df_subset, shifting_table, accepted_lengths,
+                                         allowed_hard12_species, BPPARAM,
+                                         max_no_adapter_removed_pct)
+  if (!inherits(res, "error")) save_pshifted_length_distributions(df_subset)
+  res
+}
+
 #' @inheritParams pipeline_create_ofst
 pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_lengths_rpf,
                             reuse_shifts_if_existing = config$reuse_shifts_if_existing,
@@ -726,25 +838,15 @@ pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_
   for (df in df_list) {
     if (!step_is_next_not_done(config, "pshifted", name(df))) next
     res <- 1
-    shifting_table <- shifts_load_safe(df, reuse_shifts_if_existing)
     if (config$all_mappers) {
-      res <- shiftFootprintsByExperimentSafe(df, shifting_table, accepted_lengths,
-                                             allowed_hard12_species, BPPARAM,
-                                             config$max_no_adapter_removed_pct)
-      if (!inherits(res, "error")) save_pshifted_length_distributions(df)
+      res <- pshift_needed_subset(df, accepted_lengths, allowed_hard12_species, BPPARAM,
+                                  config$max_no_adapter_removed_pct, reuse_shifts_if_existing)
     }
 
     if(config$split_unique_mappers & !inherits(res, "error")) {
-      shifting_table <- try(shifts_load_safe(df, reuse_shifts_if_existing), silent = TRUE)
-      if (is(shifting_table, "try-error")) {
-        stop("Experiment: '", name(df), "' has no shifting table to use for unique mappers!")
-      }
       uniqueMappers(df) <- TRUE
-      names(shifting_table) <- filepath(df, "ofst")
-      res <- shiftFootprintsByExperimentSafe(df, shifting_table, accepted_lengths,
-                                             allowed_hard12_species, BPPARAM,
-                                             config$max_no_adapter_removed_pct)
-      if (!inherits(res, "error")) save_pshifted_length_distributions(df)
+      res <- pshift_needed_subset(df, accepted_lengths, allowed_hard12_species, BPPARAM,
+                                  config$max_no_adapter_removed_pct, reuse_shifts_if_existing)
     }
 
     if(!inherits(res, "error")) {
