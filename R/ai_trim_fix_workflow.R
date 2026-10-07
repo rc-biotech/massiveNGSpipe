@@ -245,21 +245,27 @@ apply_trim_fix_and_rerun <- function(exp, run, config, barcode5p_size = NULL,
 #' Named mtime vector for every sibling run's own files under an
 #' experiment's bam directory
 #'
-#' Excludes files under directories this package's own pshift/pcounts
-#' steps legitimately rewrite for EVERY sample on EVERY run, by design
-#' -- they have no per-sample resume (ORFik's own internal per-experiment
-#' dispatch for pshift; countTable_regions() needs every sample together
-#' for pcounts), documented in \code{convert_per_sample()}'s own roxygen
-#' and confirmed live: fixing one sample and rerunning correctly
-#' regenerates `pshifted/*_pshifted.ofst`, `read_length_distribution/`
-#' under pshifted, and `QC_STATS/` (frame tables, count tables, plots)
-#' for every sibling too. That is expected, not a bug -- counting it as
-#' a "touched sibling file" would flag every single real fix as a
-#' false-positive failure (confirmed live, PRJNA1071171-homo_sapiens,
-#' 2026-10-06). What should still be scrutinized here is anything with
-#' real per-sample resume (BAM, collapsed fasta, trimmed fastq, ofst,
-#' covrle, bigwig) -- those must never change for an already-done
-#' sibling.
+#' Excludes files under directories this package's own pshift/pcounts/
+#' covrle/bigwig steps legitimately rewrite for EVERY sample on EVERY
+#' run, by design -- they have no per-sample resume (ORFik's own
+#' internal per-experiment dispatch for pshift; countTable_regions()
+#' needs every sample together for pcounts; \code{make_additional_formats_internal()}
+#' rebuilds covRLE/bigwig for the whole experiment at once), documented
+#' in \code{convert_per_sample()}'s own roxygen and confirmed live twice:
+#' fixing one sample and rerunning correctly regenerates
+#' `pshifted/*_pshifted.ofst`, `read_length_distribution/` under
+#' pshifted, and `QC_STATS/` (frame tables, count tables, plots) for
+#' every sibling too (PRJNA1071171-homo_sapiens, 2026-10-06) -- AND,
+#' separately, every sibling's own `aligned/bigwig/*.bigWig` and
+#' `aligned/cov_RLE{,_List}/*.covqs` (GSE151959-homo_sapiens,
+#' 2026-10-07; the first case's own exclusion didn't yet cover these
+#' paths, so this fix was itself initially misreported as
+#' \code{success = FALSE}). All of this is expected, not a bug --
+#' counting it as a "touched sibling file" would flag every single real
+#' fix as a false-positive failure. What should still be scrutinized
+#' here is anything with genuine per-sample resume (BAM, collapsed
+#' fasta, trimmed fastq, ofst) -- those must never change for an
+#' already-done sibling.
 #' @param bam_dir character, the experiment's bam directory
 #' @param siblings character vector of run ids to match against
 #' filenames
@@ -270,7 +276,7 @@ sibling_file_snapshot <- function(bam_dir, siblings) {
   if (length(siblings) == 0 || !dir.exists(bam_dir)) return(stats::setNames(numeric(), character()))
   files <- list.files(bam_dir, recursive = TRUE, full.names = TRUE)
   files <- files[grepl(paste(siblings, collapse = "|"), basename(files))]
-  files <- files[!grepl("/pshifted/|/QC_STATS/", files)]
+  files <- files[!grepl("/pshifted/|/QC_STATS/|/bigwig/|/cov_RLE/|/cov_RLE_List/", files)]
   if (length(files) == 0) return(stats::setNames(numeric(), character()))
   stats::setNames(as.numeric(file.info(files)$mtime), files)
 }

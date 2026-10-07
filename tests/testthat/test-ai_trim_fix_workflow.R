@@ -64,18 +64,28 @@ test_that("sibling_file_snapshot() returns empty for no siblings, without touchi
   expect_length(sibling_file_snapshot("/nonexistent", character()), 0)
 })
 
-test_that("sibling_file_snapshot() excludes pshifted/ and QC_STATS/ files -- pshift/pcounts legitimately rewrite these for every sample on every run", {
-  # Confirmed live, PRJNA1071171-homo_sapiens, 2026-10-06: a correct,
-  # successful single-sample fix regenerates every sibling's own
-  # pshifted/*_pshifted.ofst and QC_STATS/ files too (pshift/pcounts
-  # have no per-sample resume) -- including these in the integrity
-  # check would flag every real fix as a false-positive failure.
+test_that("sibling_file_snapshot() excludes pshifted/, QC_STATS/, bigwig/, and cov_RLE{,_List}/ files -- these have no per-sample resume and are legitimately rewritten for every sample on every run", {
+  # pshifted/QC_STATS confirmed live, PRJNA1071171-homo_sapiens,
+  # 2026-10-06. bigwig/cov_RLE/cov_RLE_List confirmed live separately,
+  # GSE151959-homo_sapiens, 2026-10-07 -- a correct, successful
+  # single-sample fix was itself initially misreported as
+  # success = FALSE because these paths weren't excluded yet. Both are
+  # the same root cause (make_additional_formats_internal() rebuilds
+  # covRLE/bigwig for the whole experiment at once, no per-sample
+  # resume) -- including any of these in the integrity check would flag
+  # every real fix as a false-positive failure.
   bam_dir <- tempfile("bam_")
   dir.create(file.path(bam_dir, "pshifted"), recursive = TRUE)
   dir.create(file.path(bam_dir, "QC_STATS"), recursive = TRUE)
+  dir.create(file.path(bam_dir, "bigwig"), recursive = TRUE)
+  dir.create(file.path(bam_dir, "cov_RLE"), recursive = TRUE)
+  dir.create(file.path(bam_dir, "cov_RLE_List"), recursive = TRUE)
   dir.create(file.path(bam_dir, "ofst"), recursive = TRUE)
   writeLines("x", file.path(bam_dir, "pshifted", "SRR002_pshifted.ofst"))
   writeLines("x", file.path(bam_dir, "QC_STATS", "Ribo_frames_all.csv"))
+  writeLines("x", file.path(bam_dir, "bigwig", "SRR002_pshifted_forward.bigWig"))
+  writeLines("x", file.path(bam_dir, "cov_RLE", "SRR002_pshifted.covqs"))
+  writeLines("x", file.path(bam_dir, "cov_RLE_List", "SRR002_pshifted.covqs"))
   real_sibling_file <- file.path(bam_dir, "ofst", "SRR002.ofst")
   writeLines("x", real_sibling_file)
 
