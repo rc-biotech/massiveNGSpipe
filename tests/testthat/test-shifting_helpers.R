@@ -89,3 +89,17 @@ test_that("periodicity_check_flag() records periodicity_status into qc_diagnosti
   diag <- read_qc_diagnostics(file.path(qc_dir, "qc_diagnostics.rds"))
   expect_identical(diag$periodicity_status, "good")
 })
+
+# regionPerReadLengthPerLib() itself (R/shifting_helpers.R) has the same
+# fill=TRUE fix applied as shift_qc_cache.R's own aggregation (2026-10-08,
+# same root cause: a library with zero rows never goes through the
+# `if (nrow(total) > 0)` column-augmentation, so rbindlist() without
+# fill=TRUE would error on the resulting column-count mismatch). No
+# dedicated test here: its bare (Depends-resolved, not `BiocParallel::`-
+# qualified) `bplapply()` call isn't interceptable via
+# testthat::local_mocked_bindings(.package = "BiocParallel") the way an
+# explicitly-qualified call is (confirmed by direct attempt -- the real
+# dispatch ran regardless of the mock), and a real end-to-end test would
+# need ORFik::regionPerReadLength() to actually run against real
+# GAlignments/GRanges input. The fix itself is still correct by direct
+# inspection -- same one-line change, same proven mechanism.

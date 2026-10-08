@@ -170,7 +170,20 @@ regionPerReadLengthPerLib <- function(grl, libraries, scoring = "frameSumPerL",
     }
     return(total)
   }, grl = grl, weight = weight, BPPARAM = BPPARAM)
-  return(rbindlist(frame_sum_per1))
+  # fill = TRUE: same reasoning as shift_qc_cache.R's own aggregation
+  # step (R/shift_qc_cache.R, fixed 2026-10-08) -- a library with ZERO
+  # rows never goes through the `if (nrow(total) > 0)` column-
+  # augmentation above, so its own table keeps a shorter column set
+  # (3: fraction/frame/score) than a non-empty library's (4: +length).
+  # rbindlist() errors on that mismatch without fill=TRUE; safe to add
+  # here for the identical reason -- a 0-row table contributes zero
+  # ROWS to the result regardless of its own column set, so this can
+  # never introduce an NA-padded row, it only lets a genuinely-empty
+  # library merge in as a no-op instead of crashing every other
+  # library's aggregation too. Same root cause as the shift_qc_cache.R
+  # incident, not yet observed triggering here specifically, found by
+  # auditing for the same pattern elsewhere in the codebase.
+  return(rbindlist(frame_sum_per1, fill = TRUE))
 }
 
 template_shift_table_exps <- function(exps, accepted.lengths = c(20, 21, 25:33)) {
