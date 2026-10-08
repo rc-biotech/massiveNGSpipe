@@ -333,3 +333,53 @@ test_that("watch_pipeline_checklist(open_in_new_text_window = TRUE) errors clear
     "RStudio"
   )
 })
+
+test_that("watch_pipeline_checklist() prefers config$session_dir over the newest session_logs entry, when index isn't explicitly given", {
+  # The scenario this guards: config$session_dir points at THIS specific
+  # session, but a second, newer run_pipeline() call started
+  # concurrently elsewhere -- "index = 1 = newest by directory listing"
+  # would otherwise silently resolve to that OTHER session instead of
+  # the one this config actually belongs to.
+  project <- tempfile("mNGSp_test_")
+  own_session <- file.path(project, "session_logs", "2020-01-01")
+  other_newer_session <- file.path(project, "session_logs", "2025-01-01")
+  dir.create(own_session, recursive = TRUE); dir.create(other_newer_session, recursive = TRUE)
+  writeLines("own session content", file.path(own_session, "checklist.txt"))
+  writeLines("other newer session content", file.path(other_newer_session, "checklist.txt"))
+
+  config <- fake_config(project = project, session_dir = own_session)
+  captured <- NULL
+  testthat::local_mocked_bindings(
+    isAvailable = function(...) TRUE,
+    terminalCreate = function(...) "term-1",
+    terminalSend = function(id, text) captured <<- text,
+    .package = "rstudioapi"
+  )
+
+  watch_pipeline_checklist(config, open_in_new_text_window = TRUE)
+  expect_match(captured, "2020-01-01", fixed = TRUE)
+  expect_false(grepl("2025-01-01", captured, fixed = TRUE))
+})
+
+test_that("watch_pipeline_checklist() uses an explicit index even when config$session_dir is set", {
+  project <- tempfile("mNGSp_test_")
+  own_session <- file.path(project, "session_logs", "2020-01-01")
+  other_older_session <- file.path(project, "session_logs", "2019-01-01")
+  dir.create(own_session, recursive = TRUE); dir.create(other_older_session, recursive = TRUE)
+  writeLines("own", file.path(own_session, "checklist.txt"))
+  writeLines("other older", file.path(other_older_session, "checklist.txt"))
+
+  config <- fake_config(project = project, session_dir = own_session)
+  captured <- NULL
+  testthat::local_mocked_bindings(
+    isAvailable = function(...) TRUE,
+    terminalCreate = function(...) "term-1",
+    terminalSend = function(id, text) captured <<- text,
+    .package = "rstudioapi"
+  )
+
+  # index = 2 is the OLDER session (2019-01-01), explicitly requested
+  # -- must win over config$session_dir (which points at 2020-01-01).
+  watch_pipeline_checklist(config, index = 2, open_in_new_text_window = TRUE)
+  expect_match(captured, "2019-01-01", fixed = TRUE)
+})

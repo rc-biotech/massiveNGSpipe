@@ -305,14 +305,23 @@ format_system_usage_line <- function(pipelines, config) {
 #' call happening elsewhere (in another terminal, or in the
 #' background).
 #'
-#' The checklist watched is resolved by \code{index}, not
-#' \code{config$session_dir} -- a fresh \code{config} built in a
-#' separate terminal/session (the normal way to call this) never has
-#' \code{session_dir} set, so without this, \code{\link{checklist_path}}
-#' would silently fall back to a stale, non-session-scoped path instead
-#' of the actually-running session's own live file. \code{index = 1}
-#' (the default) is therefore "whichever session is newest" -- the
-#' currently-running one, in the normal case of watching a live run.
+#' Resolves which checklist to watch as follows: if \code{config$session_dir}
+#' is set AND \code{index} was left at its default (i.e. not explicitly
+#' requested), that session is used directly -- it's the authoritative
+#' "this specific session" pointer when called from within an
+#' already-running session, and strictly more correct than "newest by
+#' directory listing" whenever a second, newer \code{run_pipeline()}
+#' call has started concurrently elsewhere (which would otherwise make
+#' \code{index = 1} resolve to that OTHER session). Otherwise -- the
+#' normal case of a fresh \code{config} built in a separate
+#' terminal/session, which never has \code{session_dir} set, the main
+#' use case this function exists for -- the checklist is resolved via
+#' \code{index} against the \code{session_logs} directory listing
+#' (newest first), so \code{index = 1} means "whichever session is
+#' newest", the currently-running one in the normal live-watch case.
+#' An explicitly-passed \code{index} always wins over
+#' \code{session_dir}, even when the latter is set, since that's a
+#' clear request to inspect a specific past session.
 #'
 #' Uses ANSI cursor-movement escape codes (move up N lines, clear to end of
 #' screen, redraw), so it needs a real terminal emulator -- an \code{Rscript}
@@ -344,7 +353,22 @@ format_system_usage_line <- function(pipelines, config) {
 #' note above).
 #' @export
 watch_pipeline_checklist <- function(config, interval = 2, index = 1, open_in_new_text_window = FALSE) {
-  path <- session_checklist_path(config, index)
+  # config$session_dir -- when set AND index wasn't explicitly
+  # requested -- takes priority over the index/session_logs listing:
+  # it's the authoritative "this specific session" pointer when
+  # called from within an already-running session, and strictly more
+  # correct than "newest by directory listing" in the edge case where
+  # a second, newer run_pipeline() call started concurrently elsewhere
+  # (that would otherwise make index = 1 resolve to the OTHER session,
+  # not the one this config actually belongs to). An explicit index
+  # always wins, even when session_dir is set, since that's a clear
+  # request to inspect a specific past session rather than "the
+  # current one, however that's best determined".
+  path <- if (missing(index) && !is.null(config$session_dir)) {
+    file.path(config$session_dir, "checklist.txt")
+  } else {
+    session_checklist_path(config, index)
+  }
 
   if (open_in_new_text_window) {
     if (!rstudioapi::isAvailable())
