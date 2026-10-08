@@ -272,6 +272,44 @@ test_that("shift_qc_cached() excludes a failing sample from the aggregate and ne
   expect_identical(call_log, failing_run)
 })
 
+test_that("shift_qc_cached() doesn't crash when one sample's frames table has zero rows (and so a shorter column set than the others)", {
+  # Confirmed live, 2026-10-08, PRJNA637713-zea_mays/SRR13808095:
+  # shift_qc_one_sample()'s own `if (nrow(frames) > 0)` column-
+  # augmentation (adding `length`, renaming `fraction`) never runs for
+  # a sample with NO periodicity-covered regions at all, so its cached
+  # frames.csv keeps the shorter (3-column: fraction/frame/score)
+  # schema instead of the normal 4-column one -- rbindlist() without
+  # fill=TRUE errored on that mismatch ("Item N has 3 columns,
+  # inconsistent with item 1 which has 4 columns"), crashing the WHOLE
+  # experiment's valid_pshift aggregation over one such sample.
+  testthat::local_mocked_bindings(pshifted_filepath = fake_qc_stub_pshifted_path)
+  df <- fake_qc_stub(n = 2)
+  normal_result <- list(hitmap = data.table::data.table(position = 1, frame = 0),
+                        frames = data.table::data.table(fraction = "x", frame = 0, score = 1, length = 30))
+  empty_run <- ORFik::runIDs(df[2, ])
+  testthat::local_mocked_bindings(
+    shift_qc_one_sample = function(df_one_row, ...) {
+      if (ORFik::runIDs(df_one_row) == empty_run) {
+        return(list(hitmap = data.table::data.table(position = integer(), frame = integer()),
+                   frames = data.table::data.table(fraction = character(), frame = integer(), score = numeric())))
+      }
+      normal_result
+    },
+    shift_qc_build_combined_plot = function(...) invisible(NULL),
+    check_adapter_barcode_quality = function(...) invisible(NULL)
+  )
+  testthat::local_mocked_bindings(
+    shift_qc_annotation_context = function(df) list(upstream = 5, downstream = 20, cds = list(), mrna = list())
+  )
+
+  expect_no_error(shift_qc_cached(df, BPPARAM = BiocParallel::SerialParam()))
+  expect_true(shift_qc_cache_valid(df[1, ]))
+  expect_true(shift_qc_cache_valid(df[2, ])) # the empty-but-successful sample is still cached, not treated as a failure
+
+  frameQC <- data.table::fread(file.path(ORFik::QCfolder(df), "Ribo_frames_all.csv"))
+  expect_equal(nrow(frameQC), 1) # only the normal sample's one row; the empty sample contributes none
+})
+
 test_that("shift_qc_cached() aggregates cached per-sample frame tables into Ribo_frames_all.csv/badzero.csv", {
   testthat::local_mocked_bindings(pshifted_filepath = fake_qc_stub_pshifted_path)
   df <- fake_qc_stub(n = 2)

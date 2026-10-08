@@ -241,7 +241,20 @@ shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct 
   ok_idx <- which(ok)
   cached <- lapply(ok_idx, function(i) read_shift_qc_cache(df[i, ]))
 
-  frameQC <- data.table::rbindlist(lapply(cached, `[[`, "frames"))
+  # fill = TRUE: a sample whose frames table came back with ZERO rows
+  # (e.g. no periodicity-covered regions at all) never goes through
+  # shift_qc_one_sample()'s own `if (nrow(frames) > 0)` column-
+  # augmentation (length/fraction renaming), so its cached frames.csv
+  # keeps a shorter column set (3 columns: fraction/frame/score) than
+  # a non-empty sample's (4: +length). rbindlist() errors on that
+  # mismatch without fill=TRUE -- safe to add here specifically
+  # because a 0-row table contributes zero ROWS to the result
+  # regardless of its own column set, so this can never introduce an
+  # NA-padded row into frameQC; it only lets a genuinely-empty sample's
+  # table merge in as a no-op instead of crashing the whole
+  # experiment's aggregation. Confirmed live, 2026-10-08,
+  # PRJNA637713-zea_mays/SRR13808095 (21-byte, header-only frames.csv).
+  frameQC <- data.table::rbindlist(lapply(cached, `[[`, "frames"), fill = TRUE)
   if (nrow(frameQC) > 0) {
     frameQC[, frame := as.factor(frame)]
     frameQC[, fraction := as.factor(fraction)]
