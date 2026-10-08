@@ -110,6 +110,42 @@ pipeline_log_base <- function(config) {
 #' @return character, file.path(pipeline_log_base(config), "checklist.txt")
 checklist_path <- function(config) file.path(pipeline_log_base(config), "checklist.txt")
 
+#' List a project's session_logs session directories, newest first
+#'
+#' Same pattern as \code{\link{session_error_dirs}} (R/pipeline_logs.R),
+#' applied to \code{session_logs} instead of \code{error_logs}.
+#' @param config the mNGSp config object
+#' @return character vector of directory paths
+#' @noRd
+session_log_dirs <- function(config) {
+  sort(list.dirs(file.path(config$project, "session_logs"), recursive = FALSE), decreasing = TRUE)
+}
+
+#' Resolve one session's checklist.txt by index, newest first
+#'
+#' Deliberately derived from the \code{session_logs} directory listing,
+#' not \code{config$session_dir} -- a fresh \code{config} object built
+#' in a SEPARATE terminal/session (the whole point of
+#' \code{\link{watch_pipeline_checklist}}, watching a run happening
+#' elsewhere) never has \code{session_dir} set, so \code{index = 1}
+#' (the newest \code{session_logs} entry) is what actually resolves to
+#' a currently-running session's own live checklist -- not
+#' \code{\link{checklist_path}}'s project-level fallback, which would
+#' silently point at the wrong (and likely stale) file in that exact
+#' "watch it from another terminal" scenario.
+#' @param config the mNGSp config object
+#' @param index integer, default 1 (newest). Same convention as
+#' \code{\link{last_session_errors}}'s own \code{index} argument.
+#' @return character, path to that session's checklist.txt
+#' @noRd
+session_checklist_path <- function(config, index = 1) {
+  dirs <- session_log_dirs(config)
+  if (length(dirs) < index)
+    stop("You selected session ", index, ", but there ", if (length(dirs) == 1) "is" else "are",
+        " only ", length(dirs), " existing session(s)")
+  file.path(dirs[index], "checklist.txt")
+}
+
 #' Nextflow-style stage checklist
 #'
 #' Read-only: reports on experiment-level flags (existing) and sample-level
@@ -260,30 +296,64 @@ format_system_usage_line <- function(pipelines, config) {
 
 #' Live-watch the pipeline checklist in place, like a download progress bar
 #'
-#' Continuously redraws \code{checklist_path(config)}'s current content in
-#' the terminal in place -- like \code{curl}'s progress bar, or
-#' \code{docker compose up}'s multi-line status block -- instead of
-#' printing a new block underneath on every refresh. Purely a read-only
-#' viewer: it never runs, mutates, or blocks the pipeline itself. Meant to
-#' be run in a second terminal/session alongside a real \code{\link{run_pipeline}}
-#' call happening elsewhere (in another terminal, or in the background).
+#' Continuously redraws one session's checklist content in the terminal
+#' in place -- like \code{curl}'s progress bar, or \code{docker compose
+#' up}'s multi-line status block -- instead of printing a new block
+#' underneath on every refresh. Purely a read-only viewer: it never
+#' runs, mutates, or blocks the pipeline itself. Meant to be run in a
+#' second terminal/session alongside a real \code{\link{run_pipeline}}
+#' call happening elsewhere (in another terminal, or in the
+#' background).
+#'
+#' The checklist watched is resolved by \code{index}, not
+#' \code{config$session_dir} -- a fresh \code{config} built in a
+#' separate terminal/session (the normal way to call this) never has
+#' \code{session_dir} set, so without this, \code{\link{checklist_path}}
+#' would silently fall back to a stale, non-session-scoped path instead
+#' of the actually-running session's own live file. \code{index = 1}
+#' (the default) is therefore "whichever session is newest" -- the
+#' currently-running one, in the normal case of watching a live run.
 #'
 #' Uses ANSI cursor-movement escape codes (move up N lines, clear to end of
 #' screen, redraw), so it needs a real terminal emulator -- an \code{Rscript}
 #' or R session run from an actual shell. RStudio's own Console pane does
-#' not support cursor repositioning (only plain text/color codes), so this
-#' will not redraw in place there, only append. From a plain shell (no R
-#' needed at all), \code{watch -n 2 cat <checklist_path(config)>} does the
-#' same job using the standard \code{watch} utility, if that's simpler for
-#' your setup.
+#' NOT support cursor repositioning (only plain text/color codes), so this
+#' will not redraw in place there, only append -- use
+#' \code{open_in_new_text_window = TRUE} in that case (or from a plain
+#' shell with no RStudio at all, \code{watch -n 2 cat <path>} does the
+#' same job directly, no R needed).
 #'
 #' @param config the mNGSp config object
 #' @param interval numeric, seconds between redraws, default 2
-#' @return invisible(NULL). Runs until interrupted (Ctrl+C, or Esc in
-#' RStudio -- though see the terminal note above).
+#' @param index integer, default 1 (newest session). Same convention as
+#' \code{\link{last_session_errors}}'s own \code{index} argument --
+#' pass e.g. \code{2} to watch/inspect the previous session's final
+#' checklist instead of the current/newest one.
+#' @param open_in_new_text_window logical, default FALSE. When TRUE,
+#' opens a real RStudio Terminal tab (via \code{rstudioapi::terminalCreate()})
+#' running \code{watch -n <interval> cat <path>} there instead of
+#' redrawing in THIS console -- the Terminal pane is a real terminal
+#' emulator (unlike the Console), so \code{\r}/ANSI redraw-in-place
+#' actually works. Requires an active RStudio session; errors
+#' otherwise. Returns immediately (does not block this R session), and
+#' does not use \code{interval} for its own redraw loop beyond passing
+#' it through to \code{watch}.
+#' @return invisible(NULL), or (when \code{open_in_new_text_window = TRUE})
+#' invisibly the new terminal's id. The non-window form runs until
+#' interrupted (Ctrl+C, or Esc in RStudio -- though see the terminal
+#' note above).
 #' @export
-watch_pipeline_checklist <- function(config, interval = 2) {
-  path <- checklist_path(config)
+watch_pipeline_checklist <- function(config, interval = 2, index = 1, open_in_new_text_window = FALSE) {
+  path <- session_checklist_path(config, index)
+
+  if (open_in_new_text_window) {
+    if (!rstudioapi::isAvailable())
+      stop("open_in_new_text_window = TRUE needs an active RStudio session.")
+    term <- rstudioapi::terminalCreate(show = TRUE)
+    rstudioapi::terminalSend(term, paste0("watch -n ", interval, " cat '", path, "'\n"))
+    return(invisible(term))
+  }
+
   n_prev_lines <- 0L
   repeat {
     content <- if (file.exists(path)) readLines(path) else

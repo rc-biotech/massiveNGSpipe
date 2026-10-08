@@ -272,3 +272,64 @@ test_that("pipeline_checklist: no parenthetical at all when init_time isn't set 
   title <- readLines(checklist_path(config))[1]
   expect_false(grepl("\\(", title))
 })
+
+test_that("session_log_dirs / session_checklist_path reflect real tempdir fixtures, newest first", {
+  project <- tempfile("mNGSp_test_")
+  d1 <- file.path(project, "session_logs", "2020-01-01")
+  d2 <- file.path(project, "session_logs", "2025-01-01")
+  dir.create(d1, recursive = TRUE); dir.create(d2, recursive = TRUE)
+  writeLines("newest", file.path(d2, "checklist.txt"))
+  writeLines("oldest", file.path(d1, "checklist.txt"))
+
+  config <- fake_config(project = project)
+  dirs <- session_log_dirs(config)
+  expect_length(dirs, 2)
+  expect_identical(basename(dirs[1]), "2025-01-01") # newest first
+
+  expect_identical(readLines(session_checklist_path(config, index = 1)), "newest")
+  expect_identical(readLines(session_checklist_path(config, index = 2)), "oldest")
+})
+
+test_that("session_checklist_path errors clearly when the requested index exceeds available sessions", {
+  project <- tempfile("mNGSp_test_")
+  dir.create(file.path(project, "session_logs", "2025-01-01"), recursive = TRUE)
+  config <- fake_config(project = project)
+  expect_error(session_checklist_path(config, index = 5), "only 1")
+})
+
+test_that("watch_pipeline_checklist(open_in_new_text_window = TRUE) opens an RStudio terminal running watch, instead of looping in this console", {
+  project <- tempfile("mNGSp_test_")
+  session_dir <- file.path(project, "session_logs", "2025-01-01")
+  dir.create(session_dir, recursive = TRUE)
+  config <- fake_config(project = project)
+
+  create_calls <- list(); send_calls <- list()
+  testthat::local_mocked_bindings(
+    isAvailable = function(...) TRUE,
+    terminalCreate = function(...) { create_calls[[length(create_calls) + 1]] <<- TRUE; "term-1" },
+    terminalSend = function(id, text) send_calls[[length(send_calls) + 1]] <<- list(id = id, text = text),
+    .package = "rstudioapi"
+  )
+
+  result <- watch_pipeline_checklist(config, interval = 3, open_in_new_text_window = TRUE)
+
+  expect_identical(result, "term-1")
+  expect_length(create_calls, 1)
+  expect_length(send_calls, 1)
+  expect_identical(send_calls[[1]]$id, "term-1")
+  expect_match(send_calls[[1]]$text, "watch -n 3 cat")
+  expect_match(send_calls[[1]]$text, "checklist.txt")
+})
+
+test_that("watch_pipeline_checklist(open_in_new_text_window = TRUE) errors clearly outside RStudio instead of silently doing nothing", {
+  project <- tempfile("mNGSp_test_")
+  dir.create(file.path(project, "session_logs", "2025-01-01"), recursive = TRUE)
+  config <- fake_config(project = project)
+
+  testthat::local_mocked_bindings(isAvailable = function(...) FALSE, .package = "rstudioapi")
+
+  expect_error(
+    watch_pipeline_checklist(config, open_in_new_text_window = TRUE),
+    "RStudio"
+  )
+})
