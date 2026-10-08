@@ -10,7 +10,9 @@ run_experiment_subprocess(
   logfile_out,
   logfile_err,
   on_poll = NULL,
-  poll_interval = 10
+  poll_interval = 10,
+  install_race_retries = 1,
+  install_race_wait = 20
 )
 }
 \arguments{
@@ -31,6 +33,25 @@ subprocess is alive (e.g. to render a progress checklist). Takes no
 arguments.}
 
 \item{poll_interval}{numeric, seconds between polls, default 10.}
+
+\item{install_race_retries}{integer, default 1. \code{package = "massiveNGSpipe"}
+makes every single call here independently \code{loadNamespace()} this
+same package from disk in a brand new process -- callr spawns a real
+OS process, not a fork, so it shares no in-memory state with the
+caller and cannot skip this. If a concurrent \code{R CMD INSTALL} of
+massiveNGSpipe itself is in progress, that load can land on a
+half-swapped install (R's own staged install does
+\code{unlink(old); file.rename(new, old)} as two separate steps, not
+one atomic op) and fail with a distinctive, transient error --
+confirmed live, 2026-10-07, two unrelated studies
+(PRJNA244941/PRJNA880902) both hit this within the same ~2 minute
+window of an unrelated massiveNGSpipe reinstall mid-run. Retried
+\code{install_race_retries} times (after \code{install_race_wait}
+seconds each) ONLY when the error matches
+\code{\link{is_install_race_error}}; any other error is raised
+immediately on the first attempt, same as before this existed.}
+
+\item{install_race_wait}{numeric, seconds to wait before a retry.}
 }
 \value{
 whatever \code{func} returns. Re-raises the child's error as a

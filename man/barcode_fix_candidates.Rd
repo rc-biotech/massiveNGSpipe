@@ -10,7 +10,8 @@ barcode_fix_candidates(
   outliers_per_sample_path,
   min_majority_frac = 0.5,
   min_days_untouched = 0,
-  n = 10
+  n = 10,
+  verify_live = TRUE
 )
 }
 \arguments{
@@ -29,12 +30,29 @@ many days -- useful when avoiding interference with other concurrent
 work matters, not just avoiding already-fixed samples}
 
 \item{n}{integer, default 10. Max rows to return, ranked best first}
+
+\item{verify_live}{logical, default TRUE. Re-check each remaining
+candidate against its CURRENT on-disk \code{adapter_barcode_table.csv}
+(see \code{\link{verify_candidate_live}}) and drop/re-rank using that
+instead of trusting \code{outliers_per_sample_path}'s snapshot number.
+That snapshot can go stale fast: confirmed live, 2026-10-07, checking
+9 candidates from a 5-day-old CSV by hand -- 4 were stale (one
+study's majority_frac had flipped from 98.6\% to 29\%; one candidate's
+target run was already \code{barcode_detected=TRUE}; two others had
+only 1-2 rows on disk, not the 13-16 the snapshot claimed), each
+costing a real download+redetection cycle to discover by hand. Set to
+FALSE to restore the old snapshot-only behavior (e.g. if
+\code{outliers_per_sample_path} was just freshly regenerated and a
+live re-check would only add cost for no benefit).}
 }
 \value{
 data.table(exp, run, study_accession, organism,
 majority_frac, n_study_samples, n_study_barcode_true,
 trim_mean_length, study_median_len, days_untouched), sorted by
-majority_frac descending
+majority_frac descending. \code{majority_frac}/\code{n_study_samples}/
+\code{n_study_barcode_true} reflect the live table when
+\code{verify_live = TRUE} and live data was available, the original
+snapshot otherwise.
 }
 \description{
 Automates the per-candidate triage this session did by hand: reads

@@ -4,33 +4,74 @@
 \alias{watch_pipeline_checklist}
 \title{Live-watch the pipeline checklist in place, like a download progress bar}
 \usage{
-watch_pipeline_checklist(config, interval = 2)
+watch_pipeline_checklist(
+  config,
+  interval = 2,
+  index = 1,
+  open_in_new_text_window = FALSE
+)
 }
 \arguments{
 \item{config}{the mNGSp config object}
 
 \item{interval}{numeric, seconds between redraws, default 2}
+
+\item{index}{integer, default 1 (newest session). Same convention as
+\code{\link{last_session_errors}}'s own \code{index} argument --
+pass e.g. \code{2} to watch/inspect the previous session's final
+checklist instead of the current/newest one.}
+
+\item{open_in_new_text_window}{logical, default FALSE. When TRUE,
+opens a real RStudio Terminal tab (via \code{rstudioapi::terminalCreate()})
+running \code{watch -n <interval> cat <path>} there instead of
+redrawing in THIS console -- the Terminal pane is a real terminal
+emulator (unlike the Console), so \code{\r}/ANSI redraw-in-place
+actually works. Requires an active RStudio session; errors
+otherwise. Returns immediately (does not block this R session), and
+does not use \code{interval} for its own redraw loop beyond passing
+it through to \code{watch}.}
 }
 \value{
-invisible(NULL). Runs until interrupted (Ctrl+C, or Esc in
-RStudio -- though see the terminal note above).
+invisible(NULL), or (when \code{open_in_new_text_window = TRUE})
+invisibly the new terminal's id. The non-window form runs until
+interrupted (Ctrl+C, or Esc in RStudio -- though see the terminal
+note above).
 }
 \description{
-Continuously redraws \code{checklist_path(config)}'s current content in
-the terminal in place -- like \code{curl}'s progress bar, or
-\code{docker compose up}'s multi-line status block -- instead of
-printing a new block underneath on every refresh. Purely a read-only
-viewer: it never runs, mutates, or blocks the pipeline itself. Meant to
-be run in a second terminal/session alongside a real \code{\link{run_pipeline}}
-call happening elsewhere (in another terminal, or in the background).
+Continuously redraws one session's checklist content in the terminal
+in place -- like \code{curl}'s progress bar, or \code{docker compose
+up}'s multi-line status block -- instead of printing a new block
+underneath on every refresh. Purely a read-only viewer: it never
+runs, mutates, or blocks the pipeline itself. Meant to be run in a
+second terminal/session alongside a real \code{\link{run_pipeline}}
+call happening elsewhere (in another terminal, or in the
+background).
 }
 \details{
+Resolves which checklist to watch as follows: if \code{config$session_dir}
+is set AND \code{index} was left at its default (i.e. not explicitly
+requested), that session is used directly -- it's the authoritative
+"this specific session" pointer when called from within an
+already-running session, and strictly more correct than "newest by
+directory listing" whenever a second, newer \code{run_pipeline()}
+call has started concurrently elsewhere (which would otherwise make
+\code{index = 1} resolve to that OTHER session). Otherwise -- the
+normal case of a fresh \code{config} built in a separate
+terminal/session, which never has \code{session_dir} set, the main
+use case this function exists for -- the checklist is resolved via
+\code{index} against the \code{session_logs} directory listing
+(newest first), so \code{index = 1} means "whichever session is
+newest", the currently-running one in the normal live-watch case.
+An explicitly-passed \code{index} always wins over
+\code{session_dir}, even when the latter is set, since that's a
+clear request to inspect a specific past session.
+
 Uses ANSI cursor-movement escape codes (move up N lines, clear to end of
 screen, redraw), so it needs a real terminal emulator -- an \code{Rscript}
 or R session run from an actual shell. RStudio's own Console pane does
-not support cursor repositioning (only plain text/color codes), so this
-will not redraw in place there, only append. From a plain shell (no R
-needed at all), \code{watch -n 2 cat <checklist_path(config)>} does the
-same job using the standard \code{watch} utility, if that's simpler for
-your setup.
+NOT support cursor repositioning (only plain text/color codes), so this
+will not redraw in place there, only append -- use
+\code{open_in_new_text_window = TRUE} in that case (or from a plain
+shell with no RStudio at all, \code{watch -n 2 cat <path>} does the
+same job directly, no R needed).
 }
