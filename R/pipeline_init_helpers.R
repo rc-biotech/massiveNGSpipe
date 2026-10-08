@@ -367,6 +367,32 @@ bpparam_from_config <- function(config, step, workers = config$threads[[step]]) 
   stopifnot(is.list(parallel_conf) && !is.null(names(parallel_conf)))
   stopifnot(all(names(parallel_conf) %in% c("log", "logdir", "jobname", "stop.on.error")))
 
+  # Warn (never block -- this can be a deliberate choice) when this
+  # step's own worker count, multiplied by threads$main's own
+  # stage-group worker count, is disproportionate to detected cores.
+  # Generalizes the lesson behind threads_blas_cap (pshifted/
+  # valid_pshift/pcounts specifically, see its own roxygen,
+  # R/pipeline_config.R) to ANY current or future step: each forked
+  # worker can independently spin up its own full-width BLAS/OpenMP
+  # thread pool regardless of how many sibling workers exist, and the
+  # aggregate across threads$main x this step's own workers can
+  # exhaust a container's cgroup pids.max outright -- confirmed live,
+  # 2026-10-08 (pthread_create() -> EAGAIN "Resource temporarily
+  # unavailable", reproduced in a synthetic repro at matching scale).
+  if (step != "main" && !is.null(config$threads$main) &&
+      workers > 1 && config$threads$main > 1) {
+    total_estimate <- config$threads$main * workers
+    cores <- tryCatch(parallel::detectCores(), error = function(e) NA_integer_)
+    if (!is.na(cores) && total_estimate > cores * 4) {
+      warning("config$threads$main (", config$threads$main, ") x threads$", step, " (", workers,
+              ") = ", total_estimate, " potential concurrent workers, well above detected cores (",
+              cores, "). Each one may ALSO spin up its own BLAS/OpenMP thread pool independently, ",
+              "which can exhaust a container's cgroup pids.max outright (confirmed live, 2026-10-08) ",
+              "-- consider lowering one of these, or capping via a threads_blas_cap-style bound.",
+              call. = FALSE)
+    }
+  }
+
   if (step != "main") {
     if (!is.null(parallel_conf$logdir) & !is.na(parallel_conf$logdir)) {
       parallel_conf$logdir <- file.path(parallel_conf$logdir, step)
