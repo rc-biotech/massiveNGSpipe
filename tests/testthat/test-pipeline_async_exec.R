@@ -98,11 +98,35 @@ test_that("is_install_race_error matches the confirmed-live massiveNGSpipe insta
   expect_true(is_install_race_error(mk(
     "read failed on /usr/local/lib/R/site-library/massiveNGSpipe/R/massiveNGSpipe.rdb")))
   expect_true(is_install_race_error(mk("there is no package called 'massiveNGSpipe'")))
+  # Confirmed live, 2026-10-08, PRJNA414611's align step: the package
+  # briefly entirely absent (between R's own unlink(old) and
+  # file.rename(new, old) during a concurrent reinstall) produces THIS
+  # message, not any of the three above -- originally anticipated but
+  # unconfirmed when this function was first written, so the regex
+  # didn't cover it and the retry never fired.
+  expect_true(is_install_race_error(mk(
+    "cannot open file '/usr/local/lib/R/site-library/massiveNGSpipe/R/massiveNGSpipe.rdb': No such file or directory")))
   # Scoped to massiveNGSpipe specifically -- a real lazy-load problem in a
   # DIFFERENT package must not be silently retried/masked.
   expect_false(is_install_race_error(mk(
     "lazy-load database '/usr/local/lib/R/site-library/otherpkg/R/otherpkg.rdb' is corrupt")))
+  expect_false(is_install_race_error(mk(
+    "cannot open file '/usr/local/lib/R/site-library/otherpkg/R/otherpkg.rdb': No such file or directory")))
   expect_false(is_install_race_error(mk("some unrelated real error")))
+})
+
+test_that("is_install_race_error matches a real callr::r_bg() chained error, not just a plain stop()", {
+  # callr's own conditionMessage() already folds the full "Caused by
+  # error: ..." chain into the TOP-level message (confirmed directly,
+  # 2026-10-08) -- this locks that in, using a real callr subprocess
+  # rather than a hand-built condition, so a future callr version
+  # changing that behavior would be caught here.
+  px <- callr::r_bg(function() {
+    stop("cannot open file '/fake/path/massiveNGSpipe.rdb': No such file or directory")
+  })
+  while (px$is_alive()) Sys.sleep(0.05)
+  e <- tryCatch(px$get_result(), error = function(e) e)
+  expect_true(is_install_race_error(e))
 })
 
 test_that("run_experiment_subprocess retries once on a matching install-race error, then returns the retry's result", {

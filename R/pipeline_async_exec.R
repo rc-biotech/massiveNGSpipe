@@ -93,21 +93,34 @@ run_experiment_subprocess <- function(func, args = list(),
 
 #' Does this condition look like the massiveNGSpipe install/lazy-load race?
 #'
-#' Matches the two concrete error messages confirmed live (see
-#' \code{\link{run_experiment_subprocess}}'s own doc for the incident) plus
-#' one anticipated variant (package briefly absent entirely, between R's
-#' \code{unlink(old)} and \code{file.rename(new, old)}) that follows from
-#' the same root cause but was not itself directly observed. Deliberately
-#' scoped to massiveNGSpipe's own install path specifically, not a generic
-#' "any lazy-load error" matcher, so an unrelated real corruption/package
-#' problem elsewhere still surfaces immediately instead of being retried
-#' and masked.
+#' Matches the concrete error messages confirmed live (see
+#' \code{\link{run_experiment_subprocess}}'s own doc for the incidents).
+#' The 4th alternative (\code{cannot open file '...massiveNGSpipe.rdb'})
+#' was originally an ANTICIPATED variant (package briefly absent
+#' entirely, between R's \code{unlink(old)} and \code{file.rename(new,
+#' old)}) that wasn't itself directly observed when the other three
+#' were added -- it since has been, live, 2026-10-08
+#' (PRJNA414611's \code{align} step, during an unrelated massiveNGSpipe
+#' reinstall), and was NOT caught by the original 3-alternative regex,
+#' so the retry never fired and the error surfaced immediately instead.
+#' Confirmed directly (not assumed) that \code{callr}'s own
+#' \code{conditionMessage()} already includes the full "Caused by
+#' error: ..." chain text, not just the outer "in callr subprocess."
+#' wrapper, so matching against \code{conditionMessage(cnd)} alone is
+#' sufficient -- no need to separately inspect \code{cnd$parent}.
+#' Deliberately scoped to massiveNGSpipe's own install path
+#' specifically, not a generic "any lazy-load error" matcher, so an
+#' unrelated real corruption/package problem elsewhere still surfaces
+#' immediately instead of being retried and masked.
 #' @param cnd a condition object (as caught by \code{tryCatch(..., error = )})
 #' @return logical
 #' @noRd
 is_install_race_error <- function(cnd) {
   msg <- conditionMessage(cnd)
-  grepl("massiveNGSpipe\\.rdb['\"]? is corrupt|read failed on .*massiveNGSpipe\\.rdb|there is no package called .massiveNGSpipe.",
+  grepl(paste0("massiveNGSpipe\\.rdb['\"]? is corrupt|",
+              "read failed on .*massiveNGSpipe\\.rdb|",
+              "there is no package called .massiveNGSpipe.|",
+              "cannot open file '[^']*massiveNGSpipe\\.rdb'"),
         msg, perl = TRUE)
 }
 
