@@ -48,6 +48,7 @@ Imports:
     R.utils,
     readxl,
     remotes,
+    RhpcBLASctl,
     RiboCrypt,
     rlang,
     rstudioapi,

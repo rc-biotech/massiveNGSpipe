@@ -95,7 +95,35 @@
 #' an upper bound, but the real worker count used is further capped at
 #' runtime by available memory (see \code{memory_safe_worker_count()},
 #' R/pipeline_collapse.R) since collapsing large fastq files is memory-
-#' heavy per worker.
+#' heavy per worker. \code{pshifted}/\code{valid_pshift}/\code{pcounts}
+#' default to \code{min(threads_default, threads_blas_cap)} for the
+#' same kind of reason, see \code{threads_blas_cap}'s own roxygen.
+#' @param threads_blas_cap numeric, default 32. Upper bound used for
+#' \code{pshifted}/\code{valid_pshift}/\code{pcounts} in \code{threads}
+#' below (the steps that otherwise default to the FULL
+#' \code{threads_default} worker count, unlike \code{trim}/\code{collapse}
+#' which already have their own smaller fixed caps). Confirmed live,
+#' 2026-10-08: running \code{threads_default} (46) forked workers of a
+#' stage-group that is ITSELF one of several workers forked by
+#' \code{run_pipeline()}'s own main-level dispatch multiplies out to
+#' hundreds of OS-level processes+threads very quickly -- each one
+#' ALSO starting its own uncapped OpenBLAS thread pool (as many threads
+#' as detected cores, by default) -- and can exhaust the container's
+#' cgroup \code{pids.max} outright (\code{pthread_create() ->
+#' EAGAIN "Resource temporarily unavailable"}, reproduced live; this
+#' is a real, separate failure mode from the actual hang that prompted
+#' the investigation, but a closely related one, and 46 is unsafe for
+#' the same underlying reason either way). A real-data benchmark
+#' (\code{shift_qc_cached()}, 30 samples, PRJNA637713-zea_mays) found
+#' 32 workers fastest in practice anyway (180s vs 46 workers' 201-300s
+#' across two repeated runs, and vs 371s at 8 workers) -- this is not a
+#' safety-for-speed tradeoff, 32 wins on both counts. See also
+#' \code{blas_set_num_threads()}/\code{omp_set_num_threads()}
+#' (RhpcBLASctl) below, called once here with this SAME value: capping
+#' the worker COUNT alone isn't sufficient on its own, since each
+#' forked worker can ALSO independently try to spin up its own
+#' full-width BLAS thread pool regardless of how many sibling workers
+#' exist.
 #' @param discord_webhook = discord_connection_default_cached()
 #' @param BPPARAM_MAIN BiocParallel::MulticoreParam(length(pipeline_steps))
 #' The main parallel backend for pipeline, specifying logging behavoir etc.
@@ -143,14 +171,28 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             verbose = TRUE,
                             thread_type = BiocParallel::MulticoreParam,
                             threads_default = BiocParallel::bpworkers(),
+                            threads_blas_cap = 32,
                             threads = list(main = length(pipeline_steps),
                                            default = threads_default,
                                            trim = min(threads_default, 8),
                                            collapse = min(threads_default, 16),
-                                           pshifted = threads_default,
-                                           valid_pshift = threads_default,
-                                           pcounts = threads_default
+                                           pshifted = min(threads_default, threads_blas_cap),
+                                           valid_pshift = min(threads_default, threads_blas_cap),
+                                           pcounts = min(threads_default, threads_blas_cap)
                                            )) {
+  # Caps each forked worker's OWN internal BLAS/OpenMP thread pool to
+  # the same bound as threads_blas_cap above -- see that parameter's
+  # own roxygen for why the worker COUNT cap alone isn't sufficient.
+  # Set once, here, in the parent: confirmed live that this setting
+  # survives fork() and is correctly honored by every forked
+  # descendant without needing to be re-called inside each one
+  # (RhpcBLASctl::blas_set_num_threads() sets a plain thread-count
+  # value, not a live thread-pool handle, so copy-on-write fork
+  # semantics carry it over cleanly -- unlike the thread pool itself,
+  # which is exactly why OpenBLAS's own uncapped-by-default pool is
+  # unsafe to inherit through a fork in the first place).
+  RhpcBLASctl::blas_set_num_threads(threads_blas_cap)
+  RhpcBLASctl::omp_set_num_threads(threads_blas_cap)
   if (verbose) {
     message("Setting up mNGSp config..")
     message("- Preset (mode): ", preset, " (", mode, ")")
