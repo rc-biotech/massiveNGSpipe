@@ -205,7 +205,22 @@ shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct 
     cds <- ctx$cds; mrna <- ctx$mrna
     idx <- which(needs_compute)
     results <- BiocParallel::bplapply(idx, function(i, df, cds, mrna, upstream, downstream) {
-      shift_qc_one_sample(df[i, ], cds, mrna, upstream, downstream)
+      res <- shift_qc_one_sample(df[i, ], cds, mrna, upstream, downstream)
+      # Write AS SOON AS this one sample finishes, inside the worker,
+      # instead of returning it to the master for a deferred write
+      # after the WHOLE batch completes. Each sample's cache files are
+      # its own, distinct paths (shift_qc_cache_paths()), so concurrent
+      # workers writing their own sample's files is safe. This is what
+      # makes an interrupted run actually resumable: a kill/crash
+      # partway through the batch now keeps every already-finished
+      # sample cached, instead of losing the whole batch's progress
+      # because nothing had been persisted yet. Confirmed live,
+      # 2026-10-08: the OLD deferred-write design meant a multi-hour
+      # PRJNA637713 valid_pshift run, if ever killed, would have lost
+      # every sample's work regardless of how many had already
+      # finished computing well before the kill.
+      if (!inherits(res, "shift_qc_sample_error")) write_shift_qc_cache(df[i, ], res)
+      res
     }, df = df, cds = cds, mrna = mrna, upstream = upstream, downstream = downstream,
        BPPARAM = BPPARAM)
     for (j in seq_along(idx)) {
@@ -213,8 +228,6 @@ shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct 
       if (inherits(res, "shift_qc_sample_error")) {
         warning("shift_qc_cached(): sample ", ORFik::runIDs(df[idx[j], ]),
                " failed, skipping cache for this sample: ", res$message)
-      } else {
-        write_shift_qc_cache(df[idx[j], ], res)
       }
     }
   }

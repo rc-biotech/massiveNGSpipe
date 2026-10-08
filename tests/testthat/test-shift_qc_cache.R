@@ -198,6 +198,43 @@ test_that("shift_qc_cached() recomputes only the one sample whose pshifted file 
   expect_identical(call_log, ORFik::runIDs(df[2, ]))
 })
 
+test_that("shift_qc_cached() writes each sample's cache file as soon as THAT sample finishes, not after the whole batch returns", {
+  # The crash-safety property this locks in: an interrupted run (kill,
+  # OOM, crash) partway through a large batch must keep every
+  # already-finished sample's work, not lose the whole batch because
+  # nothing was persisted until every sample returned. Confirmed live,
+  # 2026-10-08: the OLD design (write all samples' results only AFTER
+  # the entire bplapply() call returned) meant a multi-hour
+  # PRJNA637713 valid_pshift run would have lost 100% of its progress
+  # on a kill, regardless of how many of its ~270 samples had already
+  # finished computing minutes or hours earlier.
+  testthat::local_mocked_bindings(pshifted_filepath = fake_qc_stub_pshifted_path)
+  df <- fake_qc_stub(n = 2)
+  fake_result <- list(hitmap = data.table::data.table(position = 1, frame = 0),
+                      frames = data.table::data.table(frame = 0, score = 1, fraction = "x", length = 30))
+  sample1_cached_before_sample2_ran <- NA
+  testthat::local_mocked_bindings(
+    shift_qc_one_sample = function(df_one_row, ...) {
+      run <- ORFik::runIDs(df_one_row)
+      if (run == "SRR002") {
+        # SerialParam runs SRR001 to completion first -- if its write
+        # happened inside its own worker turn (not deferred), its
+        # cache must already be valid by the time SRR002 starts.
+        sample1_cached_before_sample2_ran <<- shift_qc_cache_valid(df[1, ])
+      }
+      fake_result
+    },
+    shift_qc_build_combined_plot = function(...) invisible(NULL),
+    check_adapter_barcode_quality = function(...) invisible(NULL)
+  )
+  testthat::local_mocked_bindings(
+    shift_qc_annotation_context = function(df) list(upstream = 5, downstream = 20, cds = list(), mrna = list())
+  )
+
+  shift_qc_cached(df, BPPARAM = BiocParallel::SerialParam())
+  expect_true(sample1_cached_before_sample2_ran)
+})
+
 test_that("shift_qc_cached() excludes a failing sample from the aggregate and never caches it, so it's retried next time", {
   testthat::local_mocked_bindings(pshifted_filepath = fake_qc_stub_pshifted_path)
   df <- fake_qc_stub()
