@@ -47,25 +47,67 @@ pipe_trim_collapse <- function(pipelines, config) {
 }
 
 # Pipeline: trim -> bam files
+#
+# Dispatches at (study, organism) granularity, sorted by organism name
+# (stable, so studies sharing an organism keep their original relative
+# order and run back-to-back), instead of one call per whole study.
+# Two independent reasons:
+#
+# 1. Efficiency: pipeline_align_one_organism() keeps an organism's STAR
+#    genome index loaded in shared memory across samples; processing
+#    every study of one organism contiguously means that index gets
+#    loaded from disk once per organism per run, not once per study.
+# 2. Correctness: a study's organisms already proceed fully
+#    independently at every later stage (cleanbam, exp/ofst, pshift,
+#    counts, ... all key their own flag/resume state and I/O
+#    directories off the per-organism experiment name, conf["exp"], not
+#    the whole-study accession) -- this flattened dispatch extends that
+#    same independence to align/contam/cleanup too, so one organism's
+#    failure (or slow contaminant removal) in a mixed-organism study
+#    can no longer block, or get wrongly marked as failed alongside, a
+#    sibling organism that already succeeded.
+#
+# See R/star_index_lock.R for the cross-process safety half of this
+# (two independent run_pipeline() processes -- or just a manual script
+# -- aligning the same organism concurrently): sorting alone only
+# avoids unnecessary RELOADS within THIS one process's own dispatch, it
+# cannot know about a different process's schedule, hence the separate
+# claim/release mechanism inside pipeline_align_one_organism() itself.
 pipe_align_clean <- function(pipelines, config) {
   do_contamint_removal <- "contam" %in% names(config$flag)
-  for (pipeline in pipelines) {
-    exp <- pipeline$accession
+
+  units <- do.call(rbind, lapply(seq_along(pipelines), function(pipeline_index) {
+    organisms <- names(pipelines[[pipeline_index]]$organisms)
+    if (length(organisms) == 0) return(NULL)
+    data.frame(organism = organisms, pipeline_index = pipeline_index,
+              stringsAsFactors = FALSE)
+  }))
+  if (is.null(units) || nrow(units) == 0) return(invisible(NULL))
+  units <- units[order(units$organism), , drop = FALSE]
+
+  for (i in seq_len(nrow(units))) {
+    pipeline <- pipelines[[units$pipeline_index[i]]]
+    organism <- units$organism[i]
+    conf <- pipeline$organisms[[organism]]$conf
+    exp <- conf["exp"]
     if (file.exists(report_failed_pipe_path(config, exp))) next
     if (stop_requested(config)) break
+
+    keep_loaded_after <- i < nrow(units) && units$organism[i + 1] == organism
+
     try <- try({
       if (do_contamint_removal)
-        pipeline_align_contaminants(pipeline, config, pipelines)
+        pipeline_align_contaminants_one_organism(pipeline, organism, config, pipelines)
 
-      pipeline_align(pipeline, config, pipelines)
-
+      pipeline_align_one_organism(pipeline, organism, config, pipelines,
+                                  keep_loaded_after = keep_loaded_after)
     })
-    status <- report_failed_pipe(try, config, "align", pipeline$accession)
+    status <- report_failed_pipe(try, config, "align", exp)
     if (status) {
       try <- try({
-        pipeline_cleanup(pipeline,  config)
+        pipeline_cleanup_one_organism(pipeline, organism, config)
       })
-      report_failed_pipe(try, config, "clean", pipeline$accession)
+      report_failed_pipe(try, config, "clean", exp)
     }
   }
 }
