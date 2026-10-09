@@ -2,9 +2,14 @@
 % Please edit documentation in R/pipeline_preset_steps_sub.R
 \name{pipeline_align}
 \alias{pipeline_align}
-\title{Remove contaminants and align the reads to genome. Single and paired end
-reads are handled separately, so the resulting logs are renamed with a
-"_SINGLE" and/or "_PAIRED" suffix.}
+\title{Remove contaminants and align the reads to genome, for every organism
+of one study, in whatever order \code{names(pipeline$organisms)}
+gives. Thin per-study wrapper around
+\code{\link{pipeline_align_one_organism}} for callers that want
+whole-study semantics (e.g. standalone/interactive use); the live
+pipeline's own dispatch (\code{\link{pipe_align_clean}}) calls
+\code{pipeline_align_one_organism()} directly instead, in a
+cross-study, organism-sorted order.}
 \usage{
 pipeline_align(pipeline, config, pipelines = list(pipeline))
 }
@@ -17,12 +22,12 @@ pipeline_align(pipeline, config, pipelines = list(pipeline))
 checklist; defaults to just this pipeline if called standalone.}
 }
 \description{
-The per-pair alignment loop plus alignment_final_checks() run in a
-subprocess (STAR/multiQC's own console output does not otherwise get
-captured, see run_experiment_subprocess()) that this function polls for
-progress, rendering the checklist on each tick. STAR's shared-memory
-genome loading (keep.index.in.memory) is already fully loaded and
-unloaded within one experiment's loop today, so wrapping at this
-per-experiment granularity introduces no cross-process shared-memory
-risk.
+Remove contaminants and align the reads to genome, for every organism
+of one study, in whatever order \code{names(pipeline$organisms)}
+gives. Thin per-study wrapper around
+\code{\link{pipeline_align_one_organism}} for callers that want
+whole-study semantics (e.g. standalone/interactive use); the live
+pipeline's own dispatch (\code{\link{pipe_align_clean}}) calls
+\code{pipeline_align_one_organism()} directly instead, in a
+cross-study, organism-sorted order.
 }

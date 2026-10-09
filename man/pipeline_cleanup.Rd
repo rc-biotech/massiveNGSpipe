@@ -2,12 +2,16 @@
 % Please edit documentation in R/pipeline_preset_steps_sub.R
 \name{pipeline_cleanup}
 \alias{pipeline_cleanup}
-\title{Remove all files apart from logs and final aligned BAMs.
-Rename the BAMs into <run_accession>.bam format. As a final step, for
-presets that pre-alignment-collapse reads (e.g. Ribo-seq's "collapsed"
-flag), save the true (uncollapsed) per-read alignment metrics table +
-plot -- see \code{\link{save_expanded_alignment_metrics}} for why the
-native STAR/collapsed-level report can be badly misleading.}
+\title{Remove all files apart from logs and final aligned BAMs, for every
+organism of one study, in whatever order
+\code{names(pipeline$organisms)} gives. Thin per-study wrapper around
+\code{\link{pipeline_cleanup_one_organism}} for callers that want
+whole-study semantics; \code{\link{pipe_align_clean}} calls the
+one-organism version directly instead, immediately once that SAME
+organism's alignment succeeds -- never waiting on sibling organisms
+of the same study, which already proceed fully independently (every
+later stage's own flag/resume state and I/O directories are keyed by
+the per-organism experiment name, not the whole-study accession).}
 \usage{
 pipeline_cleanup(pipeline, config)
 }
@@ -17,10 +21,14 @@ pipeline_cleanup(pipeline, config)
 \item{config}{the mNGSp config object from \link{pipeline_config}}
 }
 \description{
-Remove all files apart from logs and final aligned BAMs.
-Rename the BAMs into <run_accession>.bam format. As a final step, for
-presets that pre-alignment-collapse reads (e.g. Ribo-seq's "collapsed"
-flag), save the true (uncollapsed) per-read alignment metrics table +
-plot -- see \code{\link{save_expanded_alignment_metrics}} for why the
-native STAR/collapsed-level report can be badly misleading.
+Remove all files apart from logs and final aligned BAMs, for every
+organism of one study, in whatever order
+\code{names(pipeline$organisms)} gives. Thin per-study wrapper around
+\code{\link{pipeline_cleanup_one_organism}} for callers that want
+whole-study semantics; \code{\link{pipe_align_clean}} calls the
+one-organism version directly instead, immediately once that SAME
+organism's alignment succeeds -- never waiting on sibling organisms
+of the same study, which already proceed fully independently (every
+later stage's own flag/resume state and I/O directories are keyed by
+the per-organism experiment name, not the whole-study accession).
 }

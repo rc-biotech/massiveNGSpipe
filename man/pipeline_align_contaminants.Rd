@@ -2,9 +2,11 @@
 % Please edit documentation in R/pipeline_preset_steps_sub.R
 \name{pipeline_align_contaminants}
 \alias{pipeline_align_contaminants}
-\title{Remove contaminants and align the reads to genome. Single and paired end
-reads are handled separately, so the resulting logs are renamed with a
-"_SINGLE" and/or "_PAIRED" suffix.}
+\title{Remove contaminants for every organism of one study, in whatever
+order \code{names(pipeline$organisms)} gives. Thin per-study wrapper
+around \code{\link{pipeline_align_contaminants_one_organism}} for
+callers that want whole-study semantics; \code{\link{pipe_align_clean}}
+calls the one-organism version directly instead.}
 \usage{
 pipeline_align_contaminants(pipeline, config, pipelines = list(pipeline))
 }
@@ -17,11 +19,9 @@ pipeline_align_contaminants(pipeline, config, pipelines = list(pipeline))
 checklist; defaults to just this pipeline if called standalone.}
 }
 \description{
-Runs in a subprocess for log hygiene (STAR's own console output does
-not otherwise get captured, see run_experiment_subprocess()). This is a
-whole-folder STAR call (ORFik::STAR.align.folder()), not a per-sample R
-loop, so unlike pipeline_trim()/pipeline_align() there is no natural
-per-sample point to hook a marker write into -- the checklist only ever
-shows study-level counts for this stage, same limitation as
-pshift/valid_pshift/pcounts (ORFik's own internal BiocParallel dispatch).
+Remove contaminants for every organism of one study, in whatever
+order \code{names(pipeline$organisms)} gives. Thin per-study wrapper
+around \code{\link{pipeline_align_contaminants_one_organism}} for
+callers that want whole-study semantics; \code{\link{pipe_align_clean}}
+calls the one-organism version directly instead.
 }

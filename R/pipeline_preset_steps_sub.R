@@ -209,22 +209,42 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
 
 
 
-#' Remove contaminants and align the reads to genome. Single and paired end
-#' reads are handled separately, so the resulting logs are renamed with a
-#' "_SINGLE" and/or "_PAIRED" suffix.
+#' Remove contaminants and align the reads to genome, for ONE organism of
+#' ONE study. Single and paired end reads are handled separately, so the
+#' resulting logs are renamed with a "_SINGLE" and/or "_PAIRED" suffix.
 #'
 #' The per-pair alignment loop plus alignment_final_checks() run in a
 #' subprocess (STAR/multiQC's own console output does not otherwise get
 #' captured, see run_experiment_subprocess()) that this function polls for
-#' progress, rendering the checklist on each tick. STAR's shared-memory
-#' genome loading (keep.index.in.memory) is already fully loaded and
-#' unloaded within one experiment's loop today, so wrapping at this
-#' per-experiment granularity introduces no cross-process shared-memory
-#' risk.
+#' progress, rendering the checklist on each tick.
+#'
+#' STAR's shared-memory genome loading (keep.index.in.memory) is claimed
+#' (\code{\link{star_index_claim}}) for the duration of this call and
+#' released on exit regardless of success/failure, so a DIFFERENT
+#' process aligning a different study of the SAME organism concurrently
+#' (a separate run_pipeline() -- online vs local, Ribo-seq vs RNA-seq --
+#' or an ad hoc manual script) can never have its still-in-use index
+#' removed out from under it. This replaces an earlier, incorrect
+#' assumption ("already fully loaded and unloaded within one
+#' experiment's loop today, so wrapping at this per-experiment
+#' granularity introduces no cross-process shared-memory risk") that a
+#' real ~70-minute silent stall this session (PRJNA1051101-homo_sapiens,
+#' 2026-10-08) directly contradicted: removing a shared-memory segment
+#' out from under a live STAR process does not fail loudly, it hangs.
 #' @inheritParams pipeline_download
+#' @param organism character, one name from \code{names(pipeline$organisms)}
 #' @param pipelines the full pipelines list, used only to render the
 #' checklist; defaults to just this pipeline if called standalone.
-pipeline_align <- function(pipeline, config, pipelines = list(pipeline)) {
+#' @param keep_loaded_after logical, default FALSE. Set TRUE when the
+#' caller already knows (from a sorted, flattened dispatch across many
+#' studies, see \code{\link{pipe_align_clean}}) that another
+#' (study, organism) unit for this SAME organism is coming up next --
+#' skips even trying to remove the index, purely a scheduling
+#' optimization layered on top of (never a substitute for) the
+#' cross-process claim check above.
+#' @noRd
+pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = list(pipeline),
+                                        keep_loaded_after = FALSE) {
   # TODO: fix multiqc error for trimmed
   study <- pipeline$study
   did_contamint_removal <- "contam" %in% names(config$flag)
@@ -237,95 +257,121 @@ pipeline_align <- function(pipeline, config, pipelines = list(pipeline)) {
 
   star.path <- STAR.install()
   fastp.path <- install.fastp()
+
+  conf <- pipeline$organisms[[organism]]$conf
+  if (!step_is_next_not_done(config, "aligned", conf["exp"])) return(invisible(NULL))
+  index <- pipeline$organisms[[organism]]$index
+  runs_full <- study[ScientificName == organism]
+  experiment <- conf["exp"]
+  # browser()
+  trimmed_dir <- fs::path(conf["bam"], "trim")
+  raw_fastq_dir <- conf["fastq"]
+  output_dir <- conf["bam"]
+
+  keep.unaligned.genome <- config$keep.unaligned.genome
+
+  # Alignment
+  input_dir <- if (did_collapse) {
+    c(fs::path(trimmed_dir, "SINGLE"), fs::path(trimmed_dir, "PAIRED"))
+  } else ifelse(did_trim, trimmed_dir, raw_fastq_dir)
+  input_dir <- input_dir[dir.exists(input_dir)]
+
+  # Resume support: filter to the not-yet-done subset BEFORE resolving
+  # files (not after): run_files_organizer() requires every row it's
+  # given to resolve to a real file, but an already-aligned sibling's
+  # trimmed/collapsed input can be gone (config$delete_trimmed_files/
+  # delete_collapsed_files) -- resolving against the full study here
+  # would error on that missing file even when only reprocessing one
+  # already-done study's single fixed sample. Same class of bug as
+  # pipeline_trim()/pipeline_collapse()'s own run_files_organizer()
+  # calls.
+  done_runs <- samples_done(config, "aligned", experiment)
+  runs <- runs_full[!(Run %in% done_runs)]
+  pairs <- if (nrow(runs) > 0) run_files_organizer(runs, input_dir) else list()
+
+  first_pair_index <- which(lengths(pairs) == 2)[1]
+  any_paired <- !is.na(first_pair_index)
+  strandMode <- 1
+  if (any_paired) {
+    if (!file.exists(file.path(output_dir, "strandMode.rds"))) {
+      message("Paired end ignored for now, detecting forward direction read file and
+          using that only!")
+      genomeDir <- file.path(index, "genomeDir")
+      strandMode <- detect_strand_mode(pairs[[first_pair_index]][1],
+                                       pairs[[first_pair_index]][2],
+                                       genomeDir, star = star.path,
+                                       keepGenomeLoaded = "LoadAndKeep")
+
+      saveRDS(strandMode, file.path(output_dir, "strandMode.rds"))
+    } else strandMode <- readRDS(file.path(output_dir, "strandMode.rds"))
+  }
+
+  if (nrow(runs) > 0) {
+    owner_id <- star_index_claim(index)
+    on.exit(star_index_release(index, owner_id), add = TRUE)
+    run_experiment_subprocess(
+      func = function(pairs, runs, strandMode, output_dir, index, steps,
+                      keep.unaligned.genome, star.path, fastp.path,
+                      input_dir, config, experiment, owner_id, keep_loaded_after) {
+        cat("Total number of files are:\n")
+        cat(length(pairs)); cat("\n")
+        for (pair_index in seq_along(pairs)) {
+          R1_R2 <- pairs[[pair_index]]
+          cat("Single end mode\n")
+          cat("Run ", pair_index, " / ", length(pairs), "\n")
+          single_end <- lengths(pairs[pair_index]) == 1
+          run <- runs[pair_index]$Run
+          is_last_sample <- identical(R1_R2, tail(pairs, 1)[[1]])
+          # Keep the shared-memory index loaded unless this is the last
+          # sample of THIS call AND nothing else (neither a known
+          # upcoming same-organism unit, nor -- checked fresh right
+          # here, right before the only point that matters -- a
+          # different process's still-active claim) needs it anymore.
+          keep.index.in.memory <- !is_last_sample || keep_loaded_after ||
+            !star_index_safe_to_remove(index, owner_id)
+          file1 <- R1_R2[ifelse(single_end, 1, strandMode)]
+          file2 <- if (!is.na(R1_R2[2]) & FALSE) {R1_R2[ifelse(strandMode == 1, 2, 1)]}
+          ORFik::STAR.align.single(file1, file2,
+                                   output.dir = output_dir,
+                                   index.dir = index, steps = steps,
+                                   resume = "ge",
+                                   keep.index.in.memory = keep.index.in.memory,
+                                   keep.unaligned.genome = keep.unaligned.genome,
+                                   star.path = star.path, fastp = fastp.path
+          )
+          #TODO: Now _1 and _2 will be kept, but fixed in cleanup, do I want it like that ?
+          set_sample_flag(config, "aligned", experiment, run)
+        }
+        alignment_final_checks(input_dir, output_dir, runs, pairs, config, steps)
+      },
+      args = list(pairs = pairs, runs = runs, strandMode = strandMode,
+                  output_dir = output_dir, index = index, steps = steps,
+                  keep.unaligned.genome = keep.unaligned.genome,
+                  star.path = star.path, fastp.path = fastp.path,
+                  input_dir = input_dir, config = config, experiment = experiment,
+                  owner_id = owner_id, keep_loaded_after = keep_loaded_after),
+      logfile_out = file.path(pipeline_log_base(config), "console", "align", paste0(experiment, ".out.log")),
+      logfile_err = file.path(pipeline_log_base(config), "console", "align", paste0(experiment, ".err.log")),
+      on_poll = function() pipeline_checklist(pipelines, config)
+    )
+  }
+  set_flag(config, "aligned", conf["exp"])
+}
+
+#' Remove contaminants and align the reads to genome, for every organism
+#' of one study, in whatever order \code{names(pipeline$organisms)}
+#' gives. Thin per-study wrapper around
+#' \code{\link{pipeline_align_one_organism}} for callers that want
+#' whole-study semantics (e.g. standalone/interactive use); the live
+#' pipeline's own dispatch (\code{\link{pipe_align_clean}}) calls
+#' \code{pipeline_align_one_organism()} directly instead, in a
+#' cross-study, organism-sorted order.
+#' @inheritParams pipeline_download
+#' @param pipelines the full pipelines list, used only to render the
+#' checklist; defaults to just this pipeline if called standalone.
+pipeline_align <- function(pipeline, config, pipelines = list(pipeline)) {
   for (organism in names(pipeline$organisms)) {
-    conf <- pipeline$organisms[[organism]]$conf
-    if (!step_is_next_not_done(config, "aligned", conf["exp"])) next
-    index <- pipeline$organisms[[organism]]$index
-    runs_full <- study[ScientificName == organism]
-    experiment <- conf["exp"]
-    # browser()
-    trimmed_dir <- fs::path(conf["bam"], "trim")
-    raw_fastq_dir <- conf["fastq"]
-    output_dir <- conf["bam"]
-
-    keep.unaligned.genome <- config$keep.unaligned.genome
-
-    # Alignment
-    input_dir <- if (did_collapse) {
-      c(fs::path(trimmed_dir, "SINGLE"), fs::path(trimmed_dir, "PAIRED"))
-    } else ifelse(did_trim, trimmed_dir, raw_fastq_dir)
-    input_dir <- input_dir[dir.exists(input_dir)]
-
-    # Resume support: filter to the not-yet-done subset BEFORE resolving
-    # files (not after): run_files_organizer() requires every row it's
-    # given to resolve to a real file, but an already-aligned sibling's
-    # trimmed/collapsed input can be gone (config$delete_trimmed_files/
-    # delete_collapsed_files) -- resolving against the full study here
-    # would error on that missing file even when only reprocessing one
-    # already-done study's single fixed sample. Same class of bug as
-    # pipeline_trim()/pipeline_collapse()'s own run_files_organizer()
-    # calls.
-    done_runs <- samples_done(config, "aligned", experiment)
-    runs <- runs_full[!(Run %in% done_runs)]
-    pairs <- if (nrow(runs) > 0) run_files_organizer(runs, input_dir) else list()
-
-    first_pair_index <- which(lengths(pairs) == 2)[1]
-    any_paired <- !is.na(first_pair_index)
-    strandMode <- 1
-    if (any_paired) {
-      if (!file.exists(file.path(output_dir, "strandMode.rds"))) {
-        message("Paired end ignored for now, detecting forward direction read file and
-            using that only!")
-        genomeDir <- file.path(index, "genomeDir")
-        strandMode <- detect_strand_mode(pairs[[first_pair_index]][1],
-                                         pairs[[first_pair_index]][2],
-                                         genomeDir, star = star.path,
-                                         keepGenomeLoaded = "LoadAndKeep")
-
-        saveRDS(strandMode, file.path(output_dir, "strandMode.rds"))
-      } else strandMode <- readRDS(file.path(output_dir, "strandMode.rds"))
-    }
-
-    if (nrow(runs) > 0) {
-      run_experiment_subprocess(
-        func = function(pairs, runs, strandMode, output_dir, index, steps,
-                        keep.unaligned.genome, star.path, fastp.path,
-                        input_dir, config, experiment) {
-          cat("Total number of files are:\n")
-          cat(length(pairs)); cat("\n")
-          for (pair_index in seq_along(pairs)) {
-            R1_R2 <- pairs[[pair_index]]
-            cat("Single end mode\n")
-            cat("Run ", pair_index, " / ", length(pairs), "\n")
-            single_end <- lengths(pairs[pair_index]) == 1
-            run <- runs[pair_index]$Run
-            keep.index.in.memory <- !identical(R1_R2, tail(pairs, 1)[[1]])
-            file1 <- R1_R2[ifelse(single_end, 1, strandMode)]
-            file2 <- if (!is.na(R1_R2[2]) & FALSE) {R1_R2[ifelse(strandMode == 1, 2, 1)]}
-            ORFik::STAR.align.single(file1, file2,
-                                     output.dir = output_dir,
-                                     index.dir = index, steps = steps,
-                                     resume = "ge",
-                                     keep.index.in.memory = keep.index.in.memory,
-                                     keep.unaligned.genome = keep.unaligned.genome,
-                                     star.path = star.path, fastp = fastp.path
-            )
-            #TODO: Now _1 and _2 will be kept, but fixed in cleanup, do I want it like that ?
-            set_sample_flag(config, "aligned", experiment, run)
-          }
-          alignment_final_checks(input_dir, output_dir, runs, pairs, config, steps)
-        },
-        args = list(pairs = pairs, runs = runs, strandMode = strandMode,
-                    output_dir = output_dir, index = index, steps = steps,
-                    keep.unaligned.genome = keep.unaligned.genome,
-                    star.path = star.path, fastp.path = fastp.path,
-                    input_dir = input_dir, config = config, experiment = experiment),
-        logfile_out = file.path(pipeline_log_base(config), "console", "align", paste0(experiment, ".out.log")),
-        logfile_err = file.path(pipeline_log_base(config), "console", "align", paste0(experiment, ".err.log")),
-        on_poll = function() pipeline_checklist(pipelines, config)
-      )
-    }
-    set_flag(config, "aligned", conf["exp"])
+    pipeline_align_one_organism(pipeline, organism, config, pipelines)
   }
 }
 
@@ -379,14 +425,27 @@ alignment_final_checks <- function(input_dir, output_dir, runs, pairs, config, s
 #' per-sample point to hook a marker write into -- the checklist only ever
 #' shows study-level counts for this stage, same limitation as
 #' pshift/valid_pshift/pcounts (ORFik's own internal BiocParallel dispatch).
+#'
+#' Unlike \code{\link{pipeline_align_one_organism}}, this never passes
+#' \code{keep.index.in.memory}/\code{keepGenomeLoaded} to
+#' \code{ORFik::STAR.align.folder()} at all, so it always defaults to
+#' FALSE -- the contaminant index is never put into shared memory here,
+#' so it is not exposed to the cross-process race that function guards
+#' against, and needs no claim/release of its own. Still extracted to
+#' one-organism granularity (same as align/cleanup) purely so
+#' \code{\link{pipe_align_clean}}'s flattened, organism-sorted dispatch
+#' can call all three stages at matching granularity -- a study's
+#' mouse-organism contaminant removal must never block its
+#' already-ready human-organism alignment from starting.
 #' @inheritParams pipeline_download
+#' @param organism character, one name from \code{names(pipeline$organisms)}
 #' @param pipelines the full pipelines list, used only to render the
 #' checklist; defaults to just this pipeline if called standalone.
-pipeline_align_contaminants <- function(pipeline, config, pipelines = list(pipeline)) {
-  study <- pipeline$study
-  for (organism in names(pipeline$organisms)) {
+#' @noRd
+pipeline_align_contaminants_one_organism <- function(pipeline, organism, config, pipelines = list(pipeline)) {
+    study <- pipeline$study
     conf <- pipeline$organisms[[organism]]$conf
-    if (!step_is_next_not_done(config, "contam", conf["exp"])) next
+    if (!step_is_next_not_done(config, "contam", conf["exp"])) return(invisible(NULL))
     index <- pipeline$organisms[[organism]]$index
     runs <- study[ScientificName == organism]
     trimmed_dir <- fs::path(conf["bam"], "trim")
@@ -444,6 +503,19 @@ pipeline_align_contaminants <- function(pipeline, config, pipelines = list(pipel
       on_poll = function() pipeline_checklist(pipelines, config)
     )
     set_flag(config, "contam", conf["exp"])
+}
+
+#' Remove contaminants for every organism of one study, in whatever
+#' order \code{names(pipeline$organisms)} gives. Thin per-study wrapper
+#' around \code{\link{pipeline_align_contaminants_one_organism}} for
+#' callers that want whole-study semantics; \code{\link{pipe_align_clean}}
+#' calls the one-organism version directly instead.
+#' @inheritParams pipeline_download
+#' @param pipelines the full pipelines list, used only to render the
+#' checklist; defaults to just this pipeline if called standalone.
+pipeline_align_contaminants <- function(pipeline, config, pipelines = list(pipeline)) {
+  for (organism in names(pipeline$organisms)) {
+    pipeline_align_contaminants_one_organism(pipeline, organism, config, pipelines)
   }
 }
 
@@ -454,14 +526,15 @@ pipeline_align_contaminants <- function(pipeline, config, pipelines = list(pipel
 #' plot -- see \code{\link{save_expanded_alignment_metrics}} for why the
 #' native STAR/collapsed-level report can be badly misleading.
 #' @inheritParams pipeline_download
-pipeline_cleanup <- function(pipeline, config) {
+#' @param organism character, one name from \code{names(pipeline$organisms)}
+#' @noRd
+pipeline_cleanup_one_organism <- function(pipeline, organism, config) {
     accession <- pipeline$accession
     study <- pipeline$study
     did_contamint_removal <- "contam" %in% names(config$flag)
     did_collapse <- "collapsed" %in% names(config$flag)
-    for (organism in names(pipeline$organisms)) {
         conf <- pipeline$organisms[[organism]]$conf
-        if (!step_is_next_not_done(config, "cleanbam", conf["exp"])) next
+        if (!step_is_next_not_done(config, "cleanbam", conf["exp"])) return(invisible(NULL))
         study_org <- study[ScientificName == organism,]
         bam_dir <- fs::path(conf["bam"], "aligned")
         if (did_contamint_removal) {
@@ -514,6 +587,22 @@ pipeline_cleanup <- function(pipeline, config) {
         }
 
         set_flag(config, "cleanbam", conf["exp"])
+}
+
+#' Remove all files apart from logs and final aligned BAMs, for every
+#' organism of one study, in whatever order
+#' \code{names(pipeline$organisms)} gives. Thin per-study wrapper around
+#' \code{\link{pipeline_cleanup_one_organism}} for callers that want
+#' whole-study semantics; \code{\link{pipe_align_clean}} calls the
+#' one-organism version directly instead, immediately once that SAME
+#' organism's alignment succeeds -- never waiting on sibling organisms
+#' of the same study, which already proceed fully independently (every
+#' later stage's own flag/resume state and I/O directories are keyed by
+#' the per-organism experiment name, not the whole-study accession).
+#' @inheritParams pipeline_download
+pipeline_cleanup <- function(pipeline, config) {
+    for (organism in names(pipeline$organisms)) {
+        pipeline_cleanup_one_organism(pipeline, organism, config)
     }
 }
 
