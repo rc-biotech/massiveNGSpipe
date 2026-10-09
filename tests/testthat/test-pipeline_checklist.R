@@ -307,6 +307,77 @@ test_that("pipeline_checklist: no parenthetical at all when init_time isn't set 
   expect_false(grepl("\\(", title))
 })
 
+test_that("pipeline_eta_hours returns 0 once the final stage is already fully done", {
+  expect_equal(pipeline_eta_hours("eta_test_done", 5, 5), 0)
+})
+
+test_that("pipeline_eta_hours returns NA on the first observation (no rate exists yet)", {
+  expect_true(is.na(pipeline_eta_hours("eta_test_first_obs", 1, 10)))
+})
+
+test_that("pipeline_eta_hours divides remaining studies by the real observed studies/hr rate", {
+  key <- "eta_test_real_rate"
+  t0 <- as.POSIXct("2026-10-09 10:00:00", tz = "UTC")
+  testthat::local_mocked_bindings(Sys.time = function() t0, .package = "base")
+  pipeline_eta_hours(key, 2, 10) # seeds the baseline: amount = 2 at t0
+
+  t1 <- t0 + 3600 # 1 hour later
+  testthat::local_mocked_bindings(Sys.time = function() t1, .package = "base")
+  # +2 studies done in 1 hour -> 2 studies/hr; 10 - 4 = 6 remaining -> 3 hours
+  expect_equal(pipeline_eta_hours(key, 4, 10), 3)
+})
+
+test_that("pipeline_eta_hours returns NA (not Inf) when the rate is still 0 (no progress since first seen)", {
+  key <- "eta_test_zero_rate"
+  t0 <- as.POSIXct("2026-10-09 10:00:00", tz = "UTC")
+  testthat::local_mocked_bindings(Sys.time = function() t0, .package = "base")
+  pipeline_eta_hours(key, 2, 10)
+
+  t1 <- t0 + 3600
+  testthat::local_mocked_bindings(Sys.time = function() t1, .package = "base")
+  expect_true(is.na(pipeline_eta_hours(key, 2, 10))) # no progress -> rate 0 -> NA, never Inf
+})
+
+test_that("pipeline_checklist title line shows a real ETA, in hours, once the final stage's own rate is known", {
+  # See pipeline_eta_hours() -- built from a real request (Håkon,
+  # 2026-10-09) to show a topline ETA alongside "running for N.N hours",
+  # computed from the final stage's own real studies/hr throughput
+  # rather than a guess.
+  testthat::local_mocked_bindings(
+    detect_drive = function(...) "/dev/fake",
+    get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 1,
+                                          Drive = "/dev/fake", Drive_Usage_Percent = "1%")
+  )
+  config <- fake_config(session_dir = tempfile("session_"),
+                        extra = list(init_time = Sys.time() - 3600))
+  pipelines <- c(fake_pipelines(accession = "PRJNA000001"),
+                fake_pipelines(accession = "PRJNA000002"),
+                fake_pipelines(accession = "PRJNA000003"))
+
+  # .rate_state (R/pipeline_checklist_rates.R) is shared, in-process,
+  # global state -- an EARLIER test in this file may already have
+  # seeded a "pipe_counts__eta" baseline (e.g. any other
+  # pipeline_checklist() call whose fixture also has a "pipe_counts"
+  # stage) at the real wall clock time, which would make this test's
+  # own "first call seeds the baseline" step below land on an
+  # ALREADY-seeded key instead. Clear it first so this test is
+  # deterministic regardless of run order.
+  if (exists("pipe_counts__eta", envir = .rate_state)) rm("pipe_counts__eta", envir = .rate_state)
+
+  t0 <- as.POSIXct("2026-10-09 10:00:00", tz = "UTC")
+  testthat::local_mocked_bindings(Sys.time = function() t0, .package = "base")
+  fake_mark_all_done(config, "pcounts", "PRJNA000001-homo_sapiens") # 1/3 done -- seeds the rate baseline, no ETA yet
+  suppressMessages(pipeline_checklist(pipelines, config, print = FALSE))
+
+  t1 <- t0 + 3600 # 1 hour later
+  testthat::local_mocked_bindings(Sys.time = function() t1, .package = "base")
+  fake_mark_all_done(config, "pcounts", "PRJNA000002-homo_sapiens") # 2/3 done, +1 study in 1hr -> 1 study/hr; 1 remaining -> ETA 1h
+  suppressMessages(pipeline_checklist(pipelines, config, print = FALSE))
+
+  title <- readLines(checklist_path(config))[1]
+  expect_match(title, "ETA: 1 hours\\)$")
+})
+
 test_that("session_log_dirs / session_checklist_path reflect real tempdir fixtures, newest first", {
   project <- tempfile("mNGSp_test_")
   d1 <- file.path(project, "session_logs", "2020-01-01")

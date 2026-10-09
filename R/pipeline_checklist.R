@@ -83,6 +83,50 @@ stage_progress_rate_label <- function(stage_name, marker_step, state, config,
   NA_character_
 }
 
+#' Rough overall pipeline ETA, in hours, from the final stage's own throughput
+#'
+#' The final stage in \code{config$flag_steps} only finishes a study once
+#' every earlier stage has already fed that study all the way through, so
+#' its OWN whole-stage studies-done trajectory is a faithful end-to-end
+#' throughput number for the entire pipeline -- no separate aggregation
+#' across stages is needed, and no extra bookkeeping beyond what's
+#' already tracked. Reuses the exact same
+#' \code{generic_progress_rate()}/\code{rate_since_first_seen()}
+#' studies/hr tracking already used for a markerless stage's own
+#' displayed rate label (R/pipeline_checklist_rates.R), just applied
+#' here regardless of whether the final stage happens to have a
+#' \code{marker_step} -- an ETA needs whole-STUDY throughput, not the
+#' per-sample rate within one currently-active study that a
+#' marker-step stage's own displayed label shows instead.
+#' @param last_stage_name character, the final stage's name (as it
+#' appears in \code{names(config$flag_steps)})
+#' @param done integer, studies done for that stage
+#' @param total integer, studies total for that stage
+#' @return numeric hours, 0 if already done (\code{done == total}), or
+#' \code{NA_real_} if not done but no usable rate is available yet
+#' (e.g. the first \code{pipeline_checklist()} call this session, before
+#' two observations exist to derive a rate from, or the final stage
+#' hasn't actually started progressing yet)
+#' @noRd
+pipeline_eta_hours <- function(last_stage_name, done, total) {
+  remaining <- total - done
+  if (remaining <= 0) return(0)
+  # A DISTINCT cache key ("__eta" suffix, never matching the bare
+  # stage_name or "stage_name experiment" forms stage_progress_rate_label()
+  # itself uses for this same stage) -- deliberately NOT the same key as
+  # that row's own displayed rate. The row loop already calls
+  # generic_progress_rate(stage_name, NA_character_, n_done) for a
+  # markerless stage exactly like a typical final stage, which both
+  # reads AND updates that key's baseline every single call; reusing it
+  # here would read a baseline updated moments earlier IN THIS SAME
+  # pipeline_checklist() call (by the row loop above), making dt_hours
+  # ~0 and the rate collapse to 0 on every call where the final stage is
+  # itself "running" -- exactly the case an ETA matters most.
+  rate <- generic_progress_rate(paste0(last_stage_name, "__eta"), NA_character_, done)
+  if (is.na(rate) || rate <= 0) return(NA_real_)
+  remaining / rate
+}
+
 #' Format elapsed time since a start time as "N.N hours"
 #' @param start POSIXct, e.g. config$init_time
 #' @param end POSIXct, default Sys.time()
@@ -237,10 +281,14 @@ session_checklist_path <- function(config, index = 1) {
 #' the title line's timestamp. NULL means "still running": auto-computed
 #' as \code{"(running for N.N hours)"} from \code{config$init_time}
 #' (silently omitted if \code{init_time} isn't set, e.g. calling this
-#' outside a real \code{run_pipeline()} session). A caller passes an
-#' explicit string -- e.g. \code{"done after 5.2 hours"},
-#' \code{"aborted after 5.2 hours"} -- for a final, one-off status
-#' (see \code{\link{run_pipeline}}'s own on.exit handler).
+#' outside a real \code{run_pipeline()} session), with an additional
+#' \code{", ETA: N.N hours"} appended whenever \code{\link{pipeline_eta_hours}}
+#' has a usable rate yet (silently omitted otherwise, e.g. too early in
+#' the run for a rate to exist). A caller passes an explicit string --
+#' e.g. \code{"done after 5.2 hours"}, \code{"aborted after 5.2 hours"}
+#' -- for a final, one-off status (see \code{\link{run_pipeline}}'s own
+#' on.exit handler); no ETA is appended in that case, a finished/aborted
+#' run has none to show.
 #' @return invisible(data.table) with columns: stage, done, total, state
 #' ("done"/"running"/"queued"), active_experiment, active_done, active_total
 #' (the latter three NA when no marker evidence is available/applicable)
@@ -303,7 +351,12 @@ pipeline_checklist <- function(pipelines, config, print = TRUE, run_status = NUL
   status_note <- if (!is.null(run_status)) {
     paste0(" (", run_status, ")")
   } else if (!is.null(config$init_time)) {
-    paste0(" (running for ", format_elapsed_hours(config$init_time), ")")
+    last_row <- tab[.N]
+    eta_hours <- pipeline_eta_hours(last_row$stage, last_row$done, last_row$total)
+    eta_suffix <- if (!is.na(eta_hours) && eta_hours > 0) {
+      sprintf(", ETA: %s hours", round(eta_hours, 1))
+    } else ""
+    paste0(" (running for ", format_elapsed_hours(config$init_time), eta_suffix, ")")
   } else ""
 
   path <- checklist_path(config)

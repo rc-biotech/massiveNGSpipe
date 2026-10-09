@@ -18,10 +18,14 @@ pipeline_checklist(pipelines, config, print = TRUE, run_status = NULL)
 the title line's timestamp. NULL means "still running": auto-computed
 as \code{"(running for N.N hours)"} from \code{config$init_time}
 (silently omitted if \code{init_time} isn't set, e.g. calling this
-outside a real \code{run_pipeline()} session). A caller passes an
-explicit string -- e.g. \code{"done after 5.2 hours"},
-\code{"aborted after 5.2 hours"} -- for a final, one-off status
-(see \code{\link{run_pipeline}}'s own on.exit handler).}
+outside a real \code{run_pipeline()} session), with an additional
+\code{", ETA: N.N hours"} appended whenever \code{\link{pipeline_eta_hours}}
+has a usable rate yet (silently omitted otherwise, e.g. too early in
+the run for a rate to exist). A caller passes an explicit string --
+e.g. \code{"done after 5.2 hours"}, \code{"aborted after 5.2 hours"}
+-- for a final, one-off status (see \code{\link{run_pipeline}}'s own
+on.exit handler); no ETA is appended in that case, a finished/aborted
+run has none to show.}
 }
 \value{
 invisible(data.table) with columns: stage, done, total, state
