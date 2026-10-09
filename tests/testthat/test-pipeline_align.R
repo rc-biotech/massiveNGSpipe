@@ -180,6 +180,102 @@ test_that("pipeline_align()'s delete_collapsed_files only deletes the input file
   expect_true(file.exists(sibling_file))
 })
 
+test_that("pipeline_align_one_organism() defers a sample that needs more RAM than is currently free, and still aligns a sibling that fits", {
+  # See R/pipeline_align_memory.R -- built from a real production
+  # failure (PRJNA599943-homo_sapiens_RNA-seq, SRR11294057, 2026-10-09).
+  config <- fake_config(preset = "Ribo-seq")
+  bam_dir <- tempfile("bam_")
+  pipelines <- fake_pipelines(
+    bam_dir = bam_dir,
+    runs = data.table::data.table(Run = c("SRR001", "SRR002"), LibraryLayout = "SINGLE",
+                                  LIBRARYTYPE = "RFP", ScientificName = "Homo sapiens")
+  )
+  exp_name <- "PRJNA000001-homo_sapiens"
+  fake_mark_all_done(config, c("trim", "collapsed"), exp_name)
+  trimmed_single_dir <- file.path(bam_dir, "trim", "SINGLE")
+  dir.create(trimmed_single_dir, recursive = TRUE)
+  for (run in c("SRR001", "SRR002"))
+    file.create(file.path(trimmed_single_dir, paste0("collapsed_trimmed_", run, ".fasta.gz")))
+
+  testthat::local_mocked_bindings(
+    run_files_organizer = function(runs, ...) {
+      stats::setNames(as.list(file.path(trimmed_single_dir, paste0("collapsed_trimmed_", runs$Run, ".fasta.gz"))), NULL)
+    }
+  )
+  # Only 10GB currently free, but 90GB usable total -- SRR001's "need"
+  # (50GB) exceeds free but not total (-> defer); SRR002's (5GB) fits
+  # easily (-> proceed).
+  testthat::local_mocked_bindings(
+    get_system_usage = function(...) list(Memory_Total_GB = 100, Memory_Usage_GB = 90)
+  )
+  testthat::local_mocked_bindings(
+    estimate_bam_sort_ram = function(file1) if (grepl("SRR001", file1)) 50e9 else 5e9
+  )
+  star_calls <- character()
+  testthat::local_mocked_bindings(
+    STAR.install = function(...) "star", install.fastp = function(...) "fastp",
+    STAR.align.single = function(file1, ...) { star_calls <<- c(star_calls, basename(file1)); invisible(NULL) },
+    .package = "ORFik"
+  )
+  testthat::local_mocked_bindings(
+    run_experiment_subprocess = function(func, args, ...) do.call(func, args)
+  )
+  testthat::local_mocked_bindings(
+    alignment_final_checks = function(...) invisible(NULL)
+  )
+
+  pipeline_align(pipelines[["PRJNA000001"]], config)
+
+  # SRR001 was skipped entirely this pass -- no STAR call, not marked done.
+  expect_false(any(grepl("SRR001", star_calls)))
+  expect_false("SRR001" %in% samples_done(config, "aligned", exp_name))
+  expect_false(is.na(waiting_for_ram_minutes(config, exp_name, "SRR001")))
+  # SRR002 proceeded normally.
+  expect_true(any(grepl("SRR002", star_calls)))
+  expect_true("SRR002" %in% samples_done(config, "aligned", exp_name))
+  expect_true(is.na(waiting_for_ram_minutes(config, exp_name, "SRR002")))
+})
+
+test_that("pipeline_align_one_organism() crashes (instead of deferring again) once a sample has waited past max_ram_wait_minutes", {
+  config <- fake_config(preset = "Ribo-seq", extra = list(max_ram_wait_minutes = 10))
+  bam_dir <- tempfile("bam_")
+  pipelines <- fake_pipelines(
+    bam_dir = bam_dir,
+    runs = data.table::data.table(Run = "SRR001", LibraryLayout = "SINGLE",
+                                  LIBRARYTYPE = "RFP", ScientificName = "Homo sapiens")
+  )
+  exp_name <- "PRJNA000001-homo_sapiens"
+  fake_mark_all_done(config, c("trim", "collapsed"), exp_name)
+  trimmed_single_dir <- file.path(bam_dir, "trim", "SINGLE")
+  dir.create(trimmed_single_dir, recursive = TRUE)
+  file.create(file.path(trimmed_single_dir, "collapsed_trimmed_SRR001.fasta.gz"))
+  # Already marked waiting 20 minutes ago -- past the 10-minute limit.
+  mark_waiting_for_ram(config, exp_name, "SRR001")
+  marker <- waiting_for_ram_path(config, exp_name, "SRR001")
+  saveRDS(Sys.time() - 20 * 60, marker)
+
+  testthat::local_mocked_bindings(
+    run_files_organizer = function(runs, ...) {
+      stats::setNames(as.list(file.path(trimmed_single_dir, paste0("collapsed_trimmed_", runs$Run, ".fasta.gz"))), NULL)
+    }
+  )
+  testthat::local_mocked_bindings(
+    get_system_usage = function(...) list(Memory_Total_GB = 100, Memory_Usage_GB = 90)
+  )
+  testthat::local_mocked_bindings(
+    estimate_bam_sort_ram = function(file1) 50e9 # still over the 10GB free -> would defer again, but deadline passed
+  )
+  testthat::local_mocked_bindings(
+    STAR.install = function(...) "star", install.fastp = function(...) "fastp",
+    .package = "ORFik"
+  )
+  testthat::local_mocked_bindings(
+    run_experiment_subprocess = function(func, args, ...) do.call(func, args)
+  )
+
+  expect_error(pipeline_align(pipelines[["PRJNA000001"]], config), "waiting")
+})
+
 test_that("pipeline_cleanup() skips renaming a sample whose BAM already has its final <Run>.bam name", {
   config <- fake_config(preset = "Ribo-seq")
   bam_dir <- tempfile("bam_")

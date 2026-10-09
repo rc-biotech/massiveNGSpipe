@@ -21,6 +21,7 @@ pipeline_config(
   ssd_scratch_dir = if (dir.exists(path.expand("~/livemount/ssd/tmp/")))
     "~/livemount/ssd/tmp/" else NULL,
   ssd_min_free_gb = 50,
+  max_ram_wait_minutes = 10,
   delete_raw_files = mode == "online",
   delete_trimmed_files = mode == "online",
   delete_collapsed_files = mode == "online",
@@ -129,6 +130,15 @@ scratch copying is attempted (the 2x covers both the input copy and the
 output BAM, roughly the same order of magnitude as the input; the flat
 margin absorbs estimation error and leaves headroom for anything else
 using the same drive). Ignored when ssd_scratch_dir is NULL.}
+
+\item{max_ram_wait_minutes}{numeric, default 10. See
+R/pipeline_align_memory.R: when a sample's estimated STAR BAM-sort RAM
+need exceeds CURRENTLY free memory but not the machine's total (so it's
+deferred to the next sample rather than crashed), this is how long --
+tracked from the true start of waiting, not reset on each check -- a
+sample can stay in that deferred state across repeated
+pipeline_align_one_organism() passes before it's treated as truly stuck
+and raised as a real error instead of deferred again.}
 
 \item{delete_raw_files}{logical, default: mode == "online". If online do delete
 raw fastq files after trim step is done, for local samples do not delete.

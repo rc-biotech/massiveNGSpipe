@@ -389,16 +389,45 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
           file1 <- R1_R2[ifelse(single_end, 1, strandMode)]
           file2 <- if (!is.na(R1_R2[2]) & FALSE) {R1_R2[ifelse(strandMode == 1, 2, 1)]}
 
-          scratch <- resolve_align_scratch(file1, output_dir, run, config)
-          align_ok <- tryCatch({
-            ORFik::STAR.align.single(scratch$file1, file2,
-                                     output.dir = scratch$output.dir,
-                                     index.dir = index, steps = steps,
-                                     resume = "ge",
+          # Dynamic BAM-sort RAM check -- see R/pipeline_align_memory.R's
+          # own header for the real incident this comes from. A sample
+          # that could never fit even with the whole machine to itself
+          # crashes now (no point deferring); one that's just short on
+          # CURRENTLY free memory is deferred to the next sample in this
+          # same loop instead -- something else using memory right now
+          # may free up by the time a later run_pipeline() pass revisits
+          # the not-yet-done sample.
+          ram_needed <- estimate_bam_sort_ram(file1)
+          ram_decision <- bam_sort_ram_decision(ram_needed)
+          if (ram_decision$decision == "crash") {
+            stop(sprintf(
+              "Sample %s needs an estimated %.1fGB for BAM sorting, exceeding this machine's safe usable total (%.1fGB) -- cannot be aligned here without a configuration change.",
+              run, ram_decision$needed_gb, ram_decision$total_gb))
+          }
+          if (ram_decision$decision == "defer") {
+            waited <- waiting_for_ram_minutes(config, experiment, run)
+            if (!is.na(waited) && waited > config$max_ram_wait_minutes) {
+              stop(sprintf(
+                "Sample %s has been waiting %.1f minutes (over the %d-minute limit) for enough free RAM to become available for an estimated %.1fGB BAM sort -- nothing on this machine is freeing up enough memory. Total usable is %.1fGB.",
+                run, waited, config$max_ram_wait_minutes, ram_decision$needed_gb, ram_decision$total_gb))
+            }
+            mark_waiting_for_ram(config, experiment, run)
+            next
+          }
+          clear_waiting_for_ram(config, experiment, run)
+
+          align_attempt <- function(f1, f2, out_dir, ram_limit) {
+            ORFik::STAR.align.single(f1, f2, output.dir = out_dir, index.dir = index,
+                                     steps = steps, resume = "ge",
                                      keep.index.in.memory = keep.index.in.memory,
                                      keep.unaligned.genome = keep.unaligned.genome,
-                                     star.path = star.path, fastp = fastp.path
-            )
+                                     star.path = star.path, fastp = fastp.path,
+                                     limit.bam.sort.ram = ram_limit)
+          }
+
+          scratch <- resolve_align_scratch(file1, output_dir, run, config)
+          align_ok <- tryCatch({
+            align_attempt(scratch$file1, file2, scratch$output.dir, ram_needed)
             TRUE
           }, error = function(e) {
             if (!scratch$used_ssd) stop(e) # a real alignment failure, not an SSD problem -- propagate
@@ -411,15 +440,39 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
             # Retry once, directly on the main drive -- covers the race
             # where free space looked fine at resolve_align_scratch()'s
             # own check but something else filled the SSD during the
-            # copy/alignment itself.
-            ORFik::STAR.align.single(file1, file2,
-                                     output.dir = output_dir,
-                                     index.dir = index, steps = steps,
-                                     resume = "ge",
-                                     keep.index.in.memory = keep.index.in.memory,
-                                     keep.unaligned.genome = keep.unaligned.genome,
-                                     star.path = star.path, fastp = fastp.path
-            )
+            # copy/alignment itself. A SECOND, independent failure mode
+            # can surface here too: the proactive RAM estimate was too
+            # low for THIS specific file. If so, re-decide using STAR's
+            # own exact reported figure instead of guessing again.
+            retry_result <- tryCatch({
+              align_attempt(file1, file2, output_dir, ram_needed)
+              "done"
+            }, error = function(e) {
+              exact <- estimate_bam_sort_ram_from_error(conditionMessage(e))
+              if (is.na(exact)) stop(e) # not a memory error -- propagate unchanged
+              decision2 <- bam_sort_ram_decision(exact)
+              if (decision2$decision == "crash") {
+                stop(sprintf(
+                  "Sample %s needs %.1fGB for BAM sorting (STAR's own exact figure), exceeding this machine's safe usable total (%.1fGB) -- cannot be aligned here without a configuration change.",
+                  run, decision2$needed_gb, decision2$total_gb))
+              }
+              if (decision2$decision == "defer") {
+                waited <- waiting_for_ram_minutes(config, experiment, run)
+                if (!is.na(waited) && waited > config$max_ram_wait_minutes) {
+                  stop(sprintf(
+                    "Sample %s has been waiting %.1f minutes (over the %d-minute limit) for enough free RAM to become available for an estimated %.1fGB BAM sort (STAR's own exact figure) -- nothing on this machine is freeing up enough memory. Total usable is %.1fGB.",
+                    run, waited, config$max_ram_wait_minutes, decision2$needed_gb, decision2$total_gb))
+                }
+                mark_waiting_for_ram(config, experiment, run)
+                return("deferred")
+              }
+              # "proceed": free memory changed since the proactive check
+              # (e.g. something else just finished) -- retry once more
+              # with STAR's own exact value instead of the rough estimate.
+              align_attempt(file1, file2, output_dir, exact)
+              "done"
+            })
+            if (identical(retry_result, "deferred")) next
           } else if (scratch$used_ssd) {
             # Copy only THIS sample's own output back, by run-id match --
             # same "never touch a sibling's files" precision already used
