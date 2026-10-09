@@ -91,6 +91,10 @@ fake_config <- function(project = tempfile("mNGSp_test_"), preset = "RNA-seq",
 #' package: named list of accession -> list(accession, organisms, study).
 #' @param bam_dir character, default a fresh tempdir(). conf["bam"] for
 #' the one organism, used by e.g. qc_verdict_report().
+#' @param index character, this organism's STAR_index dir -- a fresh
+#' tempdir by default (created), so star_index_claim()/release() (used
+#' unconditionally by pipeline_align_one_organism()) have a real
+#' writable path to work with instead of NULL.
 fake_pipelines <- function(accession = "PRJNA000001", organism = "Homo sapiens",
                            runs = data.table::data.table(
                              Run = c("SRR001", "SRR002"),
@@ -99,10 +103,12 @@ fake_pipelines <- function(accession = "PRJNA000001", organism = "Homo sapiens",
                              ScientificName = organism
                            ),
                            exp_name = paste0(accession, "-", gsub(" ", "_", tolower(organism))),
-                           bam_dir = tempfile("fake_bam_")) {
+                           bam_dir = tempfile("fake_bam_"),
+                           index = tempfile("fake_star_index_")) {
+  dir.create(index, showWarnings = FALSE, recursive = TRUE)
   stats::setNames(list(list(
     accession = accession,
-    organisms = stats::setNames(list(list(conf = c(exp = exp_name, bam = bam_dir))), organism),
+    organisms = stats::setNames(list(list(conf = c(exp = exp_name, bam = bam_dir), index = index)), organism),
     study = runs
   )), accession)
 }
