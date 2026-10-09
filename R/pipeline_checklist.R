@@ -474,12 +474,57 @@ format_system_usage_line <- function(pipelines, config) {
 #' otherwise. Returns immediately (does not block this R session), and
 #' does not use \code{interval} for its own redraw loop beyond passing
 #' it through to \code{watch}.
+#' @param open_in_new_text_document logical, default TRUE. Same as above, but open
+#' in rstudio document viewer.
 #' @return invisible(NULL), or (when \code{open_in_new_text_window = TRUE})
 #' invisibly the new terminal's id. The non-window form runs until
 #' interrupted (Ctrl+C, or Esc in RStudio -- though see the terminal
 #' note above).
 #' @export
-watch_pipeline_checklist <- function(config, interval = 2, index = 1, open_in_new_text_window = FALSE) {
+watch_pipeline_checklist <- function(config, interval = 2, index = 1, open_in_new_text_window = FALSE,
+                                     open_in_new_text_document = FALSE) {
+
+  path <- get_checklist_path(config, index)
+
+  if (open_in_new_text_document) {
+    if (!rstudioapi::isAvailable())
+      stop("open_in_new_text_document = TRUE needs an active RStudio session.")
+    rstudioapi::documentOpen(path)
+    return(invisible(path))
+  }
+
+
+  if (open_in_new_text_window) {
+    if (!rstudioapi::isAvailable())
+      stop("open_in_new_text_window = TRUE needs an active RStudio session.")
+    term <- rstudioapi::terminalCreate(show = TRUE)
+    rstudioapi::terminalSend(term, paste0("watch -n ", interval, " \"cat '", path, "'\"\n"))
+    return(invisible(term))
+  }
+
+  n_prev_lines <- 0L
+  repeat {
+    content <- if (file.exists(path)) readLines(path) else
+      "(waiting for checklist.txt to appear...)"
+    if (n_prev_lines > 0) cat(sprintf("\033[%dA", n_prev_lines))
+    cat("\033[J")
+    cat(content, sep = "\n")
+    cat("\n")
+    n_prev_lines <- length(content) + 1L
+    Sys.sleep(interval)
+  }
+}
+
+last_session_progress <- function(config, index = 1) {
+
+  path <- get_checklist_path(config, index)
+  content <- if (file.exists(path)) readLines(path) else
+    "(waiting for checklist.txt to appear...)"
+  cat(content, sep = "\n")
+  return(invisible(NULL))
+}
+
+get_checklist_path <- function(config, index) {
   # config$session_dir -- when set AND index wasn't explicitly
   # requested -- takes priority over the index/session_logs listing:
   # it's the authoritative "this specific session" pointer when
@@ -496,26 +541,7 @@ watch_pipeline_checklist <- function(config, interval = 2, index = 1, open_in_ne
   } else {
     session_checklist_path(config, index)
   }
-
-  if (open_in_new_text_window) {
-    if (!rstudioapi::isAvailable())
-      stop("open_in_new_text_window = TRUE needs an active RStudio session.")
-    term <- rstudioapi::terminalCreate(show = TRUE)
-    rstudioapi::terminalSend(term, paste0("watch -n ", interval, " cat '", path, "'\n"))
-    return(invisible(term))
-  }
-
-  n_prev_lines <- 0L
-  repeat {
-    content <- if (file.exists(path)) readLines(path) else
-      "(waiting for checklist.txt to appear...)"
-    if (n_prev_lines > 0) cat(sprintf("\033[%dA", n_prev_lines))
-    cat("\033[J")
-    cat(content, sep = "\n")
-    cat("\n")
-    n_prev_lines <- length(content) + 1L
-    Sys.sleep(interval)
-  }
+  return(path.expand(path))
 }
 
 #' Format a checklist data.table as a compact printable table

@@ -8,7 +8,8 @@ watch_pipeline_checklist(
   config,
   interval = 2,
   index = 1,
-  open_in_new_text_window = FALSE
+  open_in_new_text_window = FALSE,
+  open_in_new_text_document = FALSE
 )
 }
 \arguments{
@@ -30,6 +31,9 @@ actually works. Requires an active RStudio session; errors
 otherwise. Returns immediately (does not block this R session), and
 does not use \code{interval} for its own redraw loop beyond passing
 it through to \code{watch}.}
+
+\item{open_in_new_text_document}{logical, default TRUE. Same as above, but open
+in rstudio document viewer.}
 }
 \value{
 invisible(NULL), or (when \code{open_in_new_text_window = TRUE})
