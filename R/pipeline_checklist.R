@@ -68,7 +68,19 @@ stage_progress_rate_label <- function(stage_name, marker_step, state, config,
     return(sprintf("%.1f M reads/hr", rate))
   }
 
-  if (!is.na(marker_step) && !is.na(active_experiment)) {
+  if (!is.na(marker_step) && !is.na(active_experiment) && !is.na(active_done)) {
+    # The !is.na(active_done) guard matters beyond just "nothing to
+    # show yet": generic_progress_rate()'s underlying rate tracker
+    # seeds its baseline from only the FIRST observation of a
+    # (stage_name, active_experiment) key and never resets it (see
+    # rate_since_first_seen(), R/pipeline_checklist_rates.R) -- calling
+    # it here with active_done == NA (pipeline_checklist()'s own
+    # "named via first-not-done, but no per-sample evidence has shown
+    # up for it yet" case) would permanently poison that key's
+    # baseline at NA, making every later rate for THIS SAME experiment
+    # read NA forever even once it starts producing real per-sample
+    # counts, since every later diff is computed against that
+    # unrecoverable NA baseline.
     rate <- generic_progress_rate(stage_name, active_experiment, active_done)
     if (is.na(rate)) return(NA_character_)
     return(sprintf("%.1f samples/hr", rate))
@@ -310,22 +322,50 @@ pipeline_checklist <- function(pipelines, config, print = TRUE, run_status = NUL
     active_total <- NA_integer_
     state <- if (n_done == n_total) "done" else "queued"
 
-    if (n_done < n_total && !is.na(marker_step)) {
+    if (n_done < n_total) {
       candidates <- exps[!done_vec]
-      started <- vapply(candidates, function(e) n_samples_done(config, marker_step, e) > 0, logical(1))
-      if (any(started)) {
-        active_experiment <- candidates[started][1]
-        active_done <- n_samples_done(config, marker_step, active_experiment)
+      if (!is.na(marker_step)) {
+        started <- vapply(candidates, function(e) n_samples_done(config, marker_step, e) > 0, logical(1))
+        if (any(started)) {
+          active_experiment <- candidates[started][1]
+          active_done <- n_samples_done(config, marker_step, active_experiment)
+          active_total <- unname(sample_totals[active_experiment])
+          state <- "running"
+        } else if (n_done > 0) {
+          # A marker_step exists for this stage, but no per-sample
+          # evidence has shown up yet for any not-yet-done candidate
+          # (e.g. a between-study transition, or upstream work hasn't
+          # fed this stage its next study yet) -- same "running, no
+          # per-sample evidence for the NEXT one specifically" shape as
+          # the markerless branch below, so it gets the same fallback:
+          # name the study via the identical "first not-yet-done"
+          # convention active_run_id() already uses to pick the active
+          # RUN within a study, and show its real total sample count
+          # without inventing a done count we don't have yet.
+          active_experiment <- candidates[1]
+          active_total <- unname(sample_totals[active_experiment])
+          state <- "running"
+        }
+      } else if (n_done > 0) {
+        # No per-sample marker exists for this stage at all (whole-study
+        # steps that hand off to ORFik's own internal BiocParallel
+        # dispatch or process a whole folder in one call: cigar_collapse,
+        # merge_study, counts, convert's covRLE phase) -- but at least
+        # one study already finished this stage, so it HAS been
+        # actively cycling through studies in the same done_vec order
+        # as everywhere else in this checklist, making the first
+        # not-yet-done candidate the best available guess for which
+        # study is CURRENTLY being worked on (same inference
+        # active_run_id() already makes to pick the active RUN within
+        # one study, just one level up: the active STUDY among several).
+        # The sample total is real (experiment_sample_counts()); a live
+        # per-sample done-count genuinely isn't observable here since
+        # this stage writes no per-sample markers, so active_done stays
+        # NA rather than inventing one.
+        active_experiment <- candidates[1]
         active_total <- unname(sample_totals[active_experiment])
         state <- "running"
       }
-    } else if (is.na(marker_step) && n_done > 0 && n_done < n_total) {
-      # No per-sample detail is possible for these (hand off to ORFik's
-      # own internal BiocParallel dispatch or a whole-folder call), but
-      # at least one study already finished this stage, so it HAS been
-      # actively cycling through studies -- "queued" would otherwise
-      # misleadingly suggest nothing has started yet.
-      state <- "running"
     }
 
     rate_label <- stage_progress_rate_label(stage_name, marker_step, state, config,
@@ -616,8 +656,20 @@ format_checklist <- function(tab) {
       paste0(", ", row$rate_label)
     } else ""
     detail <- if (!is.na(row$active_experiment)) {
-      sprintf(" -- active: %s (%d/%d samples%s)", row$active_experiment, row$active_done,
-              row$active_total, rate_suffix)
+      if (!is.na(row$active_done)) {
+        sprintf(" -- active: %s (%d/%d samples%s)", row$active_experiment, row$active_done,
+                row$active_total, rate_suffix)
+      } else {
+        # Named via the same "first not-yet-done" inference used
+        # everywhere else in this checklist, but no live per-sample
+        # done-count is actually observable here (either no marker_step
+        # exists for this stage at all, or none of the remaining
+        # studies has shown per-sample evidence yet) -- the real total
+        # sample count is shown as context, not a fabricated progress
+        # fraction.
+        sprintf(" -- active: %s (%d samples, no per-sample progress tracked for this stage%s)",
+                row$active_experiment, row$active_total, rate_suffix)
+      }
     } else if (row$state == "running") {
       sprintf(" -- active (no per-sample detail available for this stage%s)", rate_suffix)
     } else ""

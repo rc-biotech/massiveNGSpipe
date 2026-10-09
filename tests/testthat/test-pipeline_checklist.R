@@ -60,6 +60,106 @@ test_that("format_checklist: a running stage with no active_experiment shows the
   expect_match(format_checklist(tab), "no per-sample detail available")
 })
 
+test_that("format_checklist names the active study with its real sample TOTAL (not a fabricated fraction) when active_done is unknown", {
+  tab <- data.table::data.table(
+    stage = "pipe_c", done = 1L, total = 3L, state = "running",
+    active_experiment = "PRJNA000002-homo_sapiens", active_done = NA_integer_, active_total = 5L
+  )
+  line <- format_checklist(tab)
+  expect_match(line, "active: PRJNA000002-homo_sapiens \\(5 samples, no per-sample progress tracked for this stage\\)")
+})
+
+test_that("pipeline_checklist names the active study for a MARKERLESS stage (cigar_collapse), with a real sample total but no per-sample done-count", {
+  # Built from a real request (Håkon, 2026-10-09): markerless stages
+  # (cigar_collapse, merge_study, counts, convert's covRLE phase) used
+  # to show just "active (no per-sample detail available for this
+  # stage)" with no study name at all -- but the SAME "first
+  # not-yet-done candidate" inference already used everywhere else in
+  # this checklist (see active_run_id()) is enough to name it.
+  testthat::local_mocked_bindings(
+    detect_drive = function(...) "/dev/fake",
+    get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 1,
+                                          Drive = "/dev/fake", Drive_Usage_Percent = "1%")
+  )
+  config <- fake_config(preset = "RNA-seq", mode = "online", session_dir = tempfile("session_"))
+  pipelines <- c(
+    fake_pipelines(accession = "PRJNA000001", runs = data.table::data.table(
+      Run = c("SRR001", "SRR002"), LibraryLayout = "SINGLE", LIBRARYTYPE = "RNA",
+      ScientificName = "Homo sapiens")),
+    fake_pipelines(accession = "PRJNA000002", runs = data.table::data.table(
+      Run = c("SRR003", "SRR004", "SRR005"), LibraryLayout = "SINGLE", LIBRARYTYPE = "RNA",
+      ScientificName = "Homo sapiens"))
+  )
+  # PRJNA000001 already finished cigar_collapse (a single, whole-study
+  # flag -- no per-sample marker exists for this stage at all);
+  # PRJNA000002 hasn't.
+  fake_mark_all_done(config, "cigar_collapse", "PRJNA000001-homo_sapiens")
+
+  tab <- suppressMessages(pipeline_checklist(pipelines, config, print = FALSE))
+  row <- tab[stage == "pipe_cigar_collapse"]
+  expect_identical(row$state, "running")
+  expect_identical(row$active_experiment, "PRJNA000002-homo_sapiens")
+  expect_identical(row$active_total, 3L)
+  expect_true(is.na(row$active_done))
+})
+
+test_that("pipeline_checklist names the active study for a marker-step stage even when NO remaining candidate has per-sample evidence yet", {
+  # Built from a real observed case (Håkon, 2026-10-09): pipe_exp_ofst
+  # HAS a marker_step ("ofst"), but used to stay "queued"-looking with
+  # no active study at all whenever upstream work hadn't fed its next
+  # study any ofst samples yet, despite 33/37 studies already being
+  # genuinely done for this stage.
+  testthat::local_mocked_bindings(
+    detect_drive = function(...) "/dev/fake",
+    get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 1,
+                                          Drive = "/dev/fake", Drive_Usage_Percent = "1%")
+  )
+  config <- fake_config(preset = "RNA-seq", mode = "online", session_dir = tempfile("session_"))
+  pipelines <- c(
+    fake_pipelines(accession = "PRJNA000001", runs = data.table::data.table(
+      Run = c("SRR001", "SRR002"), LibraryLayout = "SINGLE", LIBRARYTYPE = "RNA",
+      ScientificName = "Homo sapiens")),
+    fake_pipelines(accession = "PRJNA000002", runs = data.table::data.table(
+      Run = c("SRR003", "SRR004", "SRR005"), LibraryLayout = "SINGLE", LIBRARYTYPE = "RNA",
+      ScientificName = "Homo sapiens"))
+  )
+  # PRJNA000001 fully done for pipe_exp_ofst (both its "exp" and "ofst"
+  # flags); PRJNA000002 hasn't had ANY sample's "ofst" marker set yet.
+  fake_mark_all_done(config, c("exp", "ofst"), "PRJNA000001-homo_sapiens")
+
+  tab <- suppressMessages(pipeline_checklist(pipelines, config, print = FALSE))
+  row <- tab[stage == "pipe_exp_ofst"]
+  expect_identical(row$state, "running") # previously stayed "queued" despite 1/2 studies already done -- the bug this fixes
+  expect_identical(row$active_experiment, "PRJNA000002-homo_sapiens")
+  expect_identical(row$active_total, 3L)
+  expect_true(is.na(row$active_done))
+})
+
+test_that("stage_progress_rate_label never seeds generic_progress_rate's baseline with NA active_done (would permanently poison that experiment's rate)", {
+  key <- "pipe_na_guard_test PRJNA_na_guard"
+  if (exists(key, envir = .rate_state)) rm(list = key, envir = .rate_state)
+
+  label1 <- stage_progress_rate_label("pipe_na_guard_test", "ofst", "running", fake_config(),
+                                      active_experiment = "PRJNA_na_guard", active_done = NA_integer_,
+                                      n_done = 0L, pipelines = list())
+  expect_true(is.na(label1))
+  expect_false(exists(key, envir = .rate_state)) # confirms no baseline was seeded by the NA call
+
+  t0 <- as.POSIXct("2026-10-09 10:00:00", tz = "UTC")
+  testthat::local_mocked_bindings(Sys.time = function() t0, .package = "base")
+  label2 <- stage_progress_rate_label("pipe_na_guard_test", "ofst", "running", fake_config(),
+                                      active_experiment = "PRJNA_na_guard", active_done = 2L,
+                                      n_done = 0L, pipelines = list())
+  expect_true(is.na(label2)) # first REAL observation -- seeds the baseline now, nothing to compute a rate from yet
+
+  t1 <- t0 + 3600 # 1 hour later
+  testthat::local_mocked_bindings(Sys.time = function() t1, .package = "base")
+  label3 <- stage_progress_rate_label("pipe_na_guard_test", "ofst", "running", fake_config(),
+                                      active_experiment = "PRJNA_na_guard", active_done = 6L,
+                                      n_done = 0L, pipelines = list())
+  expect_match(label3, "^4\\.0 samples/hr$") # +4 in 1hr -- NOT poisoned by the earlier NA call
+})
+
 test_that("stage_progress_rate_label shows 'waiting for available RAM' instead of the align rate when the active sample is deferred", {
   # See R/pipeline_align_memory.R -- a deferred sample has no STAR
   # progress to report, so this status replaces (never supplements)
