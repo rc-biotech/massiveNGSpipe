@@ -58,6 +58,11 @@ stage_progress_rate_label <- function(stage_name, marker_step, state, config,
     run <- active_run_id(pipelines, config, "aligned", active_experiment)
     conf <- experiment_conf(pipelines, active_experiment)
     if (is.na(run) || is.null(conf)) return(NA_character_)
+    # Checked ahead of the normal rate -- a sample parked waiting for RAM
+    # (R/pipeline_align_memory.R) has no STAR progress to report at all,
+    # so that status replaces (not supplements) the rate label.
+    waited <- waiting_for_ram_minutes(config, active_experiment, run)
+    if (!is.na(waited)) return(sprintf("waiting for available RAM, %.1f min", waited))
     rate <- align_progress_rate(conf["bam"], run)
     if (is.na(rate)) return(NA_character_)
     return(sprintf("%.1f M reads/hr", rate))

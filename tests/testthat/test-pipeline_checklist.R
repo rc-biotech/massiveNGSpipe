@@ -60,6 +60,40 @@ test_that("format_checklist: a running stage with no active_experiment shows the
   expect_match(format_checklist(tab), "no per-sample detail available")
 })
 
+test_that("stage_progress_rate_label shows 'waiting for available RAM' instead of the align rate when the active sample is deferred", {
+  # See R/pipeline_align_memory.R -- a deferred sample has no STAR
+  # progress to report, so this status replaces (never supplements)
+  # the usual M reads/hr figure.
+  config <- fake_config()
+  pipelines <- fake_pipelines(
+    runs = data.table::data.table(Run = "SRR001", LibraryLayout = "SINGLE",
+                                  LIBRARYTYPE = "RFP", ScientificName = "Homo sapiens")
+  )
+  exp <- "PRJNA000001-homo_sapiens"
+  mark_waiting_for_ram(config, exp, "SRR001")
+
+  label <- stage_progress_rate_label("pipe_align_clean", "aligned", "running", config,
+                                     active_experiment = exp, active_done = 0L, n_done = 0L,
+                                     pipelines = pipelines)
+  expect_match(label, "^waiting for available RAM, [0-9.]+ min$")
+})
+
+test_that("stage_progress_rate_label falls back to the normal align rate once a sample's RAM wait is cleared", {
+  config <- fake_config()
+  pipelines <- fake_pipelines(
+    runs = data.table::data.table(Run = "SRR001", LibraryLayout = "SINGLE",
+                                  LIBRARYTYPE = "RFP", ScientificName = "Homo sapiens")
+  )
+  exp <- "PRJNA000001-homo_sapiens"
+  mark_waiting_for_ram(config, exp, "SRR001")
+  clear_waiting_for_ram(config, exp, "SRR001")
+
+  label <- stage_progress_rate_label("pipe_align_clean", "aligned", "running", config,
+                                     active_experiment = exp, active_done = 0L, n_done = 0L,
+                                     pipelines = pipelines)
+  expect_true(is.na(label)) # no Log.progress.out exists in this fixture -> NA, but NOT the waiting text
+})
+
 test_that("format_system_usage_line reports the drive cap note only when at/above the cap", {
   testthat::local_mocked_bindings(
     detect_drive = function(...) "/dev/fake",
