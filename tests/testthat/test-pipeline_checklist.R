@@ -422,7 +422,7 @@ test_that("watch_pipeline_checklist(open_in_new_text_window = TRUE) opens an RSt
   expect_length(create_calls, 1)
   expect_length(send_calls, 1)
   expect_identical(send_calls[[1]]$id, "term-1")
-  expect_match(send_calls[[1]]$text, "watch -n 3 cat")
+  expect_match(send_calls[[1]]$text, "watch -n 3 \"cat '")
   expect_match(send_calls[[1]]$text, "checklist.txt")
 })
 

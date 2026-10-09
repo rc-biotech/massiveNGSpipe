@@ -363,7 +363,21 @@ pipeline_checklist <- function(pipelines, config, print = TRUE, run_status = NUL
   dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
   header <- c(sprintf("Pipeline status as of %s%s", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), status_note),
              usage["line"], usage["drive_cap_note"], usage["backlog_cap_note"], "", "")
-  cat(paste(c(header, txt), collapse = "\n"), "\n", sep = "", file = path)
+  # Write-then-rename, not a direct write to `path` -- a direct cat(file = path)
+  # truncates the file immediately, then streams content into it, so a
+  # concurrent reader (watch_pipeline_checklist()'s own readLines(path),
+  # polling every `interval` seconds while this is rewritten on every
+  # run_pipeline() poll tick -- see on_poll in run_experiment_subprocess())
+  # can land mid-write and see a blank, truncated, or half-written file:
+  # confirmed live as exactly this (random single numbers / half a
+  # sentence in the watcher, 2026-10-09). A same-directory temp file +
+  # file.rename() is atomic on POSIX (same filesystem, which a sibling
+  # temp file in this same directory always is), so any reader opening
+  # `path` always sees either the complete OLD content or the complete
+  # NEW content, never a torn write.
+  tmp <- paste0(path, ".tmp", Sys.getpid())
+  cat(paste(c(header, txt), collapse = "\n"), "\n", sep = "", file = tmp)
+  file.rename(tmp, path)
 
   if (print) message(paste(c(usage["line"], usage["drive_cap_note"], usage["backlog_cap_note"],
                              "", "", txt), collapse = "\n"))
@@ -484,7 +498,7 @@ format_system_usage_line <- function(pipelines, config) {
 watch_pipeline_checklist <- function(config, interval = 2, index = 1, open_in_new_text_window = FALSE,
                                      open_in_new_text_document = FALSE) {
 
-  path <- get_checklist_path(config, index)
+  path <- get_checklist_path(config, if (missing(index)) NULL else index)
 
   if (open_in_new_text_document) {
     if (!rstudioapi::isAvailable())
@@ -498,7 +512,16 @@ watch_pipeline_checklist <- function(config, interval = 2, index = 1, open_in_ne
     if (!rstudioapi::isAvailable())
       stop("open_in_new_text_window = TRUE needs an active RStudio session.")
     term <- rstudioapi::terminalCreate(show = TRUE)
-    term_call <- paste0("watch -n ", interval, " \"cat '", path, "'\"\n")
+    # terminalSend() writes bytes directly into the pty's input, bypassing
+    # the normal keyboard line discipline -- a human's own Enter key sends
+    # a carriage return ("\r"), which is what the shell's tty driver
+    # actually waits for to submit/execute a line. A trailing "\n" alone
+    # can just insert a literal newline into the input buffer without
+    # ever being treated as "Enter was pressed", leaving the command
+    # typed but unexecuted until something else (e.g. a manual Enter
+    # press) submits it -- confirmed live, 2026-10-09 (worked when
+    # retyped/rerun by hand, not when sent this way).
+    term_call <- paste0("watch -n ", interval, " \"cat '", path, "'\"\n\r")
     rstudioapi::terminalSend(term, term_call)
     return(invisible(term))
   }
@@ -511,36 +534,68 @@ watch_pipeline_checklist <- function(config, interval = 2, index = 1, open_in_ne
     cat("\033[J")
     cat(content, sep = "\n")
     cat("\n")
-    n_prev_lines <- length(content) + 1L
+    # Actual rendered terminal ROWS, not logical lines: a content line
+    # wider than the terminal wraps onto 2+ rows, so counting logical
+    # lines alone undercounts how far "move cursor up N lines" needs to
+    # go on the NEXT redraw -- the cursor stops partway into the
+    # previous frame's wrapped block instead of its true top, and the
+    # "\033[J" clear-to-end-of-screen below it then leaves that block's
+    # upper, un-erased fragment sitting above the new content. Confirmed
+    # live, 2026-10-09: random leftover single numbers/half-sentences,
+    # always starting from the 2nd redraw onward (the 1st after any
+    # restart has n_prev_lines == 0, so nothing is erased yet -- the bug
+    # is invisible exactly until the first wrap-undercount compounds).
+    # getOption("width") is re-read every tick in case the terminal was
+    # resized mid-watch; nchar(type = "width") uses DISPLAY width (e.g.
+    # the checkmark glyph) rather than a raw character count.
+    term_width <- max(1L, getOption("width", 80L))
+    rows_per_line <- pmax(1L, ceiling(nchar(content, type = "width") / term_width))
+    n_prev_lines <- sum(rows_per_line) + 1L
     Sys.sleep(interval)
   }
 }
 
 last_session_progress <- function(config, index = 1) {
 
-  path <- get_checklist_path(config, index)
+  path <- get_checklist_path(config, if (missing(index)) NULL else index)
   content <- if (file.exists(path)) readLines(path) else
     "(waiting for checklist.txt to appear...)"
   cat(content, sep = "\n")
   return(invisible(NULL))
 }
 
-get_checklist_path <- function(config, index) {
+get_checklist_path <- function(config, index = NULL) {
   # config$session_dir -- when set AND index wasn't explicitly
-  # requested -- takes priority over the index/session_logs listing:
-  # it's the authoritative "this specific session" pointer when
-  # called from within an already-running session, and strictly more
-  # correct than "newest by directory listing" in the edge case where
-  # a second, newer run_pipeline() call started concurrently elsewhere
-  # (that would otherwise make index = 1 resolve to the OTHER session,
-  # not the one this config actually belongs to). An explicit index
-  # always wins, even when session_dir is set, since that's a clear
-  # request to inspect a specific past session rather than "the
-  # current one, however that's best determined".
-  path <- if (missing(index) && !is.null(config$session_dir)) {
+  # requested by the ORIGINAL caller (watch_pipeline_checklist()/
+  # last_session_progress()) -- takes priority over the index/
+  # session_logs listing: it's the authoritative "this specific
+  # session" pointer when called from within an already-running
+  # session, and strictly more correct than "newest by directory
+  # listing" in the edge case where a second, newer run_pipeline()
+  # call started concurrently elsewhere (that would otherwise make
+  # index = 1 resolve to the OTHER session, not the one this config
+  # actually belongs to). An explicit index always wins, even when
+  # session_dir is set, since that's a clear request to inspect a
+  # specific past session rather than "the current one, however
+  # that's best determined".
+  #
+  # NULL (not missing()) is deliberate here: this function is always
+  # one call removed from the actual caller-supplied argument (both
+  # watch_pipeline_checklist() and last_session_progress() forward
+  # their own `index` through explicitly), so missing(index) checked
+  # IN THIS FRAME would always read FALSE regardless of whether the
+  # original caller passed anything -- missing() only ever reflects
+  # whether an argument was supplied to the function currently being
+  # evaluated, not further up the call stack. Confirmed as a real
+  # regression this caused once this logic was extracted out of
+  # watch_pipeline_checklist() into this shared helper, 2026-10-09:
+  # config$session_dir stopped winning even when index was never
+  # explicitly requested. Each caller instead translates ITS OWN
+  # missing(index) into an explicit NULL before calling here.
+  path <- if (is.null(index) && !is.null(config$session_dir)) {
     file.path(config$session_dir, "checklist.txt")
   } else {
-    session_checklist_path(config, index)
+    session_checklist_path(config, if (is.null(index)) 1 else index)
   }
   return(path.expand(path))
 }
