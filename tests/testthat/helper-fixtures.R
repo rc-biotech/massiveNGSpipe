@@ -61,6 +61,7 @@ fake_config <- function(project = tempfile("mNGSp_test_"), preset = "RNA-seq",
     # whatever machine runs it.
     ssd_scratch_dir = NULL,
     ssd_min_free_gb = 50,
+    max_ram_wait_minutes = 10,
     # FALSE by default -- safe/conservative for a test (never deletes
     # whatever fixture files a test created), matching real
     # pipeline_config()'s own default of mode == "online" rather than
