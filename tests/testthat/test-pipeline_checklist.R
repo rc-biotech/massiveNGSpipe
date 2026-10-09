@@ -383,3 +383,40 @@ test_that("watch_pipeline_checklist() uses an explicit index even when config$se
   watch_pipeline_checklist(config, index = 2, open_in_new_text_window = TRUE)
   expect_match(captured, "2019-01-01", fixed = TRUE)
 })
+
+test_that("pipeline_checklist() surfaces a live samples/hr rate once an active stage has made progress across two calls", {
+  testthat::local_mocked_bindings(
+    detect_drive = function(...) "/dev/fake",
+    get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 1,
+                                          Drive = "/dev/fake", Drive_Usage_Percent = "1%")
+  )
+  # Ribo-seq specifically: RNA-seq's default stage names don't include
+  # "pipe_trim_collapse" at all (no separate fetch/trim stage the same
+  # way).
+  config <- fake_config(preset = "Ribo-seq", mode = "online", session_dir = tempfile("session_"))
+  pipelines <- fake_pipelines(
+    runs = data.table::data.table(Run = c("SRR001", "SRR002", "SRR003"), LibraryLayout = "SINGLE",
+                                  LIBRARYTYPE = "RFP", ScientificName = "Homo sapiens")
+  )
+  exp <- "PRJNA000001-homo_sapiens"
+  # "trim" (pipe_trim_collapse), not "aligned" (pipe_align_clean) --
+  # the align stage routes to the STAR-Log.progress.out-specific rate
+  # source instead of the generic samples/hr path (see
+  # align_progress_rate(), tested separately), so it would correctly
+  # stay NA here with no real log file on disk.
+  set_sample_flag(config, "trim", exp, "SRR001")
+
+  t0 <- as.POSIXct("2026-10-09 10:00:00", tz = "UTC")
+  testthat::local_mocked_bindings(Sys.time = function() t0, .package = "base")
+  tab1 <- suppressMessages(pipeline_checklist(pipelines, config, print = FALSE))
+  expect_true(is.na(tab1[stage == "pipe_trim_collapse"]$rate_label)) # first observation, no rate yet
+
+  set_sample_flag(config, "trim", exp, "SRR002")
+  testthat::local_mocked_bindings(Sys.time = function() t0 + 3600, .package = "base")
+  tab2 <- suppressMessages(pipeline_checklist(pipelines, config, print = FALSE))
+  trim_row <- tab2[stage == "pipe_trim_collapse"]
+  expect_identical(trim_row$rate_label, "1.0 samples/hr") # +1 sample (1->2 done) in 1 hour
+
+  checklist_txt <- readLines(checklist_path(config))
+  expect_true(any(grepl("1.0 samples/hr", checklist_txt, fixed = TRUE)))
+})

@@ -21,6 +21,63 @@ stage_marker_step <- function(stage_name) {
         NA_character_)
 }
 
+#' One stage's live processing-speed label for the checklist, or NA
+#'
+#' Dispatches to whichever rate source (R/pipeline_checklist_rates.R)
+#' applies to this stage: fetch's own growing download file (MB/s),
+#' STAR's own Log.progress.out for align (M reads/hr, already computed
+#' by STAR itself), a generic samples/hour for the other per-sample
+#' marker stages, or studies/hour for stages with only study-level
+#' counts. Only ever called for a "running" stage; every other state
+#' (done/queued) always gets NA, so nothing is rendered for them.
+#' @param stage_name character
+#' @param marker_step character or NA, from \code{\link{stage_marker_step}}
+#' @param state character, this stage's already-computed state
+#' @param config the mNGSp config object
+#' @param active_experiment character or NA
+#' @param active_done integer or NA, samples done for active_experiment
+#' @param n_done integer, studies done for this whole stage
+#' @param pipelines the pipelines list
+#' @return character label (e.g. "42.3 MB/s"), or NA_character_
+#' @noRd
+stage_progress_rate_label <- function(stage_name, marker_step, state, config,
+                                      active_experiment, active_done, n_done,
+                                      pipelines) {
+  if (state != "running") return(NA_character_)
+
+  if (stage_name == "pipe_fetch" && !is.na(active_experiment)) {
+    run <- active_run_id(pipelines, config, "fetch", active_experiment)
+    conf <- experiment_conf(pipelines, active_experiment)
+    if (is.na(run) || is.null(conf)) return(NA_character_)
+    rate <- fetch_progress_rate(conf["fastq"], run)
+    if (is.na(rate)) return(NA_character_)
+    return(sprintf("%.1f MB/s", rate))
+  }
+
+  if (stage_name == "pipe_align_clean" && !is.na(active_experiment)) {
+    run <- active_run_id(pipelines, config, "aligned", active_experiment)
+    conf <- experiment_conf(pipelines, active_experiment)
+    if (is.na(run) || is.null(conf)) return(NA_character_)
+    rate <- align_progress_rate(conf["bam"], run)
+    if (is.na(rate)) return(NA_character_)
+    return(sprintf("%.1f M reads/hr", rate))
+  }
+
+  if (!is.na(marker_step) && !is.na(active_experiment)) {
+    rate <- generic_progress_rate(stage_name, active_experiment, active_done)
+    if (is.na(rate)) return(NA_character_)
+    return(sprintf("%.1f samples/hr", rate))
+  }
+
+  if (is.na(marker_step)) {
+    rate <- generic_progress_rate(stage_name, NA_character_, n_done)
+    if (is.na(rate)) return(NA_character_)
+    return(sprintf("%.1f studies/hr", rate))
+  }
+
+  NA_character_
+}
+
 #' Format elapsed time since a start time as "N.N hours"
 #' @param start POSIXct, e.g. config$init_time
 #' @param end POSIXct, default Sys.time()
@@ -209,9 +266,21 @@ pipeline_checklist <- function(pipelines, config, print = TRUE, run_status = NUL
         active_total <- unname(sample_totals[active_experiment])
         state <- "running"
       }
+    } else if (is.na(marker_step) && n_done > 0 && n_done < n_total) {
+      # No per-sample detail is possible for these (hand off to ORFik's
+      # own internal BiocParallel dispatch or a whole-folder call), but
+      # at least one study already finished this stage, so it HAS been
+      # actively cycling through studies -- "queued" would otherwise
+      # misleadingly suggest nothing has started yet.
+      state <- "running"
     }
 
+    rate_label <- stage_progress_rate_label(stage_name, marker_step, state, config,
+                                            active_experiment, active_done, n_done,
+                                            pipelines)
+
     data.table::data.table(stage = stage_name, done = n_done, total = n_total,
+                           rate_label = rate_label,
                            state = state, active_experiment = active_experiment,
                            active_done = active_done, active_total = active_total)
   })
@@ -398,10 +467,19 @@ format_checklist <- function(tab) {
   lines <- vapply(seq_len(nrow(tab)), function(i) {
     row <- tab[i]
     mark <- switch(row$state, done = "\u2714", running = ">", "-")
+    # "rate_label" %in% names(tab), not just row$rate_label -- a tab
+    # built without this column (e.g. an existing caller/test
+    # predating this field) would otherwise make row$rate_label
+    # return NULL, and is.na(NULL) is logical(0), which errors inside
+    # if(). Backward compatible: no column -> never rendered.
+    rate_suffix <- if ("rate_label" %in% names(tab) && !is.na(row$rate_label)) {
+      paste0(", ", row$rate_label)
+    } else ""
     detail <- if (!is.na(row$active_experiment)) {
-      sprintf(" -- active: %s (%d/%d samples)", row$active_experiment, row$active_done, row$active_total)
+      sprintf(" -- active: %s (%d/%d samples%s)", row$active_experiment, row$active_done,
+              row$active_total, rate_suffix)
     } else if (row$state == "running") {
-      " -- active (no per-sample detail available for this stage)"
+      sprintf(" -- active (no per-sample detail available for this stage%s)", rate_suffix)
     } else ""
     sprintf("[%s] %-24s %d/%d studies done%s", mark, row$stage, row$done, row$total, detail)
   }, character(1))
