@@ -20,22 +20,16 @@ for full list of supported organisms.}
 
 \item{output.dir}{path, default: reference_folder_name(organism, TRUE)}
 
-\item{genome}{logical, default: TRUE. Download the genome for the organism
-given in `organism`. If `FALSE`, ORFik checks whether the file is already
-available locally. To use a custom genome from disk, set
-\code{genome = FALSE} and then assign:\cr
-\code{annotation <- getGenomeAndAnnotation(genome = FALSE)}\cr
-\code{annotation["genome"] = "path/to/genome.fasta"}.\cr
-For Ensembl, the primary assembly is downloaded.}
+\item{genome}{logical or character, default TRUE. TRUE downloads the genome;
+FALSE searches \code{output.dir} for an existing file. A character path uses
+that local FASTA and creates its index. For Ensembl, \code{assembly_type}
+selects the sequence set. FASTA and annotation chromosome names must match.}
 
-\item{GTF}{logical, default: TRUE. Download the annotation file for the
-organism given in `organism`. If `FALSE`, ORFik checks whether the file is
-already available locally. To use a custom annotation from disk, set
-`GTF = FALSE` and then assign:\cr
-annotation <- getGenomeAndAnnotation(gtf = FALSE)\cr
-annotation["gtf"] = "path/to/gtf.gtf".\cr
-If `db` is not `"ensembl"`, the downloaded annotation will be GFF instead
-of GTF.}
+\item{GTF}{logical or character, default TRUE. TRUE downloads the annotation
+for \code{organism}; FALSE searches \code{output.dir} for an existing file.
+A character path uses that local GTF/GFF file and creates its TxDb.
+The argument name is case-sensitive: use \code{GTF}, not \code{gtf}.
+For RefSeq and GenBank, see \code{refseq_genbank_format}.}
 
 \item{db}{database to use for the genome and annotation. The recommended
 choice is `"ensembl"`. When using Ensembl, remember to set
