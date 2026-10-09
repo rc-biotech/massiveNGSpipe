@@ -498,7 +498,8 @@ watch_pipeline_checklist <- function(config, interval = 2, index = 1, open_in_ne
     if (!rstudioapi::isAvailable())
       stop("open_in_new_text_window = TRUE needs an active RStudio session.")
     term <- rstudioapi::terminalCreate(show = TRUE)
-    rstudioapi::terminalSend(term, paste0("watch -n ", interval, " \"cat '", path, "'\"\n"))
+    term_call <- paste0("watch -n ", interval, " \"cat '", path, "'\"\n")
+    rstudioapi::terminalSend(term, term_call)
     return(invisible(term))
   }
 
