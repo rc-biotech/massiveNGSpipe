@@ -209,6 +209,59 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
 
 
 
+#' Try to use SSD scratch space for one sample's STAR alignment input +
+#' output; fall back to the main drive on any space/copy problem
+#'
+#' Purely opportunistic -- see \code{config$ssd_scratch_dir}'s own
+#' roxygen (\code{\link{pipeline_config}}) for the full rationale and
+#' the benchmark this is based on. Never raises: any failure here
+#' (insufficient space, or the copy itself erroring, e.g. another
+#' process filled the SSD in the gap between the space check and the
+#' copy) just means this one sample runs on the main drive instead,
+#' exactly like it would if \code{ssd_scratch_dir} were NULL.
+#' @param file1 character, the (already main-drive) trimmed fastq path
+#' @param output_dir character, this organism's real, main-drive bam dir
+#' @param run character, this sample's run id (used to scope the
+#' scratch subdirectory and the copy-back glob so a problem with one
+#' sample's scratch copy can never touch a sibling's files)
+#' @param config the mNGSp config object
+#' @return list(output.dir, file1, used_ssd, cleanup = function())
+#' @noRd
+resolve_align_scratch <- function(file1, output_dir, run, config) {
+  main_drive_result <- list(output.dir = output_dir, file1 = file1,
+                            used_ssd = FALSE, cleanup = function() invisible(NULL))
+  if (is.null(config$ssd_scratch_dir)) return(main_drive_result)
+
+  needed_gb <- 2 * (file.info(file1)$size / 1024^3) + config$ssd_min_free_gb
+  free_gb <- tryCatch({
+    drive <- ORFik::detect_drive(config$ssd_scratch_dir)
+    as.numeric(sub("[a-zA-Z]+", "", ORFik::get_system_usage(drive = drive)$Drive_Free))
+  }, error = function(e) NA_real_)
+  if (is.na(free_gb) || free_gb < needed_gb) return(main_drive_result)
+
+  scratch_dir <- file.path(config$ssd_scratch_dir, basename(output_dir), run)
+  scratch_input <- file.path(scratch_dir, basename(file1))
+  copied <- tryCatch({
+    dir.create(scratch_dir, recursive = TRUE, showWarnings = FALSE)
+    fs::file_copy(file1, scratch_input)
+    TRUE
+  }, error = function(e) {
+    # Cleanup BEFORE the warning, not after: a caller further up the
+    # stack that happens to catch warnings via tryCatch() (unlike
+    # try(), which only intercepts errors) would otherwise unwind past
+    # this handler the moment warning() is called, skipping unlink()
+    # and leaving a partial scratch dir behind.
+    unlink(scratch_dir, recursive = TRUE)
+    warning("SSD scratch copy failed for ", run, ", falling back to main drive: ",
+           conditionMessage(e), call. = FALSE)
+    FALSE
+  })
+  if (!copied) return(main_drive_result)
+
+  list(output.dir = scratch_dir, file1 = scratch_input, used_ssd = TRUE,
+      cleanup = function() unlink(scratch_dir, recursive = TRUE))
+}
+
 #' Remove contaminants and align the reads to genome, for ONE organism of
 #' ONE study. Single and paired end reads are handled separately, so the
 #' resulting logs are renamed with a "_SINGLE" and/or "_PAIRED" suffix.
@@ -231,6 +284,10 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
 #' real ~70-minute silent stall this session (PRJNA1051101-homo_sapiens,
 #' 2026-10-08) directly contradicted: removing a shared-memory segment
 #' out from under a live STAR process does not fail loudly, it hangs.
+#'
+#' Each sample's alignment input/output is routed through
+#' \code{\link{resolve_align_scratch}} first (opportunistic SSD scratch
+#' copy, transparently falls back to the main drive otherwise).
 #' @inheritParams pipeline_download
 #' @param organism character, one name from \code{names(pipeline$organisms)}
 #' @param pipelines the full pipelines list, used only to render the
@@ -331,14 +388,50 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
             !star_index_safe_to_remove(index, owner_id)
           file1 <- R1_R2[ifelse(single_end, 1, strandMode)]
           file2 <- if (!is.na(R1_R2[2]) & FALSE) {R1_R2[ifelse(strandMode == 1, 2, 1)]}
-          ORFik::STAR.align.single(file1, file2,
-                                   output.dir = output_dir,
-                                   index.dir = index, steps = steps,
-                                   resume = "ge",
-                                   keep.index.in.memory = keep.index.in.memory,
-                                   keep.unaligned.genome = keep.unaligned.genome,
-                                   star.path = star.path, fastp = fastp.path
-          )
+
+          scratch <- resolve_align_scratch(file1, output_dir, run, config)
+          align_ok <- tryCatch({
+            ORFik::STAR.align.single(scratch$file1, file2,
+                                     output.dir = scratch$output.dir,
+                                     index.dir = index, steps = steps,
+                                     resume = "ge",
+                                     keep.index.in.memory = keep.index.in.memory,
+                                     keep.unaligned.genome = keep.unaligned.genome,
+                                     star.path = star.path, fastp = fastp.path
+            )
+            TRUE
+          }, error = function(e) {
+            if (!scratch$used_ssd) stop(e) # a real alignment failure, not an SSD problem -- propagate
+            scratch$cleanup() # before the warning -- see resolve_align_scratch()'s own comment on why
+            warning("STAR run on SSD scratch failed for ", run, ", retrying on main drive: ",
+                   conditionMessage(e), call. = FALSE)
+            FALSE
+          })
+          if (identical(align_ok, FALSE)) {
+            # Retry once, directly on the main drive -- covers the race
+            # where free space looked fine at resolve_align_scratch()'s
+            # own check but something else filled the SSD during the
+            # copy/alignment itself.
+            ORFik::STAR.align.single(file1, file2,
+                                     output.dir = output_dir,
+                                     index.dir = index, steps = steps,
+                                     resume = "ge",
+                                     keep.index.in.memory = keep.index.in.memory,
+                                     keep.unaligned.genome = keep.unaligned.genome,
+                                     star.path = star.path, fastp = fastp.path
+            )
+          } else if (scratch$used_ssd) {
+            # Copy only THIS sample's own output back, by run-id match --
+            # same "never touch a sibling's files" precision already used
+            # by pipeline_cleanup()'s has_pending_native_output matching,
+            # never a whole-directory move.
+            produced <- list.files(file.path(scratch$output.dir, "aligned"),
+                                   pattern = run, full.names = TRUE)
+            dir.create(file.path(output_dir, "aligned"), recursive = TRUE, showWarnings = FALSE)
+            fs::file_copy(produced, file.path(output_dir, "aligned", basename(produced)),
+                         overwrite = TRUE)
+            scratch$cleanup()
+          }
           #TODO: Now _1 and _2 will be kept, but fixed in cleanup, do I want it like that ?
           set_sample_flag(config, "aligned", experiment, run)
         }

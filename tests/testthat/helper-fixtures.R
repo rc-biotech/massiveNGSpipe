@@ -55,6 +55,12 @@ fake_config <- function(project = tempfile("mNGSp_test_"), preset = "RNA-seq",
     session_dir = session_dir,
     error_dir = NULL,
     discord_webhook = NULL,
+    # NULL (off) explicitly, not pipeline_config()'s own real default
+    # (auto-enabled when ~/livemount/ssd/tmp/ exists) -- a test must
+    # never behave differently depending on what happens to exist on
+    # whatever machine runs it.
+    ssd_scratch_dir = NULL,
+    ssd_min_free_gb = 50,
     # FALSE by default -- safe/conservative for a test (never deletes
     # whatever fixture files a test created), matching real
     # pipeline_config()'s own default of mode == "online" rather than
