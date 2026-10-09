@@ -46,6 +46,33 @@
 #'  if TRUE they are saved in contamination dir. Ignored if "contam" is not in flags to use.
 #' @param keep_unaligned_genome logical, default FALSE. Do not keep contaminant aligned reads,
 #'  else saved in contamination dir.
+#' @param ssd_scratch_dir character or NULL, default
+#' "~/livemount/ssd/tmp/" when that directory exists on this machine
+#' (auto-enabled on this server), else NULL (feature off, zero behavior
+#' change -- e.g. on any other massiveNGSpipe deployment that doesn't
+#' have this specific SSD path). When set to a real path on a local
+#' SSD, pipeline_align_one_organism()
+#' opportunistically copies each sample's trimmed fastq there before
+#' alignment and writes STAR's output there too (the genome index itself
+#' stays wherever it already is -- copying every reference's 20-30GB index
+#' per organism isn't practical, and a 2026-10-09 benchmark found no
+#' benefit from doing so anyway at high thread counts), copying the final
+#' aligned BAM back afterward and cleaning up the scratch copy. Confirmed
+#' ~12.5% faster at 46 threads and ~32% faster at 96 threads vs the main
+#' drive (see
+#' ~/shared_workspace/hakon_playground/server_and_software_benchmarks/2026-10-06_star_alignment_ssd_vs_main_drive/FINDINGS.md).
+#' Purely opportunistic: insufficient free space (checked against
+#' ssd_min_free_gb before copying) or any copy/alignment problem on the
+#' scratch copy falls back to running that one sample directly on the
+#' main drive instead, exactly like today -- never fails a sample over an
+#' SSD-specific problem.
+#' @param ssd_min_free_gb numeric, default 50. Safety margin used by the
+#' ssd_scratch_dir free-space check: a sample needs
+#' 2 * (its own fastq size in GB) + this margin free on the SSD before
+#' scratch copying is attempted (the 2x covers both the input copy and the
+#' output BAM, roughly the same order of magnitude as the input; the flat
+#' margin absorbs estimation error and leaves headroom for anything else
+#' using the same drive). Ignored when ssd_scratch_dir is NULL.
 #' @param compress_raw_data logical, default FALSE. If TRUE, will compress raw fastq files.
 #' @param stop_downloading_new_data_at_drive_usage integer, default 92,
 #' percentage value where the drive will stop downloading new data. Set to 101 to
@@ -146,6 +173,9 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                                                     function(x) get(x, mode = "function")),
                             mode = c("online", "local")[1],
                             contam = FALSE,
+                            ssd_scratch_dir = if (dir.exists(path.expand("~/livemount/ssd/tmp/")))
+                              "~/livemount/ssd/tmp/" else NULL,
+                            ssd_min_free_gb = 50,
                             delete_raw_files = mode == "online",
                             delete_trimmed_files = mode == "online",
                             delete_collapsed_files = mode == "online",
@@ -236,6 +266,8 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               delete_collapsed_files = delete_collapsed_files,
               keep_contaminants = keep_contaminants,
               keep.unaligned.genome = keep_unaligned_genome,
+              ssd_scratch_dir = ssd_scratch_dir,
+              ssd_min_free_gb = ssd_min_free_gb,
               compress_raw_data = compress_raw_data,
               stop_downloading_new_data_at_drive_usage = stop_downloading_new_data_at_drive_usage,
               max_unprocessed_downloads = max_unprocessed_downloads,
