@@ -29,8 +29,13 @@ run has none to show.}
 }
 \value{
 invisible(data.table) with columns: stage, done, total, state
-("done"/"running"/"queued"), active_experiment, active_done, active_total
-(the latter three NA when no marker evidence is available/applicable)
+("done"/"running"/"queued"/"waiting"/"failed" -- "waiting" means the
+active_experiment named hasn't cleared the immediately preceding
+stage yet, so nothing is actually happening here despite having a
+name; "failed" means a crash is recorded for it THIS session, see
+\code{\link{experiment_error_message}}), active_experiment,
+active_done, active_total, active_error (the latter four NA when no
+marker evidence/crash is available/applicable)
 }
 \description{
 Read-only: reports on experiment-level flags (existing) and sample-level

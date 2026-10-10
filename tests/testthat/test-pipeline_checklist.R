@@ -92,8 +92,12 @@ test_that("pipeline_checklist names the active study for a MARKERLESS stage (cig
   )
   # PRJNA000001 already finished cigar_collapse (a single, whole-study
   # flag -- no per-sample marker exists for this stage at all);
-  # PRJNA000002 hasn't.
+  # PRJNA000002 hasn't, but HAS already cleared cigar_collapse's own
+  # immediately preceding stage (pipe_exp_ofst) -- i.e. it's genuinely
+  # eligible/active here, not just "waiting on upstream" (see
+  # candidate_is_eligible()).
   fake_mark_all_done(config, "cigar_collapse", "PRJNA000001-homo_sapiens")
+  fake_mark_all_done(config, c("exp", "ofst"), "PRJNA000002-homo_sapiens")
 
   tab <- suppressMessages(pipeline_checklist(pipelines, config, print = FALSE))
   row <- tab[stage == "pipe_cigar_collapse"]
@@ -124,8 +128,12 @@ test_that("pipeline_checklist names the active study for a marker-step stage eve
       ScientificName = "Homo sapiens"))
   )
   # PRJNA000001 fully done for pipe_exp_ofst (both its "exp" and "ofst"
-  # flags); PRJNA000002 hasn't had ANY sample's "ofst" marker set yet.
+  # flags); PRJNA000002 hasn't had ANY sample's "ofst" marker set yet,
+  # but HAS already cleared pipe_exp_ofst's own immediately preceding
+  # stage (pipe_align_clean) -- i.e. it's genuinely eligible/active
+  # here, not just "waiting on upstream" (see candidate_is_eligible()).
   fake_mark_all_done(config, c("exp", "ofst"), "PRJNA000001-homo_sapiens")
+  fake_mark_all_done(config, c("aligned", "cleanbam"), "PRJNA000002-homo_sapiens")
 
   tab <- suppressMessages(pipeline_checklist(pipelines, config, print = FALSE))
   row <- tab[stage == "pipe_exp_ofst"]
@@ -476,6 +484,103 @@ test_that("pipeline_checklist title line shows a real ETA, in hours, once the fi
 
   title <- readLines(checklist_path(config))[1]
   expect_match(title, "ETA: 1 hours\\)$")
+})
+
+test_that("candidate_is_eligible: TRUE for the first stage (nothing precedes it), else reflects the preceding stage's own flags", {
+  config <- fake_config()
+  expect_true(candidate_is_eligible(config, NULL, "any_experiment"))
+
+  set_flag(config, "aligned", "PRJNA_elig_test")
+  set_flag(config, "cleanbam", "PRJNA_elig_test")
+  expect_true(candidate_is_eligible(config, c("aligned", "cleanbam"), "PRJNA_elig_test"))
+
+  expect_false(candidate_is_eligible(config, c("aligned", "cleanbam"), "PRJNA_not_done_yet"))
+})
+
+test_that("experiment_error_message extracts the step name and first line, without config$error_dir it returns NULL", {
+  config_no_dir <- fake_config()
+  expect_null(experiment_error_message(config_no_dir, "any_experiment"))
+
+  config <- fake_config(extra = list(error_dir = tempfile("error_logs_")))
+  expect_null(experiment_error_message(config, "PRJNA_no_record")) # no record written yet
+
+  # Same record SHAPE report_failed_pipe() itself writes (R/pipeline_logs.R).
+  raw <- paste("PRJNA809587-homo_sapiens_RNA-seq", "(", "align", ")",
+              "Error : ! in callr subprocess.\nCaused by error in `STAR.align.internal(...)`:\n! STAR alignment step failed, see error above for more info.\n",
+              paste(Sys.time()))
+  dir.create(config$error_dir, recursive = TRUE)
+  saveRDS(raw, report_failed_pipe_path(config, "PRJNA809587-homo_sapiens_RNA-seq"))
+
+  err <- experiment_error_message(config, "PRJNA809587-homo_sapiens_RNA-seq")
+  expect_identical(err$step, "align")
+  expect_identical(err$message, "Error : ! in callr subprocess.")
+})
+
+test_that("pipeline_checklist shows FAILED (not active) for a study with a recorded crash, and WAITING (not active) for every later stage blocked behind it", {
+  # Built directly from a real observed checklist (Håkon, 2026-10-10):
+  # PRJNA809587 crashed partway through align (52/205 samples already
+  # done when it crashed) and stayed stuck there for 13+ hours. Every
+  # LATER stage's own "first not-yet-done" picker also landed on this
+  # SAME study (it can't have started there either), which rendered as
+  # misleadingly "active" everywhere at once. Only the stage where the
+  # crash actually happened should say FAILED; every stage blocked
+  # behind it (never reached it) should say "waiting on upstream", not
+  # active and not failed.
+  testthat::local_mocked_bindings(
+    detect_drive = function(...) "/dev/fake",
+    get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 1,
+                                          Drive = "/dev/fake", Drive_Usage_Percent = "1%")
+  )
+  config <- fake_config(preset = "RNA-seq", mode = "online", session_dir = tempfile("session_"),
+                        extra = list(error_dir = tempfile("error_logs_")))
+  exp <- "PRJNA809587-homo_sapiens_RNA-seq"
+  other_exp <- "PRJNA000001-homo_sapiens"
+  pipelines <- c(
+    fake_pipelines(
+      accession = "PRJNA809587",
+      runs = data.table::data.table(Run = c("SRR001", "SRR002", "SRR003"), LibraryLayout = "SINGLE",
+                                    LIBRARYTYPE = "RNA", ScientificName = "Homo sapiens"),
+      exp_name = exp),
+    fake_pipelines(
+      accession = "PRJNA000001",
+      runs = data.table::data.table(Run = "SRR901", LibraryLayout = "SINGLE",
+                                    LIBRARYTYPE = "RNA", ScientificName = "Homo sapiens"))
+  )
+  # A SECOND study already made it all the way through every later
+  # stage -- matching the real incident (36/37 studies done elsewhere),
+  # so those stages are genuinely "running" overall (n_done > 0), not
+  # untouched -- the ONLY thing to check is whether the FIRST
+  # not-yet-done candidate (PRJNA809587, stuck in align) is itself the
+  # one actually being worked on there, or just blocked behind align.
+  fake_mark_all_done(config, c("fetch", "aligned", "cleanbam", "exp", "ofst", "cigar_collapse",
+                               "merged_lib", "covrle", "bigwig", "pcounts"), other_exp)
+  # PRJNA809587: fetch already done (precedes align); some align
+  # samples genuinely completed before the crash.
+  fake_mark_all_done(config, "fetch", exp)
+  set_sample_flag(config, "aligned", exp, "SRR001")
+
+  dir.create(config$error_dir, recursive = TRUE)
+  raw <- paste(exp, "(", "align", ")",
+              "Error : ! in callr subprocess.\n! STAR alignment step failed, see error above for more info.\n",
+              paste(Sys.time()))
+  saveRDS(raw, report_failed_pipe_path(config, exp))
+
+  tab <- suppressMessages(pipeline_checklist(pipelines, config, print = FALSE))
+
+  align_row <- tab[stage == "pipe_align_clean"]
+  expect_identical(align_row$state, "failed")
+  expect_identical(align_row$active_experiment, exp)
+  expect_match(align_row$active_error, "^align: Error : ")
+
+  for (later_stage in c("pipe_exp_ofst", "pipe_cigar_collapse", "pipe_merge_study", "pipe_counts")) {
+    later_row <- tab[stage == later_stage]
+    expect_identical(later_row$state, "waiting")
+    expect_identical(later_row$active_experiment, exp)
+  }
+
+  txt <- format_checklist(tab)
+  expect_match(txt, "\\[\u2717\\] pipe_align_clean\\s+1/2 studies done -- FAILED: PRJNA809587-homo_sapiens_RNA-seq \\(align: ")
+  expect_match(txt, "\\[~\\] pipe_exp_ofst\\s+1/2 studies done -- waiting on upstream: PRJNA809587-homo_sapiens_RNA-seq")
 })
 
 test_that("session_log_dirs / session_checklist_path reflect real tempdir fixtures, newest first", {

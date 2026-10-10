@@ -21,6 +21,65 @@ stage_marker_step <- function(stage_name) {
         NA_character_)
 }
 
+#' Has this experiment finished the IMMEDIATELY PRECEDING stage's flags?
+#'
+#' Built from a real observed case (Håkon, 2026-10-10): once a study
+#' crashes partway through one stage, every LATER stage's own "first
+#' not-yet-done candidate" picks that SAME study as its own "active"
+#' one too (it's still the first not-done experiment for them as well
+#' -- they can't have started it, since it never finished the stage
+#' feeding them). Showing it as "active" for those later stages is
+#' misleading: nothing is actually happening there, it's just blocked
+#' waiting on the earlier stage (or crash) to clear. This check lets
+#' the checklist tell "genuinely active" apart from "blocked waiting
+#' on upstream" for exactly that fallback case.
+#' @param config the mNGSp config object
+#' @param prev_flags character vector, the immediately preceding
+#' stage's own flag names (from \code{config$flag_steps}), or NULL for
+#' the very first stage (always eligible -- nothing precedes it)
+#' @param candidate character, experiment id
+#' @return logical
+#' @noRd
+candidate_is_eligible <- function(config, prev_flags, candidate) {
+  if (is.null(prev_flags)) return(TRUE)
+  all(vapply(prev_flags, step_is_done, logical(1), config = config, experiment = candidate))
+}
+
+#' This experiment's recorded crash message for the CURRENT session, if any
+#'
+#' Reads the same error record \code{report_failed_pipe()}
+#' (R/pipeline_logs.R) writes to \code{config$error_dir} -- THIS
+#' session's own live error log, not a historical \code{last_session_errors()}
+#' lookup, so a checklist rendered mid-run reflects a crash the moment
+#' it happens. Only the step name and the error's own first line are
+#' kept for a short, one-line checklist summary; the raw record's full
+#' text (and every other session's) is already available via
+#' \code{\link{last_session_errors}}, so this never tries to duplicate it.
+#' @param config the mNGSp config object
+#' @param exp character, experiment id
+#' @return list(step = character or NA, message = character) if a crash
+#' is recorded for this experiment in the current session, else NULL
+#' (including when \code{config$error_dir} isn't set at all, e.g.
+#' called outside a real \code{run_pipeline()} session)
+#' @noRd
+experiment_error_message <- function(config, exp) {
+  if (is.null(config$error_dir)) return(NULL)
+  path <- report_failed_pipe_path(config, exp)
+  if (!file.exists(path)) return(NULL)
+  raw <- tryCatch(readRDS(path), error = function(e) NA_character_)
+  if (length(raw) != 1 || is.na(raw) || !is.character(raw)) return(NULL)
+  # report_failed_pipe()'s own record format is
+  # paste(exp, "(", step, ")", as.character(try), paste(Sys.time())) --
+  # strip the leading "<exp> ( <step> )" prefix so the rendered summary
+  # doesn't repeat the experiment name/step that format_checklist()
+  # already shows separately.
+  step_match <- regexpr("\\(\\s*[^)]*?\\s*\\)", raw)
+  step <- if (step_match > 0) gsub("^\\(\\s*|\\s*\\)$", "", regmatches(raw, step_match)) else NA_character_
+  rest <- if (step_match > 0) substring(raw, step_match + attr(step_match, "match.length")) else raw
+  message_text <- trimws(strsplit(rest, "\n", fixed = TRUE)[[1]][1])
+  list(step = step, message = message_text)
+}
+
 #' One stage's live processing-speed label for the checklist, or NA
 #'
 #' Dispatches to whichever rate source (R/pipeline_checklist_rates.R)
@@ -302,69 +361,102 @@ session_checklist_path <- function(config, index = 1) {
 #' on.exit handler); no ETA is appended in that case, a finished/aborted
 #' run has none to show.
 #' @return invisible(data.table) with columns: stage, done, total, state
-#' ("done"/"running"/"queued"), active_experiment, active_done, active_total
-#' (the latter three NA when no marker evidence is available/applicable)
+#' ("done"/"running"/"queued"/"waiting"/"failed" -- "waiting" means the
+#' active_experiment named hasn't cleared the immediately preceding
+#' stage yet, so nothing is actually happening here despite having a
+#' name; "failed" means a crash is recorded for it THIS session, see
+#' \code{\link{experiment_error_message}}), active_experiment,
+#' active_done, active_total, active_error (the latter four NA when no
+#' marker evidence/crash is available/applicable)
 pipeline_checklist <- function(pipelines, config, print = TRUE, run_status = NULL) {
   exps <- pipelines_names(pipelines)
   sample_totals <- experiment_sample_counts(pipelines)
 
-  rows <- lapply(names(config$flag_steps), function(stage_name) {
+  stage_names <- names(config$flag_steps)
+  rows <- lapply(seq_along(stage_names), function(stage_idx) {
+    stage_name <- stage_names[stage_idx]
     flags <- config$flag_steps[[stage_name]]
     done_vec <- vapply(exps, function(e) all(vapply(flags, step_is_done, logical(1),
                                                      config = config, experiment = e)),
                        logical(1))
     n_done <- sum(done_vec)
     n_total <- length(exps)
+    prev_flags <- if (stage_idx > 1) config$flag_steps[[stage_idx - 1]] else NULL
 
     marker_step <- stage_marker_step(stage_name)
     active_experiment <- NA_character_
     active_done <- NA_integer_
     active_total <- NA_integer_
+    active_error <- NA_character_
     state <- if (n_done == n_total) "done" else "queued"
+
+    # Marks active_experiment/state as "failed" if a crash is recorded
+    # for it THIS session, else leaves them as the caller already set.
+    apply_failure_check <- function(exp) {
+      err <- experiment_error_message(config, exp)
+      if (!is.null(err)) {
+        active_experiment <<- exp
+        active_error <<- sprintf("%s: %s", err$step, err$message)
+        state <<- "failed"
+        TRUE
+      } else FALSE
+    }
 
     if (n_done < n_total) {
       candidates <- exps[!done_vec]
       if (!is.na(marker_step)) {
         started <- vapply(candidates, function(e) n_samples_done(config, marker_step, e) > 0, logical(1))
         if (any(started)) {
-          active_experiment <- candidates[started][1]
-          active_done <- n_samples_done(config, marker_step, active_experiment)
-          active_total <- unname(sample_totals[active_experiment])
-          state <- "running"
+          # Real per-sample evidence this stage's own processing began
+          # for this candidate -- genuinely active (or, if it then
+          # crashed partway through, "failed" takes priority below),
+          # never "waiting": no eligibility check needed.
+          candidate <- candidates[started][1]
+          if (!apply_failure_check(candidate)) {
+            active_experiment <- candidate
+            active_done <- n_samples_done(config, marker_step, active_experiment)
+            active_total <- unname(sample_totals[active_experiment])
+            state <- "running"
+          }
         } else if (n_done > 0) {
           # A marker_step exists for this stage, but no per-sample
           # evidence has shown up yet for any not-yet-done candidate
-          # (e.g. a between-study transition, or upstream work hasn't
-          # fed this stage its next study yet) -- same "running, no
-          # per-sample evidence for the NEXT one specifically" shape as
-          # the markerless branch below, so it gets the same fallback:
-          # name the study via the identical "first not-yet-done"
+          # (e.g. a between-study transition). Same "first not-yet-done"
           # convention active_run_id() already uses to pick the active
-          # RUN within a study, and show its real total sample count
-          # without inventing a done count we don't have yet.
-          active_experiment <- candidates[1]
-          active_total <- unname(sample_totals[active_experiment])
-          state <- "running"
+          # RUN within a study, generalized here to pick the active
+          # STUDY -- but that candidate is only genuinely THIS stage's
+          # concern if it has already cleared the IMMEDIATELY preceding
+          # stage; otherwise it's not active here at all, just blocked
+          # waiting on that earlier stage (or a crash there -- see
+          # candidate_is_eligible()'s own doc for the real incident this
+          # comes from, 2026-10-10: a crashed study makes every LATER
+          # stage's own "first not-done" picker land on the SAME study,
+          # which looked misleadingly "active" everywhere at once).
+          candidate <- candidates[1]
+          if (!candidate_is_eligible(config, prev_flags, candidate)) {
+            active_experiment <- candidate
+            state <- "waiting"
+          } else if (!apply_failure_check(candidate)) {
+            active_experiment <- candidate
+            active_total <- unname(sample_totals[active_experiment])
+            state <- "running"
+          }
         }
       } else if (n_done > 0) {
         # No per-sample marker exists for this stage at all (whole-study
         # steps that hand off to ORFik's own internal BiocParallel
         # dispatch or process a whole folder in one call: cigar_collapse,
-        # merge_study, counts, convert's covRLE phase) -- but at least
-        # one study already finished this stage, so it HAS been
-        # actively cycling through studies in the same done_vec order
-        # as everywhere else in this checklist, making the first
-        # not-yet-done candidate the best available guess for which
-        # study is CURRENTLY being worked on (same inference
-        # active_run_id() already makes to pick the active RUN within
-        # one study, just one level up: the active STUDY among several).
-        # The sample total is real (experiment_sample_counts()); a live
-        # per-sample done-count genuinely isn't observable here since
-        # this stage writes no per-sample markers, so active_done stays
-        # NA rather than inventing one.
-        active_experiment <- candidates[1]
-        active_total <- unname(sample_totals[active_experiment])
-        state <- "running"
+        # merge_study, counts, convert's covRLE phase). Same eligibility
+        # check as above, for the same reason.
+        candidate <- candidates[1]
+        if (!candidate_is_eligible(config, prev_flags, candidate)) {
+          active_experiment <- candidate
+          state <- "waiting"
+        } else if (!apply_failure_check(candidate)) {
+          active_experiment <- candidate
+          active_total <- unname(sample_totals[active_experiment])
+          state <- "running"
+        }
       }
     }
 
@@ -375,7 +467,8 @@ pipeline_checklist <- function(pipelines, config, print = TRUE, run_status = NUL
     data.table::data.table(stage = stage_name, done = n_done, total = n_total,
                            rate_label = rate_label,
                            state = state, active_experiment = active_experiment,
-                           active_done = active_done, active_total = active_total)
+                           active_done = active_done, active_total = active_total,
+                           active_error = active_error)
   })
   tab <- data.table::rbindlist(rows)
   txt <- format_checklist(tab)
@@ -646,16 +739,33 @@ get_checklist_path <- function(config, index = NULL) {
 format_checklist <- function(tab) {
   lines <- vapply(seq_len(nrow(tab)), function(i) {
     row <- tab[i]
-    mark <- switch(row$state, done = "\u2714", running = ">", "-")
+    mark <- switch(row$state, done = "\u2714", running = ">", failed = "\u2717", waiting = "~", "-")
     # "rate_label" %in% names(tab), not just row$rate_label -- a tab
     # built without this column (e.g. an existing caller/test
     # predating this field) would otherwise make row$rate_label
     # return NULL, and is.na(NULL) is logical(0), which errors inside
-    # if(). Backward compatible: no column -> never rendered.
+    # if(). Backward compatible: no column -> never rendered. Same
+    # reasoning for "active_error" %in% names(tab) below.
     rate_suffix <- if ("rate_label" %in% names(tab) && !is.na(row$rate_label)) {
       paste0(", ", row$rate_label)
     } else ""
-    detail <- if (!is.na(row$active_experiment)) {
+    detail <- if (row$state == "failed") {
+      # A real recorded crash for THIS experiment, THIS session (see
+      # experiment_error_message()) -- not just "stale/not progressing",
+      # an actual error. Full detail via last_session_errors(); this is
+      # deliberately a short one-line pointer, not a duplicate of it.
+      err <- if ("active_error" %in% names(tab) && !is.na(row$active_error)) row$active_error else "see last_session_errors()"
+      sprintf(" -- FAILED: %s (%s)", row$active_experiment, err)
+    } else if (row$state == "waiting") {
+      # Named via the same "first not-yet-done" inference as "active"
+      # below, but this candidate hasn't actually cleared the
+      # IMMEDIATELY PRECEDING stage yet (candidate_is_eligible()) -- so
+      # nothing is actually happening here, it's just blocked (often
+      # behind that earlier stage's OWN "failed" row, which names the
+      # real cause). Deliberately distinct from "active": showing this
+      # as active-with-no-detail would misleadingly suggest live work.
+      sprintf(" -- waiting on upstream: %s", row$active_experiment)
+    } else if (!is.na(row$active_experiment)) {
       if (!is.na(row$active_done)) {
         sprintf(" -- active: %s (%d/%d samples%s)", row$active_experiment, row$active_done,
                 row$active_total, rate_suffix)
