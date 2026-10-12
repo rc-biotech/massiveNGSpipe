@@ -348,6 +348,13 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
 
   first_pair_index <- which(lengths(pairs) == 2)[1]
   any_paired <- !is.na(first_pair_index)
+  # Untrimmed raw input (RNA-seq preset): check for short-insert libraries
+  # first -- see short_insert_adapter() for the real case this comes from.
+  raw_input <- !did_trim && !did_collapse
+  adapter_rds <- file.path(output_dir, "inline_trim_adapter.rds")
+  short_insert <- raw_input && length(pairs) > 0 &&
+    (if (file.exists(adapter_rds)) !is.na(readRDS(adapter_rds))
+     else !is.na(short_insert_adapter(pairs[[1]][1])))
   strandMode <- 1
   if (any_paired) {
     if (!file.exists(file.path(output_dir, "strandMode.rds"))) {
@@ -357,10 +364,29 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
       strandMode <- detect_strand_mode(pairs[[first_pair_index]][1],
                                        pairs[[first_pair_index]][2],
                                        genomeDir, star = star.path,
-                                       keepGenomeLoaded = "LoadAndKeep")
+                                       keepGenomeLoaded = "LoadAndKeep",
+                                       short_insert = short_insert)
 
       saveRDS(strandMode, file.path(output_dir, "strandMode.rds"))
     } else strandMode <- readRDS(file.path(output_dir, "strandMode.rds"))
+  }
+  # Adapter of the file actually aligned (R1 or R2, per strandMode), cached
+  # per study like strandMode.rds. NA = long-insert library, align raw
+  # reads unchanged as before; otherwise trim inline before genome step.
+  inline_adapter <- NA_character_
+  if (short_insert) {
+    if (!file.exists(adapter_rds)) {
+      first_index <- if (any_paired) first_pair_index else 1
+      inline_adapter <- short_insert_adapter(
+        pairs[[first_index]][ifelse(any_paired, strandMode, 1)])
+      saveRDS(inline_adapter, adapter_rds)
+    } else inline_adapter <- readRDS(adapter_rds)
+  }
+  inline_trim <- !is.na(inline_adapter)
+  if (inline_trim) {
+    message("Short-insert library with untrimmed adapter (", inline_adapter,
+            "), trimming inline with fastp before genome alignment")
+    steps <- paste("tr", steps, sep = "-")
   }
 
   if (nrow(runs) > 0) {
@@ -369,7 +395,9 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
     run_experiment_subprocess(
       func = function(pairs, runs, strandMode, output_dir, index, steps,
                       keep.unaligned.genome, star.path, fastp.path,
-                      input_dir, config, experiment, owner_id, keep_loaded_after) {
+                      input_dir, config, experiment, owner_id, keep_loaded_after,
+                      inline_adapter) {
+        inline_trim <- !is.na(inline_adapter)
         cat("Total number of files are:\n")
         cat(length(pairs)); cat("\n")
         for (pair_index in seq_along(pairs)) {
@@ -418,7 +446,12 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
 
           align_attempt <- function(f1, f2, out_dir, ram_limit) {
             ORFik::STAR.align.single(f1, f2, output.dir = out_dir, index.dir = index,
-                                     steps = steps, resume = "ge",
+                                     steps = steps,
+                                     # NULL = fresh start (tr then ge): ORFik's
+                                     # script runs ONLY the step named by
+                                     # resume, it never continues past it.
+                                     resume = if (inline_trim) NULL else "ge",
+                                     adapter.sequence = if (inline_trim) inline_adapter else "auto",
                                      keep.index.in.memory = keep.index.in.memory,
                                      keep.unaligned.genome = keep.unaligned.genome,
                                      star.path = star.path, fastp = fastp.path,
@@ -483,7 +516,20 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
             dir.create(file.path(output_dir, "aligned"), recursive = TRUE, showWarnings = FALSE)
             fs::file_copy(produced, file.path(output_dir, "aligned", basename(produced)),
                          overwrite = TRUE)
+            if (inline_trim) { # fastp reports, needed by STAR.allsteps.multiQC()
+              reports <- list.files(file.path(scratch$output.dir, "trim"),
+                                    pattern = paste0("^report_", run), full.names = TRUE)
+              dir.create(file.path(output_dir, "trim"), recursive = TRUE, showWarnings = FALSE)
+              fs::file_copy(reports, file.path(output_dir, "trim", basename(reports)),
+                           overwrite = TRUE)
+            }
             scratch$cleanup()
+          }
+          if (inline_trim) { # Keep fastp reports, drop the trimmed fastq
+            trimmed <- list.files(file.path(output_dir, "trim"),
+                                  pattern = paste0("^trimmed2?_", run, ".*\\.fastq$"),
+                                  full.names = TRUE)
+            if (length(trimmed) > 0) fs::file_delete(trimmed)
           }
           #TODO: Now _1 and _2 will be kept, but fixed in cleanup, do I want it like that ?
           set_sample_flag(config, "aligned", experiment, run)
@@ -495,7 +541,8 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
                   keep.unaligned.genome = keep.unaligned.genome,
                   star.path = star.path, fastp.path = fastp.path,
                   input_dir = input_dir, config = config, experiment = experiment,
-                  owner_id = owner_id, keep_loaded_after = keep_loaded_after),
+                  owner_id = owner_id, keep_loaded_after = keep_loaded_after,
+                  inline_adapter = inline_adapter),
       logfile_out = file.path(pipeline_log_base(config), "console", "align", paste0(experiment, ".out.log")),
       logfile_err = file.path(pipeline_log_base(config), "console", "align", paste0(experiment, ".err.log")),
       on_poll = function() pipeline_checklist(pipelines, config)

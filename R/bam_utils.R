@@ -344,6 +344,57 @@ save_expanded_alignment_metrics <- function(bam_dir, collapsed_dir, study_org,
   invisible(NULL)
 }
 
+#' Adapter of an untrimmed short-insert library, or NA
+#'
+#' For presets that align raw reads without a trim stage (RNA-seq). Some
+#' "RNA-seq" libraries are built like Ribo-seq -- e.g. the matched input
+#' of a ribosome-profiling study: fragmented polyA RNA, gel-selected to
+#' 30-50 nt, small-RNA adapters -- so a 150 nt read is mostly adapter and
+#' STAR rejects it as "too short" (aligned < 0.66 of read length). Found
+#' live: PRJNA1208460 (GSM8721424), 87\% of R1 reads with the Illumina
+#' small-RNA 3' adapter, median insert ~48 nt; raw R1 aligned 0\%, 73\%
+#' unique after trimming that adapter. fastp's own "auto" detection found
+#' no adapter on these reads, hence explicit fastqc-based detection.
+#' @param file character, path to raw fastq(.gz)
+#' @param nreads numeric, default 2e5, reads to scan
+#' @param min_percent numeric, default 50. Minimum adapter content (\%
+#' of reads, fastqc's cumulative maximum over positions) to call the
+#' library short-insert. Normal long-insert RNA-seq stays well below and
+#' is aligned untrimmed exactly as before.
+#' @return character, adapter sequence, or NA_character_
+#' @noRd
+short_insert_adapter <- function(file, nreads = 2e5, min_percent = 50) {
+  if (is.na(file) || !grepl("\\.(fastq|fq)(\\.gz)?$", file)) return(NA_character_)
+  adapters_file <- tempfile("adapter_candidates_", fileext = ".txt")
+  candidates <- adapter_list(adapters_file)
+  report <- fastqc_parse_adapters(file, nreads, adapters_file)
+  short_insert_adapter_call(report, candidates, min_percent)
+}
+
+#' Pick the short-insert adapter from a parsed fastqc adapter table
+#'
+#' Factored out of \code{short_insert_adapter()} so the decision is
+#' unit-testable without running fastqc.
+#' @param report fastqc adapter table, as read_fastq_adapter_output()
+#' @param candidates data.table name/value, as adapter_list()
+#' @inheritParams short_insert_adapter
+#' @return character, adapter sequence, or NA_character_
+#' @noRd
+short_insert_adapter_call <- function(report, candidates, min_percent = 50) {
+  scores <- report[, -c("#Position")]
+  # Poly-nucleotide tracks are biology (polyA tails) or base-calling, not
+  # an adapter fastp can trim -- never a reason to trim RNA-seq.
+  scores <- scores[, !(names(scores) %in% c("polyA", "polyT", "polyN")), with = FALSE]
+  if (nrow(scores) == 0 || ncol(scores) == 0) return(NA_character_)
+  max_content <- vapply(scores, function(x) max(x, na.rm = TRUE), numeric(1))
+  if (max(max_content) < min_percent) return(NA_character_)
+  best <- names(which.max(max_content))
+  adapter <- candidates[name == best]$value
+  if (length(adapter) != 1) return(NA_character_)
+  names(adapter) <- best
+  adapter
+}
+
 #' Detect if R1 or R2 of read pair is primary read direction
 #' @import GenomicAlignments GenomicRanges
 #' @param R1 path to R1 fasta/fastq file
@@ -356,6 +407,14 @@ save_expanded_alignment_metrics <- function(bam_dir, collapsed_dir, study_org,
 #' @param threads numeric, default 20
 #' @param star path to STAR, default STAR.install()
 #' @param keepGenomeLoaded character, default c("LoadAndRemove", "LoadAndKeep", "NoSharedMemory")[1]
+#' @param short_insert logical, default FALSE. TRUE for untrimmed reads from a
+#' short-insert library (see \code{short_insert_adapter()}): mates are then
+#' mostly adapter, so STAR's default 0.66-of-read-length filters
+#' (reported as "unmapped: too short") reject every pair. Lowers those
+#' filters to an absolute 20 nt match for this orientation probe only -- the
+#' real alignment trims adapters instead. Verified live on
+#' PRJNA1208460/SRR31941133 (1e6 pairs): 0 pairs aligned by default, 81\%
+#' unique with this, R1/R2 transcript-sense overlaps 5.0M / 83k.
 #' @return a named numeric (1 or 2), 1 means R1 is primary. Name gives ratio of overlaps of R1 / R2.
 #' So 0.07 means R2 is bigger and 7% overlaps in R1 compared to R2.
 #' @examples
@@ -370,7 +429,8 @@ detect_strand_mode <- function(R1, R2,
                                nreads = 1e6,
                                tx = loadRegion(list.files(dirname(dirname(genomeDir)), ".db$", full.names = TRUE)[1], "tx"),
                                td = tempdir(), threads = 20, star = STAR.install(),
-                               keepGenomeLoaded = c("LoadAndRemove", "LoadAndKeep", "NoSharedMemory")[1]) {
+                               keepGenomeLoaded = c("LoadAndRemove", "LoadAndKeep", "NoSharedMemory")[1],
+                               short_insert = FALSE) {
   stopifnot(file.exists(R1) & length(R1) == 1)
   stopifnot(file.exists(R2) & length(R2) == 1)
   stopifnot(file.exists(genomeDir) & length(genomeDir) == 1)
@@ -395,7 +455,7 @@ detect_strand_mode <- function(R1, R2,
   --runThreadN %d \\
   --outSAMtype BAM Unsorted \\
   --genomeLoad %s \\
-  --outFileNamePrefix %s',
+  --outFileNamePrefix %s %s',
     shQuote(star),
     shQuote(normalizePath(genomeDir)),
     shQuote(normalizePath(R1)),
@@ -404,7 +464,10 @@ detect_strand_mode <- function(R1, R2,
     as.integer(nreads),
     threads,
     keepGenomeLoaded,
-    shQuote(paste0(normalizePath(td), "/"))
+    shQuote(paste0(normalizePath(td), "/")),
+    if (short_insert) {
+      "--outFilterScoreMinOverLread 0 --outFilterMatchNminOverLread 0 --outFilterMatchNmin 20"
+    } else ""
   )
 
 
@@ -423,8 +486,12 @@ detect_strand_mode <- function(R1, R2,
   counts <- c(sum(countOverlaps(tx, aln@first, ignore.strand = FALSE)),
               sum(countOverlaps(tx, aln@last, ignore.strand = FALSE)))
 
-  if (min(counts) == 0) stop("No overlaps to transcripts in either direction, either it is the wrong
-                             genome/annotation or try to increase nreads")
+  # Only an error if NEITHER mate overlaps transcripts: zero in one direction
+  # is just a perfectly stranded library, the clearest possible answer.
+  if (max(counts) == 0) stop("No overlaps to transcripts in either direction (",
+                             length(aln), " aligned pairs), either it is the wrong
+                             genome/annotation, untrimmed short-insert reads, or try to increase nreads")
+  counts <- pmax(counts, 1) # finite ratio name for a perfectly stranded library
 
   max <- which.max(counts)
   names(max) <- round(counts[1] / counts[2], 2)

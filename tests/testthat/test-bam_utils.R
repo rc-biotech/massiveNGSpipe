@@ -215,3 +215,24 @@ test_that("expanded_alignment_metrics_plot() returns a ggplot built from the uni
   unmapped_srr002 <- p$data$percent[p$data$Run == "SRR002" & p$data$category == "Unmapped"]
   expect_equal(unmapped_srr002, 95)
 })
+
+test_that("short_insert_adapter_call() picks a dominant real adapter, ignores polyA/T/N", {
+  candidates <- adapter_list(tempfile(fileext = ".txt"))
+  report <- data.table::data.table(`#Position` = c("1", "50", "100"),
+    `Illumina Universal Adapter` = c(0, 0.1, 0.2),
+    `Illumina Small RNA 3' Adapter` = c(0, 60, 87.1),
+    polyA = c(0, 5, 95))
+  expect_equal(unname(short_insert_adapter_call(report, candidates)), "TGGAATTCTCGG")
+  expect_equal(names(short_insert_adapter_call(report, candidates)), "Illumina Small RNA 3' Adapter")
+  # Normal long-insert RNA-seq: some read-through at the 3' end is not enough
+  report_long <- data.table::copy(report)[, `Illumina Small RNA 3' Adapter` := c(0, 1, 12)]
+  expect_true(is.na(short_insert_adapter_call(report_long, candidates)))
+  # polyA alone (biological tails) never triggers trimming
+  report_polyA <- report_long[, polyA := c(0, 80, 99)]
+  expect_true(is.na(short_insert_adapter_call(report_polyA, candidates)))
+})
+
+test_that("short_insert_adapter() skips fasta input", {
+  expect_true(is.na(short_insert_adapter("x.fasta.gz")))
+  expect_true(is.na(short_insert_adapter(NA_character_)))
+})
