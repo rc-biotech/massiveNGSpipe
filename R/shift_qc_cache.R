@@ -46,7 +46,7 @@
 #' @return character, directory path (not guaranteed to exist yet)
 #' @noRd
 shift_qc_cache_dir <- function(df) {
-  file.path(QCfolder(df), "per_sample_qc", if (uniqueMappers(df)) "unique" else "all")
+  file.path(QCfolder(df), "per_sample_qc", "v2_complete_TIS_windows", if (uniqueMappers(df)) "unique" else "all")
 }
 
 #' The cache file paths for one sample (one row of df)
@@ -60,17 +60,20 @@ shift_qc_cache_paths <- function(df_one_row) {
        frames = file.path(cache_dir, paste0(run_id, "_frames.csv")))
 }
 
-#' Thin wrapper around \code{ORFik::filepath(df_one_row, "pshifted")}
+#' Resolve the expected P-site ofst path without raw-library fallback
 #'
-#' Exists purely so tests can mock ONE plain massiveNGSpipe function
-#' instead of needing \code{filepath()} itself to dispatch on a fake
-#' experiment class -- \code{filepath()} is a plain function in ORFik
-#' (not an S4 generic) with an internal \code{stopifnot(is(df, "experiment"))},
-#' so it can never be given a method for a test stub class.
-#' @param df_one_row an ORFik experiment subset to exactly one row
-#' @return character, path to the pshifted file
+#' ORFik::filepath(type = "pshifted") can return an existing raw ofst/BAM
+#' when P-sites are missing. Validation needs the expected shifted path,
+#' including when it does not exist. Kept as a plain function for tests.
+#' @param df an ORFik experiment subset to one or more rows
+#' @return character, one expected P-site path per row
 #' @noRd
-pshifted_filepath <- function(df_one_row) filepath(df_one_row, "pshifted")
+pshifted_filepath <- function(df_one_row) {
+  # Missing P-sites must not resolve to raw ofst/BAM through filepath().
+  raw_paths <- ofst_filepath(df_one_row)
+  file.path(libFolder(df_one_row), "pshifted",
+            paste0(tools::file_path_sans_ext(basename(raw_paths)), "_pshifted.ofst"))
+}
 
 #' Is this sample's QC cache present and at least as new as its pshifted file?
 #'
@@ -110,13 +113,14 @@ shift_qc_cache_valid <- function(df_one_row) {
 #' sample and exclude it from aggregation (see \code{\link{shift_qc_cached}}),
 #' never treat a failure as if the sample had zero reads.
 #' @noRd
-shift_qc_one_sample <- function(df_one_row, cds, mrna, upstream, downstream, weight = "score") {
+shift_qc_one_sample <- function(df_one_row, cds, mrna, upstream, downstream, weight = "score",
+                                plot_cds = cds, plot_mrna = mrna, name_short = NULL) {
   tryCatch({
     style <- seqinfo(df_one_row)
     lib <- ORFik::fimport(pshifted_filepath(df_one_row), style)
-    name_short <- ORFik::bamVarName(df_one_row, skip.experiment = TRUE)
+    if (is.null(name_short)) name_short <- ORFik::bamVarName(df_one_row, skip.experiment = TRUE)
 
-    hitmap <- ORFik::windowPerReadLength(cds, mrna, lib, upstream = upstream, downstream = downstream)
+    hitmap <- ORFik::windowPerReadLength(plot_cds, plot_mrna, lib, upstream = upstream, downstream = downstream)
     hitmap[, frame := position %% 3]
 
     frames <- ORFik::regionPerReadLength(cds, lib, withFrames = TRUE, scoring = "frameSumPerL",
@@ -125,7 +129,7 @@ shift_qc_one_sample <- function(df_one_row, cds, mrna, upstream, downstream, wei
                                          BPPARAM = BiocParallel::SerialParam())
     if (nrow(frames) > 0) {
       frames[, length := fraction]
-      frames[, fraction := rep(name_short, nrow(frames))]
+      frames[, fraction := rep(sub("^RFP_", "", name_short), nrow(frames))]
     }
     list(hitmap = hitmap, frames = frames, name_short = name_short)
   }, error = function(e) {
@@ -183,10 +187,24 @@ read_shift_qc_cache <- function(df_one_row) {
 #' @param df an ORFik experiment
 #' @return list(upstream, downstream, cds, mrna)
 #' @noRd
+# Resolve labels on the FULL experiment: bamVarName() defaults suppress
+# fraction/condition/replicate fields once df is reduced to a single row.
+shift_qc_sample_names <- function(df) ORFik::bamVarName(df, skip.experiment = TRUE)
+
 shift_qc_annotation_context <- function(df) {
   has_leaders <- length(filterTranscripts(df, 5, 0, 0, stopOnEmpty = FALSE))
-  list(upstream = ifelse(has_leaders, 5, 0), downstream = 20,
-      cds = loadRegion(df, part = "cds"), mrna = loadRegion(df, part = "mrna"))
+  upstream <- ifelse(has_leaders, 5, 0)
+  downstream <- 20
+  cds <- loadRegion(df, part = "cds")
+  mrna <- loadRegion(df, part = "mrna")
+  # Match ORFik::shiftPlots(): clipped TIS windows must never be rescaled
+  # to 100 positions and then labelled as nucleotide offsets / reading frames.
+  # Keep all CDSs for the independent whole-CDS frame distribution.
+  plot_tx <- filterTranscripts(df, upstream, downstream + 1, 0)
+  list(upstream = upstream, downstream = downstream, cds = cds, mrna = mrna,
+       plot_cds = cds[names(cds) %in% plot_tx],
+       plot_mrna = mrna[names(mrna) %in% plot_tx],
+       sample_names = shift_qc_sample_names(df))
 }
 
 shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct = 80) {
@@ -203,9 +221,14 @@ shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct 
     ctx <- shift_qc_annotation_context(df)
     upstream <- ctx$upstream; downstream <- ctx$downstream
     cds <- ctx$cds; mrna <- ctx$mrna
+    plot_cds <- if (is.null(ctx$plot_cds)) cds else ctx$plot_cds
+    plot_mrna <- if (is.null(ctx$plot_mrna)) mrna else ctx$plot_mrna
+    sample_names <- ctx$sample_names
     idx <- which(needs_compute)
-    results <- BiocParallel::bplapply(idx, function(i, df, cds, mrna, upstream, downstream) {
-      res <- shift_qc_one_sample(df[i, ], cds, mrna, upstream, downstream)
+    results <- BiocParallel::bplapply(idx, function(i, df, cds, mrna, upstream, downstream, plot_cds, plot_mrna, sample_names) {
+      res <- shift_qc_one_sample(df[i, ], cds, mrna, upstream, downstream,
+                                 plot_cds = plot_cds, plot_mrna = plot_mrna,
+                                 name_short = if (is.null(sample_names)) NULL else sample_names[i])
       # Write AS SOON AS this one sample finishes, inside the worker,
       # instead of returning it to the master for a deferred write
       # after the WHOLE batch completes. Each sample's cache files are
@@ -222,7 +245,7 @@ shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct 
       if (!inherits(res, "shift_qc_sample_error")) write_shift_qc_cache(df[i, ], res)
       res
     }, df = df, cds = cds, mrna = mrna, upstream = upstream, downstream = downstream,
-       BPPARAM = BPPARAM)
+       plot_cds = plot_cds, plot_mrna = plot_mrna, sample_names = sample_names, BPPARAM = BPPARAM)
     for (j in seq_along(idx)) {
       res <- results[[j]]
       if (inherits(res, "shift_qc_sample_error")) {

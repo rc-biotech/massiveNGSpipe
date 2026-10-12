@@ -105,7 +105,19 @@ test_that("write_shift_qc_cache()/read_shift_qc_cache() round-trip exactly", {
 
 rfp_template_df <- function() {
   df <- ORFik::ORFik.template.experiment()
-  df[df$libtype == "RFP", ]
+  df <- df[df$libtype == "RFP", ]
+  # The bundled experiment can rely on filepath's raw-file fallback.
+  # Give these library-computation tests explicit, isolated P-site files;
+  # missing-file/fallback behavior is tested separately below.
+  inputs <- ORFik::filepath(df, "pshifted")
+  root <- tempfile("explicit_psite_fixture_")
+  dir.create(file.path(root, "pshifted"), recursive = TRUE)
+  df@listData$filepath <- file.path(root, paste0("fixture", seq_len(nrow(df)), ".ofst"))
+  for (i in seq_len(nrow(df))) {
+    file.copy(inputs[i], df$filepath[i])
+    file.copy(inputs[i], file.path(root, "pshifted", paste0("fixture", i, "_pshifted.ofst")))
+  }
+  df
 }
 
 test_that("shift_qc_one_sample() loads the library exactly once and returns matching hitmap/frames", {
@@ -361,4 +373,75 @@ test_that("shift_qc_cached() plots only the already-existing shiftPlots() max-39
   shift_qc_cached(df, BPPARAM = BiocParallel::SerialParam())
 
   expect_identical(plotted_idx, seq_len(nrow(df)))
+})
+
+test_that("cached TIS plots filter clipped leaders while whole-CDS frames retain every transcript", {
+  cds <- GenomicRanges::GRangesList(
+    full = GenomicRanges::GRanges("1", IRanges::IRanges(101, 200), "+"),
+    clipped = GenomicRanges::GRanges("1", IRanges::IRanges(301, 400), "+"))
+  mrna <- GenomicRanges::GRangesList(
+    full = GenomicRanges::GRanges("1", IRanges::IRanges(81, 220), "+"),
+    clipped = GenomicRanges::GRanges("1", IRanges::IRanges(299, 420), "+"))
+  testthat::local_mocked_bindings(
+    filterTranscripts = function(df, minFiveUTR, minCDS, minThreeUTR, ...) {
+      if (minCDS == 0) return("full")
+      expect_equal(c(minFiveUTR, minCDS, minThreeUTR), c(5, 21, 0))
+      "full"
+    },
+    loadRegion = function(df, part) if (part == "cds") cds else mrna,
+    shift_qc_sample_names = function(df) c("RFP_ffull", "RFP_fclipped")
+  )
+  ctx <- shift_qc_annotation_context(NULL)
+  expect_identical(names(ctx$cds), c("full", "clipped"))
+  expect_identical(names(ctx$plot_cds), "full")
+  windows <- ORFik::startRegion(ctx$plot_cds, ctx$plot_mrna,
+                              upstream = ctx$upstream, downstream = ctx$downstream)
+  expect_equal(ORFik::widthPerGroup(windows), 26L, ignore_attr = TRUE)
+  reads <- GenomicRanges::GRanges("1", IRanges::IRanges(101, 101), "+", score = 10, size = 28)
+  hits <- ORFik::windowPerReadLength(ctx$plot_cds, ctx$plot_mrna, reads,
+                                   upstream = ctx$upstream, downstream = ctx$downstream)
+  expect_true(all(hits$position >= -5 & hits$position <= 20))
+  expect_equal(hits[position == 0, sum(score)], 1)
+})
+
+test_that("cached QC carries full-study sample labels into single-row workers", {
+  df <- fake_qc_stub(n = 2)
+  seen <- character()
+  testthat::local_mocked_bindings(
+    pshifted_filepath = fake_qc_stub_pshifted_path,
+    shift_qc_annotation_context = function(df) list(upstream = 5, downstream = 20,
+      cds = list(), mrna = list(), sample_names = c("RFP_fREST", "RFP_fDEP")),
+    shift_qc_one_sample = function(df_one_row, ..., name_short = NULL) {
+      seen <<- c(seen, name_short)
+      list(hitmap = data.table::data.table(position = 0, frame = 0),
+        frames = data.table::data.table(frame = 0, score = 10,
+          fraction = sub("^RFP_", "", name_short), length = 28), name_short = name_short)
+    },
+    shift_qc_build_combined_plot = function(...) invisible(NULL),
+    check_adapter_barcode_quality = function(...) invisible(NULL)
+  )
+  shift_qc_cached(df, BPPARAM = BiocParallel::SerialParam())
+  expect_identical(seen, c("RFP_fREST", "RFP_fDEP"))
+  frames <- data.table::fread(file.path(ORFik::QCfolder(df), "Ribo_frames_all.csv"))
+  expect_setequal(frames$fraction, c("fREST", "fDEP"))
+  expect_equal(nrow(frames), 2L)
+})
+
+test_that("missing P-sites cannot be satisfied by filepath's raw-library fallback", {
+  root <- tempfile("missing_pshift_")
+  dir.create(file.path(root, "ofst"), recursive = TRUE)
+  raw <- file.path(root, "ofst", "SRR123.ofst")
+  file.create(raw)
+  testthat::local_mocked_bindings(
+    ofst_filepath = function(df) raw,
+    libFolder = function(df) root
+  )
+  testthat::local_mocked_bindings(filepath = function(df, type) raw, .package = "ORFik")
+  expect_false(pshift_sample_valid(NULL))
+  expect_false(shift_qc_cache_valid(NULL))
+  path <- pshifted_filepath(NULL)
+  dir.create(dirname(path), recursive = TRUE)
+  file.create(path)
+  Sys.setFileTime(path, Sys.time() + 10)
+  expect_true(pshift_sample_valid(NULL))
 })
