@@ -1,0 +1,133 @@
+# Unit tests for R/collection_megafst.R on small synthetic covRle libraries (no production data).
+# Reference values come from the original page writer save_coverage_tiles().
+
+fake_covrle_files <- function(dir, runs, lens = c(chrA = 5500L, chrB = 2300L), seed = 1) {
+  set.seed(seed)
+  vapply(runs, function(run) {
+    mk <- function() IRanges::RleList(lapply(lens, function(L) {
+      S4Vectors::Rle(as.numeric(stats::rpois(L, 0.3) * sample(c(0, 1, 3), L, replace = TRUE)))
+    }), compress = FALSE)
+    path <- file.path(dir, paste0(run, ".covqs"))
+    qs2::qs_save(ORFik::covRle(mk(), mk()), path)
+    path
+  }, character(1))
+}
+
+fake_seqinfo <- function(lens = c(chrA = 5500L, chrB = 2300L)) GenomeInfoDb::Seqinfo(names(lens), lens)
+
+read_pages <- function(dir) {
+  idx <- fst::read_fst(file.path(dir, "coverage_index.fst"), as.data.table = TRUE)
+  files <- file.path(dir, basename(c(idx$file_forward, idx$file_reverse)))
+  stats::setNames(lapply(files, fst::read_fst, as.data.table = TRUE), basename(files))
+}
+
+legacy_pages <- function(cov, runs, si, dir, tile) {
+  dir.create(dir, showWarnings = FALSE)
+  covs <- lapply(cov, ORFik:::read_RDSQS)
+  fp <- file.path(dir, c("fwd.qs", "rev.qs"))
+  fl <- lapply(covs, f); attr(fl, "strand") <- "+"; qs2::qs_save(fl, fp[1])
+  rl <- lapply(covs, r); attr(rl, "strand") <- "-"; qs2::qs_save(rl, fp[2])
+  pt <- megafst_page_table(si, tile, dir); chrs <- unique(pt$chr)
+  for (p in fp) save_coverage_tiles(p, chrs, GenomeInfoDb::seqlengths(si)[chrs], dir, tile, runs,
+                                    verbose = FALSE, remake = TRUE, BPPARAM = NULL)
+  fst::write_fst(pt, file.path(dir, "coverage_index.fst"))
+  read_pages(dir)
+}
+
+test_that("megafst_update full build is cell-identical to the original page writer", {
+  dir <- withr::local_tempdir(); runs <- paste0("SRR", 1:6)
+  cov <- fake_covrle_files(dir, runs); si <- fake_seqinfo()
+  ref <- legacy_pages(cov, runs, si, file.path(dir, "legacy"), tile = 2000)
+  megafst_update(runs, cov, si, file.path(dir, "new"), tile_size = 2000, batch_size = 4,
+                 BPPARAM = BiocParallel::SerialParam())
+  expect_identical(read_pages(file.path(dir, "new")), ref)
+  expect_identical(megafst_update(runs, cov, si, file.path(dir, "new"), tile_size = 2000,
+                                  BPPARAM = BiocParallel::SerialParam())$plan$mode, "none")
+})
+
+test_that("incremental add, replace and removal reproduce a full build", {
+  dir <- withr::local_tempdir(); runs <- paste0("SRR", 1:6)
+  cov <- fake_covrle_files(dir, runs); si <- fake_seqinfo(); sp <- BiocParallel::SerialParam()
+  ref <- legacy_pages(cov, runs, si, file.path(dir, "legacy"), tile = 2000)
+  out <- file.path(dir, "inc")
+  megafst_update(runs[1:4], cov[1:4], si, out, tile_size = 2000, BPPARAM = sp)
+  plan <- megafst_update(runs, cov, si, out, tile_size = 2000, BPPARAM = sp)$plan
+  expect_identical(plan$mode, "incremental"); expect_setequal(plan$add, runs[5:6])
+  expect_identical(read_pages(out), ref)
+  Sys.setFileTime(cov[2], Sys.time() + 10)
+  plan <- megafst_update(runs, cov, si, out, tile_size = 2000, BPPARAM = sp)$plan
+  expect_identical(plan$replace, runs[2])
+  expect_identical(read_pages(out), ref)
+  writeLines("x", file.path(out, "keep.txt"))
+  plan <- megafst_update(runs[-1], cov[-1], si, out, tile_size = 2000, BPPARAM = sp)$plan
+  expect_identical(plan$mode, "full")
+  expect_identical(read_pages(out), lapply(ref, function(x) x[, -1]))
+  expect_true(file.exists(file.path(out, "keep.txt")))
+  expect_false(dir.exists(paste0(out, ".staging")))
+})
+
+test_that("an interrupted append resumes to the same result", {
+  dir <- withr::local_tempdir(); runs <- paste0("SRR", 1:5)
+  cov <- fake_covrle_files(dir, runs); si <- fake_seqinfo(); sp <- BiocParallel::SerialParam()
+  ref <- legacy_pages(cov, runs, si, file.path(dir, "legacy"), tile = 2000)
+  out <- file.path(dir, "res")
+  megafst_update(runs[1:3], cov[1:3], si, out, tile_size = 2000, BPPARAM = sp)
+  pages <- megafst_page_table(si, 2000, out)
+  covs <- stats::setNames(lapply(cov[4:5], ORFik:::read_RDSQS), runs[4:5])
+  megafst_write_batch(covs, pages[1:2], "add", 50, sp)
+  expect_identical(megafst_update(runs, cov, si, out, tile_size = 2000, BPPARAM = sp)$plan$mode, "incremental")
+  expect_identical(read_pages(out), ref)
+})
+
+test_that("plan triggers compaction and full rebuilds where required", {
+  lib <- data.table::data.table(Run = c("a", "b"), cov_path = c("x", "y"), cov_mtime = 1, cov_size = 1)
+  p <- list(format_version = 1L, tile_size = 2e6, compress = 50, seq_names = "1", seq_lengths = 10,
+            replaced_since_full = 0, appends_since_full = 64)
+  new <- rbind(lib, data.table::data.table(Run = "c", cov_path = "z", cov_mtime = 1, cov_size = 1))
+  expect_identical(megafst_plan(lib, new, p, p)$mode, "full")              # > 64 append passes
+  p$appends_since_full <- 0
+  expect_identical(megafst_plan(lib, new, p, p)$mode, "incremental")
+  expect_identical(megafst_plan(lib, lib, p, p)$mode, "none")
+  expect_identical(megafst_plan(NULL, lib, NULL, p)$mode, "full")
+  expect_identical(megafst_plan(lib, lib, p, modifyList(p, list(tile_size = 1e6)))$mode, "full")
+})
+
+test_that("wait_for_memory proceeds, waits and errors", {
+  expect_true(wait_for_memory(10, "x", 5, 0.01, 0.01, function() 100))
+  expect_error(wait_for_memory(90, "x", 32, timeout_minutes = 0.0005, poll_seconds = 0.01,
+                               available_fun = function() 100), "Not enough memory")
+  calls <- 0
+  avail <- function() { calls <<- calls + 1; if (calls < 3) 20 else 200 }
+  expect_true(suppressMessages(wait_for_memory(50, "x", 10, timeout_minutes = 1, poll_seconds = 0.01,
+                                               available_fun = avail)))
+  expect_gte(calls, 3)
+})
+
+test_that("megacovrle_update caches by Run", {
+  dir <- withr::local_tempdir(); runs <- paste0("SRR", 1:4)
+  cov <- fake_covrle_files(dir, runs); mc <- file.path(dir, "mc", c("f.qs", "r.qs"))
+  expect_identical(megacovrle_update(runs[1:3], cov[1:3], mc), "full")
+  expect_identical(megacovrle_update(runs, cov, mc), "incremental")
+  expect_identical(megacovrle_update(runs, cov, mc), "none")
+  fw <- qs2::qs_read(mc[1])
+  expect_identical(names(fw), runs)
+  expect_identical(fw[["SRR2"]], f(ORFik:::read_RDSQS(cov[2])))
+  expect_identical(megacovrle_update(runs[-1], cov[-1], mc), "incremental")
+  expect_identical(names(qs2::qs_read(mc[2])), runs[-1])
+})
+
+test_that("megacovrle_update adopts pre-caching unnamed files, names them on next load", {
+  dir <- withr::local_tempdir(); runs <- paste0("SRR", 1:3)
+  cov <- fake_covrle_files(dir, runs); mc <- file.path(dir, "mc", c("f.qs", "r.qs")); dir.create(dirname(mc[1]))
+  csv <- file.path(dir, "collection.csv"); writeLines("x", csv)
+  covs <- lapply(cov, ORFik:::read_RDSQS)
+  Sys.sleep(1.1)
+  qs2::qs_save(lapply(covs, f), mc[1]); qs2::qs_save(lapply(covs, r), mc[2])   # legacy: unnamed
+  expect_identical(megacovrle_update(runs, cov, mc, collection_csv = csv), "adopted")
+  expect_identical(megacovrle_update(runs, cov, mc, collection_csv = csv), "none")
+  cov4 <- fake_covrle_files(dir, "SRR4", seed = 9)
+  expect_identical(megacovrle_update(c(runs, "SRR4"), c(cov, cov4), mc, collection_csv = csv), "incremental")
+  fw <- qs2::qs_read(mc[1])
+  expect_identical(names(fw), c(runs, "SRR4"))
+  expect_identical(unname(fw[1:3]), unname(lapply(covs, f)))
+})

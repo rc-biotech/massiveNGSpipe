@@ -120,115 +120,62 @@ save_coverage_tiles <- function(filepath, chromosomes, chromosome_lengths,
     )}))
 }
 
-# TODO: add multiple resolutions 1,3,9,27 (powers of 3 to 1 million  ish)
+#' Build or update the megafst (indexed coverage pages) and megacovrle of organism collections
+#'
+#' Incremental and resource-checked since 2026-10: libraries are streamed in batches from their
+#' per-library covRle files, only new/changed libraries are appended/replaced on rerun (fst fork
+#' column append/replace), full rebuilds are staged and published file by file, and every load
+#' waits for available memory. Page layout, file names and values are unchanged; see
+#' \code{megafst_update()} / \code{megacovrle_update()} and
+#' ~/shared_workspace/hakon_playground/megafst for benchmarks.
+#' @param all_exp,lib_type,organisms,min_samples as before
+#' @param tile_size integer, page length (keep 2e6: larger pages slow cold reads, see notes)
+#' @param force_remake_megacovrle logical, default FALSE (was TRUE): force a full megacovrle rebuild
+#' @param force_remake_megafst logical, default FALSE: force a full page rebuild
+#' @param make_megacovrle logical, default TRUE: also maintain the per-strand megacovrle files
+#' @param fst_threads integer, fst threads per process
+#' @param bp2 legacy chromosome interleave factor (page order)
+#' @param BPPARAM BiocParallel param for page writing within a chromosome
+#' @param batch_size integer, libraries loaded per batch
+#' @param compress fst compression level
+#' @param keep_free_gb,timeout_minutes RAM guard, see wait_for_memory()
+#' @return invisible(NULL)
 fst_megaformat_make <- function(all_exp = list.experiments(validate = FALSE, pattern = "all_samples", libtypeExclusive = lib_type),
                                 lib_type = "RFP",
-                                organisms = unique(all_exp[!(organism %in% "all_species")][samples > 10][order(samples, decreasing = TRUE)]$name),
+                                organisms = unique(all_exp[!(organism %in% "all_species")][samples > min_samples][order(samples, decreasing = TRUE)]$name),
                                 min_samples = 10,
                                 tile_size = 2e6,
-                                force_remake_megacovrle = TRUE,
+                                force_remake_megacovrle = FALSE,
+                                force_remake_megafst = FALSE,
+                                make_megacovrle = TRUE,
                                 fst_threads = 5,
-                                bp2 = 5, BPPARAM = BiocParallel::MulticoreParam(2, exportglobals = FALSE, log = FALSE)) {
+                                bp2 = 5, BPPARAM = BiocParallel::MulticoreParam(4, exportglobals = FALSE, log = FALSE),
+                                batch_size = 500, compress = 50, keep_free_gb = 32, timeout_minutes = 120) {
   fst::threads_fst(fst_threads, reset_after_fork = FALSE)
-  force_remake_megacovrle_original <- force_remake_megacovrle
-  exp_paths <- config()["exp"]
   for (organism in organisms) {
-    # ---- PARAMETERS ----
-    force_remake_megacovrle <- force_remake_megacovrle_original
-    # df <- read.experiment("all_samples-Homo_sapiens_1_9_2025", validate = FALSE)
     df <- read.experiment(organism, validate = FALSE)
-    # df <- read.experiment("all_samples-Saccharomyces_cerevisiae", validate = FALSE)
     message("- ", organism(df))
-    # df <- df[sample(nrow(df), 20, replace = FALSE),]
-    output_dir <- file.path(resFolder(df), "collection_tables_indexed")
-    index_path <- file.path(output_dir, "coverage_index.fst")
-    dir.create(output_dir, showWarnings = FALSE)
-
-    exp_creation_time <- file.info(file.path(exp_paths, paste0(organism, ".csv")))$mtime
-    file_paths <- file.path(resFolder(df), "megalist_covrle", paste0("all_covrles_", sub(" ", "_", organism(df)), c("_forward", "_reverse"), ".qs"))
-    if (all(file.exists(file_paths))) {
-      covrle_creation_time <- file.info(file_paths)$mtime
-      force_remake_megacovrle <- (all(exp_creation_time > covrle_creation_time)) | force_remake_megacovrle
-      if (all(exp_creation_time > covrle_creation_time)) {
-        message("Organism experiment is newer than covRLE, so will recompute covRles!")
-      }
+    cov_paths <- try(filepath(df, "cov", suffix_stem = c("", "_pshifted"),
+                              base_folders = libFolder(df, mode = "all")), silent = TRUE)
+    if (is(cov_paths, "try-error") || !all(file.exists(cov_paths))) {
+      message("-- Organism does not have cov RLEs for all libraries, skipping!")
+      next
     }
-
-    if (file.exists(index_path)) {
-      index_newer_than_exp <- file.info(index_path)$mtime > exp_creation_time
-      if (index_newer_than_exp) {
-        fst_files <- list.files(dirname(index_path), "\\.fst$", full.names = TRUE)
-        all_fst_files_newer <- all(file.info(fst_files)$mtime > exp_creation_time)
-        if (all_fst_files_newer) next
-      }
+    runs <- runIDs(df)
+    if (make_megacovrle) {
+      file_paths <- file.path(resFolder(df), "megalist_covrle",
+                              paste0("all_covrles_", sub(" ", "_", organism(df)), c("_forward", "_reverse"), ".qs"))
+      megacovrle_update(runs, cov_paths, file_paths, force = force_remake_megacovrle,
+                        keep_free_gb = keep_free_gb, timeout_minutes = timeout_minutes,
+                        collection_csv = file.path(config()["exp"], paste0(organism, ".csv")))
     }
-
-    if (!all(file.exists(file_paths)) | force_remake_megacovrle) {
-      message("- Creating megalist covrle")
-      covrle_collection_path <- file.path(resFolder(df), "megalist_covrle", "all_covrles.qs")
-
-      if (!file.exists(covrle_collection_path) | force_remake_megacovrle) {
-        message("-- Loading all covrles..")
-        cov_paths <- try(filepath(df, "cov", suffix_stem = c("", "_pshifted"), base_folders = libFolder(df, mode = "all")), silent = TRUE)
-        if (is(cov_paths, "try-error")) {
-          message("-- Organism does not have cov RLEs for all libraries, skipping!")
-          next
-        }
-        all_covrles <- lapply(cov_paths, function(path) read_RDSQS(path, nthread = 5))
-      } else {
-        message("-- Loading premade file of all covrles..")
-        all_covrles <- read_RDSQS(covrle_collection_path)
-      }
-
-      #
-      covs_split <- list(lapply(all_covrles, function(x) f(x)),
-                         lapply(all_covrles, function(x) r(x)))
-      rm(all_covrles)
-      gc()
-      attr(covs_split[[1]], "strand") <- "+"
-      attr(covs_split[[2]], "strand") <- "-"
-      dir.create(dirname(file_paths[1]), showWarnings = FALSE, recursive = TRUE)
-      qs2::qs_save(covs_split[[1]], file_paths[1], nthreads = 5)
-      qs2::qs_save(covs_split[[2]], file_paths[2], nthreads = 5)
-      rm(covs_split)
-      gc()
-    }
-
-    stopifnot(length(file_paths) == 2 & all(file.exists(file_paths)))
-    verbose <- TRUE
-    colnames <- runIDs(df)
-    seqinfo <- seqinfo(df)
-    seqinfo <- seqinfo[seqnames(seqinfo)[order(seqlengths(seqinfo), decreasing = TRUE)]]
-    seqinfo <- seqinfo[seqnames(seqinfo)[order(rep(seq(bp2), length.out = length(seqlengths(seqinfo))))]]
-    chromosomes <- seqnames(seqinfo)
-    chromosome_lengths <- seqlengths(seqinfo)
-
-    message("-- Creating chromosome fst pages")
-    message("--- Total chromosomes: ", length(chromosomes))
-    message("--- Total pages: ", sum(ceiling(seqlengths(seqinfo) / tile_size)))
-    index_dt <- lapply(file_paths, function(filepath, chromosomes,
-                                            chromosome_lengths,
-                                            output_dir, tile_size, colnames,
-                                            save_coverage_tiles, bp, verbose) {
-      save_coverage_tiles(filepath, chromosomes, chromosome_lengths,
-                          output_dir, tile_size, colnames, verbose, remake = TRUE,
-                          BPPARAM = BiocParallel::MulticoreParam(bp, exportglobals = FALSE, log = FALSE))
-    },
-    chromosomes = chromosomes,
-    chromosome_lengths = chromosome_lengths,
-    output_dir = output_dir, tile_size = tile_size, verbose = verbose,
-    colnames = colnames,
-    save_coverage_tiles = save_coverage_tiles,
-    bp = bp2)
-
-    colnames(index_dt[[1]])[colnames(index_dt[[1]]) == "file"] <- "file_forward"
-    colnames(index_dt[[2]])[colnames(index_dt[[2]]) == "file"] <- "file_reverse"
-    index_dt <- cbind(index_dt[[1]], file_reverse = index_dt[[2]]$file_reverse)
-
-    # Save index file
-    write_fst(index_dt, index_path)
+    megafst_update(runs, cov_paths, seqinfo(df), file.path(resFolder(df), "collection_tables_indexed"),
+                   tile_size = tile_size, batch_size = batch_size, compress = compress,
+                   force = force_remake_megafst, keep_free_gb = keep_free_gb,
+                   timeout_minutes = timeout_minutes, BPPARAM = BPPARAM, bp2 = bp2)
   }
   message("Done")
+  invisible(NULL)
 }
 
 meta_meta_motif_motif <- function(all_exp = list.experiments(validate = FALSE, pattern = "all_samples", libtypeExclusive = lib_type),
