@@ -178,118 +178,29 @@ fst_megaformat_make <- function(all_exp = list.experiments(validate = FALSE, pat
   invisible(NULL)
 }
 
+#' Build or update the meta-motif tables of organism collections
+#'
+#' Cached and incremental since 2026-10, see \code{meta_motif_update()}: anchor windows are selected
+#' once (seeded subsampling) and only new/changed libraries are scored on rerun.
+#' @param all_exp,lib_type,organisms as before
+#' @param force_remake_megacovrle logical, default FALSE (was TRUE): force recomputing regions and
+#' every library (name kept for compatibility)
+#' @param letters_vec character, amino acids whose ordered pairs are anchors
+#' @param BPPARAM BiocParallel param over libraries
+#' @param ... passed to meta_motif_update()
+#' @return invisible(NULL)
 meta_meta_motif_motif <- function(all_exp = list.experiments(validate = FALSE, pattern = "all_samples", libtypeExclusive = lib_type),
                                   lib_type = "RFP",
                                   organisms = unique(all_exp[!(organism %in% "all_species")][samples > 10][order(samples, decreasing = TRUE)]$name),
-                                  force_remake_megacovrle = TRUE,
-                                  letters_vec = c("P", "R"), BPPARAM = bpparam()) {
-  remake <- force_remake_megacovrle
+                                  force_remake_megacovrle = FALSE,
+                                  letters_vec = c("P", "R"),
+                                  BPPARAM = BiocParallel::MulticoreParam(8, exportglobals = FALSE, log = FALSE), ...) {
   for (org in organisms) {
     df <- read.experiment(org, validate = FALSE)
-    filepaths <- try(filepath(df, "cov", base_folders = libFolder(df, mode = "all"), suffix_stem = c("_pshifted", "")))
-    if (is(filepaths, "try-error")) {
-      warning("Missing covrle files for organism, going to next")
-      next
-    }
-    lib_names <- bamVarName(df)
-
-    org_short <- gsub(" ", "_", tolower(organism(df)))
-    message("- ", org_short)
-    org_dir <- file.path(dirname(QCfolder(df)), "meta_collection_tables")
-    TIS_file <- file.path(org_dir, "meta_collection_table_TIS.fst")
-    TTS_file <- file.path(org_dir, "meta_collection_table_TTS.fst")
-    cds_anchor_files <- c(TIS = TIS_file, TTS = TTS_file)
-
-    all_AA_letters <- Biostrings::AA_STANDARD
-    permute <- function(x) {
-      if (length(x) == 1) return(x)
-      res <- c()
-      for (i in seq_along(x)) {
-        sub_perms <- permute(x[-i])
-        res <- c(res, paste0(x[i], sub_perms))
-      }
-      return(res)
-    }
-
-    # Get permutations as strings
-
-    # Generate all 2-character combinations with repetition
-    pairs <- as.vector(outer(letters_vec, letters_vec, paste0))
-    aa_pair_files <- file.path(org_dir, paste0("meta_collection_table_",  pairs,".fst"))
-    names(aa_pair_files) <- pairs
-    files <- c(cds_anchor_files, aa_pair_files)
-    if (all(file.exists(files)) & !remake) next
-    if (!dir.exists(org_dir)) dir.create(org_dir, recursive = TRUE)
-
-    txdb <- loadTxdb(df)
-    subset <- integer()
-    if (org_short == "homo_sapiens") {
-      mane <- canonical_isoforms(df)
-      subset <- mane
-    } else try(subset <- filterTranscripts(txdb, NULL, 30, NULL, longestPerGene = TRUE), silent = TRUE)
-    all_cds <- cds <- loadRegion(txdb, "cds")
-    mrna_original <- loadRegion(txdb, "mrna")
-    cds <- all_cds[names(all_cds) %in% subset]
-    mrna <- mrna_original[names(mrna_original) %in% subset]
-    stopifnot(length(cds) == length(mrna)); length(cds)
-    extension <- 300
-    mrna <- extendTrailersUntil(extendLeadersUntil(mrna, cds, extension), cds, extension)
-
-    anchor_site <- "TIS"
-    for (anchor_site in names(files)) {
-      message(anchor_site)
-      if (file.exists(files[anchor_site]) & !remake) next
-      anchor <- if (anchor_site == "TIS") {
-        startSites(cds, TRUE, TRUE, TRUE)
-      } else if (anchor_site == "TTS") {
-        stopSites(cds, TRUE, TRUE, TRUE)
-      } else if (anchor_site %in% pairs) {
-        seqs <- txSeqsFromFa(cds, df, is.sorted = TRUE, keep.names = TRUE)
-        codon_seqs <- translate(seqs, if.fuzzy.codon = "solve")
-        pattern_match_irl <- IRangesList(Biostrings::vmatchPattern(anchor_site, codon_seqs))
-        names(pattern_match_irl) <- seq_along(pattern_match_irl)
-        pattern_match_irl <- pattern_match_irl[lengths(pattern_match_irl) > 0]
-        width(pattern_match_irl) <- 1
-        end(pattern_match_irl) <- IntegerList((end(pattern_match_irl)*3)-2L)
-        start(pattern_match_irl) <- IntegerList((start(pattern_match_irl)*3)-2L)
-        anchor <- unlistGrl(pmapFromTranscriptF(pattern_match_irl, cds, removeEmpty = T))
-
-      } else stop("Invite anchor site")
-      # cds_stops <- split(cds_stops, names(cds_stops))
-      length_original <- length(anchor)
-      windows_all <- windowPerGroup(anchor, tx = mrna, upstream = extension, downstream = extension - 1)
-      summary(widthPerGroup(windows_all))
-      windows_all <- windows_all[widthPerGroup(windows_all) == extension*2]
-      length_filtered <- length(windows_all)
-      length_diff <- length_original - length_filtered
-      message("Lost ", length_diff, " anchor sites (", round(100 - (100*(length_filtered/length_original)), 2), "%)")
-      max_ranges <- 30000
-      if (length_filtered > max_ranges) {
-        message("Original anchor sites: ", length_original)
-        windows_all <- windows_all[sample(length_filtered, max_ranges, replace = FALSE)]
-        subsampling_length <- length(windows_all)
-        length_diff <- length_original - subsampling_length
-        message("Lost ", length_diff, " anchor sites (", round(100 - (100*(subsampling_length/length_original)), 2), "%)")
-      }
-
-
-      print(Sys.time())
-      if (bpworkers(BPPARAM) > 1) {
-        bpprogressbar(BPPARAM) <- TRUE
-        bpexportglobals(BPPARAM) <- FALSE
-        bpexportvariables(BPPARAM) <- FALSE
-      }
-      cov_list <- bplapply(seq_along(filepaths), function(i, windows_all, filepaths, lib_names) {
-        cat(i, " / ", length(filepaths), "\n")
-        file <- filepaths[i]
-        ORFik::coverageScorings(ORFik::coveragePerTiling(windows_all, fimport(file), as.data.table = TRUE, is.sorted = TRUE), "sum")$score
-      }, windows_all = windows_all, filepaths = filepaths, lib_names = lib_names,
-      BPPARAM = BPPARAM)
-      names(cov_list) <- runIDs(df)
-
-      fst::write_fst(as.data.table(cov_list), files[anchor_site])
-      print(Sys.time())
-    }
+    message("- ", gsub(" ", "_", tolower(organism(df))))
+    res <- try(meta_motif_update(df, letters_vec = letters_vec, force = force_remake_megacovrle,
+                                 BPPARAM = BPPARAM, ...))
+    if (is(res, "try-error")) warning("meta-motif failed for ", org, ": ", as.character(res))
   }
+  invisible(NULL)
 }
-

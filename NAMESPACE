@@ -3,6 +3,7 @@
 export(abort_session_when_next_study_done_per_step)
 export(megacovrle_update)
 export(megafst_update)
+export(meta_motif_update)
 export(accessions_to_use)
 export(adapters_manual_assign)
 export(add_step_to_pipeline)
