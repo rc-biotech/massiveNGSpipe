@@ -301,7 +301,10 @@ megafst_update <- function(runs, cov_paths, seqinfo, output_dir, tile_size = 2e6
   message("-- megafst plan: ", plan$mode, " (", plan$reason, ")")
   staging <- paste0(output_dir, ".staging")
   if (plan$mode != "full" && dir.exists(staging)) unlink(staging, recursive = TRUE)  # stale partial full build
-  if (plan$mode == "none") return(invisible(list(plan = plan, output_dir = output_dir)))
+  if (plan$mode == "none") {
+    if (!file.exists(manifest_path)) megafst_save_state(lib, params, manifest_path, params_path)  # persist adoption
+    return(invisible(list(plan = plan, output_dir = output_dir)))
+  }
 
   if (plan$mode == "incremental") {
     params$replaced_since_full <- (params_old$replaced_since_full %||% 0) + length(plan$replace)

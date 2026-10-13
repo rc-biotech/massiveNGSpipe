@@ -143,6 +143,9 @@ test_that("pre-caching pages holding a subset of libraries are adopted and exten
   expect_identical(plan$mode, "incremental"); expect_setequal(plan$add, runs[5:6])
   expect_identical(read_pages(old), ref)
   expect_false(dir.exists(paste0(old, ".staging")))
+  exact <- file.path(dir, "exact"); legacy_pages(cov, runs, si, exact, tile = 2000)
+  expect_identical(megafst_update(runs, cov, si, exact, tile_size = 2000, BPPARAM = sp)$plan$mode, "none")
+  expect_true(file.exists(file.path(exact, "megafst_manifest.fst")))   # adoption persisted
   # a library present in the pages but removed from the collection cannot be adopted
   rm_dir <- file.path(dir, "rm"); legacy_pages(cov, runs, si, rm_dir, tile = 2000)
   expect_identical(megafst_update(runs[-2], cov[-2], si, rm_dir, tile_size = 2000, BPPARAM = sp)$plan$mode, "full")
