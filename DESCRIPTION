@@ -66,9 +66,6 @@ Imports:
     stringr,
     SummarizedExperiment
 Suggests:
-    matrixStats,
-    scater,
-    SingleCellExperiment,
     testthat (>= 3.0.0),
     uwot
 Remotes:
