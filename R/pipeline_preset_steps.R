@@ -541,12 +541,33 @@ make_additional_formats_internal <- function(df, libtype_df_ref =
   } else {
     message("- covRle & Bigwig method: full read")
   }
-  convert_to_covRleList(df)
+  if (!(libtype_df_ref && make_point_covrle(df))) convert_to_covRleList(df)
   convert_to_bigWig(df, in_files = filepath(df, "cov"))
   ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE,
                             BPPARAM = SerialParam())
   suppressWarnings(remove.experiments(df))
   return(invisible(NULL))
+}
+
+#' covRle + covRleList of a P-site master track straight from its OFST table
+#'
+#' Uses ORFik's point-coverage builder when available (identical output to
+#' convert_to_covRleList, without the GRanges import and per read length passes).
+#' @param df an ORFik experiment with one library
+#' @return TRUE if the files were written, FALSE to use convert_to_covRleList
+#' @noRd
+make_point_covrle <- function(df) {
+  builder <- tryCatch(utils::getFromNamespace(".convert_point_ofst_cov", "ORFik"), error = function(e) NULL)
+  if (is.null(builder) || nrow(df) != 1) return(FALSE)
+  in_file <- filepath(df, "pshifted")
+  lib_name <- ORFik:::remove.file_ext(basename(in_file))
+  out_dir <- file.path(libFolder(df), "cov_RLE_List")
+  out_dir_merged <- file.path(libFolder(df), "cov_RLE")
+  dir.create(out_dir, showWarnings = FALSE); dir.create(out_dir_merged, showWarnings = FALSE)
+  done <- builder(in_file, file.path(out_dir, lib_name), file.path(out_dir_merged, lib_name),
+                  seqinfo(df), "qs")
+  if (done) message("- covRle & covRleList: built from point OFST table")
+  done
 }
 
 #' Gather all modalities per organism into exp
