@@ -204,7 +204,8 @@ test_that("shift_qc_cached() recomputes only the one sample whose pshifted file 
 
   # Simulate sample 2 being redone (fresh pshift) by bumping its
   # pshifted file's mtime past its own cache's.
-  Sys.setFileTime(fake_qc_stub_pshifted_path(df[2, ]), Sys.time() + 10)
+  Sys.setFileTime(unlist(shift_qc_cache_paths(df[2, ])), Sys.time() - 10)
+  Sys.setFileTime(fake_qc_stub_pshifted_path(df[2, ]), Sys.time())
 
   shift_qc_cached(df, BPPARAM = BiocParallel::SerialParam())
   expect_identical(call_log, ORFik::runIDs(df[2, ]))
@@ -247,7 +248,7 @@ test_that("shift_qc_cached() writes each sample's cache file as soon as THAT sam
   expect_true(sample1_cached_before_sample2_ran)
 })
 
-test_that("shift_qc_cached() excludes a failing sample from the aggregate and never caches it, so it's retried next time", {
+test_that("shift_qc_cached() blocks incomplete study QC and retries only the failing sample", {
   testthat::local_mocked_bindings(pshifted_filepath = fake_qc_stub_pshifted_path)
   df <- fake_qc_stub()
   ok_result <- list(hitmap = data.table::data.table(position = 1, frame = 0),
@@ -272,7 +273,7 @@ test_that("shift_qc_cached() excludes a failing sample from the aggregate and ne
     shift_qc_annotation_context = function(df) list(upstream = 5, downstream = 20, cds = list(), mrna = list())
   )
 
-  expect_warning(shift_qc_cached(df, BPPARAM = BiocParallel::SerialParam()), "simulated failure")
+  expect_warning(expect_error(shift_qc_cached(df, BPPARAM = BiocParallel::SerialParam()), "Incomplete P-shift QC.*SRR001"), "simulated failure")
 
   expect_false(shift_qc_cache_valid(df[1, ])) # failing sample: no valid cache
   expect_true(shift_qc_cache_valid(df[2, ]))  # succeeding siblings: cached fine
@@ -280,7 +281,7 @@ test_that("shift_qc_cached() excludes a failing sample from the aggregate and ne
   # Resuming again must retry the failing sample (not skip it forever)
   # and must NOT re-touch the siblings that already succeeded.
   call_log <- character()
-  expect_warning(shift_qc_cached(df, BPPARAM = BiocParallel::SerialParam()), "simulated failure")
+  expect_warning(expect_error(shift_qc_cached(df, BPPARAM = BiocParallel::SerialParam()), "Incomplete P-shift QC.*SRR001"), "simulated failure")
   expect_identical(call_log, failing_run)
 })
 
@@ -341,7 +342,7 @@ test_that("shift_qc_cached() aggregates cached per-sample frame tables into Ribo
     shift_qc_annotation_context = function(df) list(upstream = 5, downstream = 20, cds = list(), mrna = list())
   )
 
-  shift_qc_cached(df, BPPARAM = BiocParallel::SerialParam())
+  expect_warning(shift_qc_cached(df, BPPARAM = BiocParallel::SerialParam()), "< 25%")
 
   all_csv <- data.table::fread(file.path(ORFik::QCfolder(df), "Ribo_frames_all.csv"))
   expect_identical(nrow(all_csv), 4L) # 2 samples x 2 frame rows each
@@ -444,4 +445,32 @@ test_that("missing P-sites cannot be satisfied by filepath's raw-library fallbac
   file.create(path)
   Sys.setFileTime(path, Sys.time() + 10)
   expect_true(pshift_sample_valid(NULL))
+})
+
+
+test_that("all and unique QC aggregates stay separate and preserve the other mode", {
+  df <- fake_qc_stub(n = 1)
+  testthat::local_mocked_bindings(
+    pshifted_filepath = fake_qc_stub_pshifted_path,
+    shift_qc_annotation_context = function(df) list(upstream=5,downstream=20,cds=list(),mrna=list()),
+    shift_qc_one_sample = function(df_one_row, ...) {
+      scores <- if (ORFik::uniqueMappers(df_one_row)) c(1,10) else c(10,1)
+      list(hitmap=data.table::data.table(position=1,frame=0),
+           frames=data.table::data.table(frame=c(0,1),score=scores,fraction="A",length=30))
+    },
+    shift_qc_build_combined_plot = function(...) invisible(NULL),
+    check_adapter_barcode_quality = function(...) invisible(NULL)
+  )
+  shift_qc_cached(df, BPPARAM=BiocParallel::SerialParam())
+  all_path <- file.path(ORFik::QCfolder(df), "Ribo_frames_all.csv")
+  all_before <- readBin(all_path, "raw", n=file.info(all_path)$size)
+  ORFik::uniqueMappers(df) <- TRUE
+  expect_warning(shift_qc_cached(df, BPPARAM=BiocParallel::SerialParam()), "< 25%")
+  unique_path <- file.path(shift_qc_output_dir(df), "Ribo_frames_all.csv")
+  expect_false(identical(all_path, unique_path))
+  expect_identical(readBin(all_path,"raw",n=file.info(all_path)$size), all_before)
+  expect_equal(data.table::fread(all_path)$score, c(10,1))
+  expect_equal(data.table::fread(unique_path)$score, c(1,10))
+  expect_true(file.exists(file.path(dirname(all_path),"good.rds")))
+  expect_true(file.exists(file.path(dirname(unique_path),"warning.rds")))
 })

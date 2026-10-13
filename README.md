@@ -461,6 +461,30 @@ get_annotation(organism, GTF = path_to_gtf, genome = path_to_genome, gene_symbol
 
 This should now work. If it still fails, contact us on github.
 
+### P-shift QC completion and mapper-specific reports
+
+`valid_pshift` records that every sample completed its QC computation; it does
+not imply that every footprint passed biological quality thresholds. Inspect
+`good.rds`, `warning.rds` and the frame tables separately. Empty but successfully
+computed frame tables are reported as no CDS signal rather than computation
+errors. A failed or missing per-sample cache now blocks study QC completion and
+lists the affected Run IDs. Successful sample caches remain available, so a
+retry recomputes only incomplete samples.
+
+Cached QC writes all-mapper aggregate tables, plots and verdicts under
+`aligned/QC_STATS/`; unique-mapper reports go under
+`aligned/unique_mappers/QC_STATS/`. ORFik's `QCfolder()` can return a shared
+folder for both modes, so the cached writer explicitly separates these outputs.
+The existing per-sample cache namespace remains unchanged for resume support.
+
+Failure records under the running session's `error_logs/<session>/` block
+study dispatch. Diagnose and correct the cause, archive the exact failure
+record, then remove it to allow the next polling cycle to retry. Do not clear
+records indiscriminately. Some early stages use accession-only error names,
+while later stages use study-organism names. Code changes in already loaded
+stage workers require restarting the runner; changing a file or removing an
+error record alone does not reload R functions.
+
 ### Study fails to p-shift
 
 The pipeline uses ORFik read length and offset calculation. 

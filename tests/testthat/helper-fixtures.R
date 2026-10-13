@@ -243,3 +243,9 @@ fake_barcode_fixture <- function(n = 2000, insert_lengths = 26:34,
        barcode5p_size = nchar(barcode5p), barcode3p_size = nchar(barcode3p),
        insert_lengths = insert_lengths, adapter = adapter, raw_len = raw_len, n = n)
 }
+
+# Conversion tests use the same libtype column contract as ORFik experiments.
+methods::setMethod('$', 'fake_exp_stub', function(x, name) {
+  if (name == 'libtype') return(rep('RFP', length(x@run_ids)))
+  stop('Unexpected fake experiment column: ', name)
+})

@@ -1145,16 +1145,12 @@ pshift_sample_valid <- function(df_one_row) {
 #' directly from ORFik's own source that this is already safe --
 #' \code{libFolder()} (hence \code{out.dir}) resolves from
 #' \code{dirname(x$filepath[1])}, identical for a subset or the full
-#' experiment, and \code{shifts_save()} already merges a subset's
-#' shifts into an existing \code{shifting_table.rds} by name rather
-#' than overwriting it (\code{old_shifts[names(shifts)] <- shifts}) --
-#' this is exactly the "pshift a subset, the existing shift file gets
-#' the new entries merged in" mechanism, already built into ORFik,
-#' not something added here. \code{shift.list = NULL} for the subset
-#' call: every sample in it lacks a valid pshifted file by construction,
-#' so none has anything worth reusing -- a few extra seconds of fresh
-#' auto-detection per sample is a non-issue next to the reload/rewrite
-#' cost this whole function exists to avoid.
+#' experiment. ORFik's \code{shifts_save()} merges only when new keys
+#' are already a subset of existing keys. A retry that removed the
+#' changed entries breaks that condition, so this wrapper explicitly
+#' preserves unchanged siblings after shifting. Existing retry offsets
+#' are reused only when \code{reuse_shifts_if_existing} allows it;
+#' other needed samples receive fresh detection.
 #'
 #' One real caveat, informational only: \code{shiftFootprintsByExperimentSafe()}'s
 #' own FFT-strength marker file (\code{strong_periodicity.rds} etc.,
@@ -1185,6 +1181,9 @@ pshift_needed_subset <- function(df, accepted_lengths, allowed_hard12_species, B
   needs <- !vapply(seq_len(nrow(df)), function(i) pshift_sample_valid(df[i, ]), logical(1))
   if (!any(needs)) return(1)
   df_subset <- df[needs, ]
+  shift_path <- if (any(!needs))
+    file.path(dirname(pshifted_filepath(df[which(!needs)[1], ])), "shifting_table.rds") else NULL
+  previous <- if (!is.null(shift_path) && file.exists(shift_path)) readRDS(shift_path) else NULL
 
   shifting_table <- NULL
   if (reuse_shifts_if_existing) {
@@ -1206,8 +1205,26 @@ pshift_needed_subset <- function(df, accepted_lengths, allowed_hard12_species, B
   res <- shiftFootprintsByExperimentSafe(df_subset, shifting_table, accepted_lengths,
                                          allowed_hard12_species, BPPARAM,
                                          max_no_adapter_removed_pct)
-  if (!inherits(res, "error")) save_pshifted_length_distributions(df_subset)
+  if (!inherits(res, "error")) {
+    # ORFik only merges when the new entries are a subset of the old keys.
+    # Removing changed-Run entries before a retry breaks that condition.
+    if (!is.null(previous))
+      pshift_preserve_sibling_offsets(shift_path, previous, ofst_filepath(df[!needs, ]))
+    save_pshifted_length_distributions(df_subset)
+  }
   res
+}
+
+# Preserve metadata for unchanged P-sites without restoring stale retry offsets.
+pshift_preserve_sibling_offsets <- function(path, previous, unchanged_paths) {
+  current <- readRDS(path)
+  keep <- intersect(names(previous), unchanged_paths)
+  missing <- setdiff(keep, names(current))
+  if (length(missing)) {
+    current[missing] <- previous[missing]
+    saveRDS(current, path)
+  }
+  invisible(NULL)
 }
 
 #' @inheritParams pipeline_create_ofst

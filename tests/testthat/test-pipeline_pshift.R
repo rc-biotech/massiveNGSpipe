@@ -78,6 +78,10 @@ test_that("pipeline_pshift() skips a sample whose pshifted output is already val
   pshifted_srr001 <- file.path(pshifted_dir, "SRR001_pshifted.ofst")
   file.create(pshifted_srr001)
   Sys.setFileTime(pshifted_srr001, Sys.time() + 10) # newer than its ofst -> valid
+  shift_path <- file.path(pshifted_dir, "shifting_table.rds")
+  old_a <- data.frame(fraction = 28, offsets_start = -13)
+  fresh_b <- data.frame(fraction = 28, offsets_start = -14)
+  saveRDS(setNames(list(old_a), ofst_paths["SRR001"]), shift_path)
 
   subset_runs_seen <- NULL
   testthat::local_mocked_bindings(
@@ -85,11 +89,20 @@ test_that("pipeline_pshift() skips a sample whose pshifted output is already val
     pshifted_filepath = function(df_one_row) {
       if (runIDs(df_one_row) == "SRR001") pshifted_srr001 else file.path(pshifted_dir, "does_not_exist.ofst")
     },
-    shiftFootprintsByExperimentSafe = function(df, ...) { subset_runs_seen <<- runIDs(df); "ok" },
+    shiftFootprintsByExperimentSafe = function(df, ...) {
+      subset_runs_seen <<- runIDs(df)
+      # Reproduce ORFik replacing the table when the new key is absent.
+      saveRDS(setNames(list(fresh_b), ofst_paths["SRR002"]), shift_path)
+      "ok"
+    },
     save_pshifted_length_distributions = function(df) NULL
   )
 
   pipeline_pshift(list(stub), config)
 
   expect_identical(subset_runs_seen, "SRR002")
+  result <- readRDS(shift_path)
+  expect_setequal(names(result), unname(ofst_paths))
+  expect_identical(result[[ofst_paths["SRR001"]]], old_a)
+  expect_identical(result[[ofst_paths["SRR002"]]], fresh_b)
 })

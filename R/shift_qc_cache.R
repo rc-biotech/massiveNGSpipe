@@ -25,19 +25,19 @@
 # whole-experiment pass every time.
 #
 # A sample whose single-load computation errors (shift_qc_one_sample()
-# returning a "shift_qc_sample_error") gets no cache written and is
-# excluded from this call's aggregate, rather than failing the whole
-# experiment's QC or being silently counted as "zero reads" -- it will
-# be retried (not skipped) on the next call, since no cache means
+# returning a "shift_qc_sample_error") gets no cache written and blocks
+# study QC completion, rather than being silently counted as zero reads
+# or omitted from a successful study verdict. Successful siblings remain
+# cached; only incomplete samples are retried, since no cache means
 # shift_qc_cache_valid() stays FALSE for it.
 
 #' Directory holding one experiment's cached per-sample pshift-QC pieces
 #'
 #' Namespaced by mapper mode (\code{uniqueMappers(df)}): \code{QCfolder(df)}
-#' itself does NOT vary with mapper mode (confirmed in ORFik's own
-#' \code{QCfolder()} method -- both passes share one \code{QC_STATS/}
-#' dir), but the two passes' underlying pshifted files are at different
-#' paths and must never validate each other's cache. Without this, the
+#' can be shared when an experiment supplies a fixed resultFolder;
+#' experiments using the libFolder fallback already separate mapper modes.
+#' The two passes' underlying pshifted files are at different paths and
+#' must never validate each other's cache. Without this, the
 #' unique-mappers pass could see a just-written all-mappers cache whose
 #' mtime happens to postdate ITS OWN (different-path) pshifted file and
 #' wrongly treat it as already fresh -- silently skipping real
@@ -207,6 +207,17 @@ shift_qc_annotation_context <- function(df) {
        sample_names = shift_qc_sample_names(df))
 }
 
+# QCfolder() can be shared between mapper modes for a fixed resultFolder.
+# Without a fixed resultFolder, ORFik already separates these directories. Keep public reports
+# beside the corresponding library branch while leaving existing cache keys
+# unchanged, so interrupted computations remain reusable.
+shift_qc_output_dir <- function(df) {
+  folder <- QCfolder(df)
+  if (uniqueMappers(df) && basename(dirname(folder)) != "unique_mappers")
+    folder <- file.path(dirname(folder), "unique_mappers", basename(folder))
+  folder
+}
+
 shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct = 80) {
   subset <- if (nrow(df) >= 40) seq(39) else seq(nrow(df))
 
@@ -256,11 +267,14 @@ shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct 
   }
 
   ok <- vapply(seq_len(nrow(df)), function(i) shift_qc_cache_valid(df[i, ]), logical(1))
-  QCFolder <- QCfolder(df)
-  if (!any(ok)) {
-    warning("shift_qc_cached(): no sample succeeded, nothing to aggregate for ", name(df))
-    return(invisible(NULL))
+  QCFolder <- shift_qc_output_dir(df)
+  if (!all(ok)) {
+    failed <- ORFik::runIDs(df[which(!ok), ])
+    stop("Incomplete P-shift QC for ", name(df), ": ", sum(!ok), "/", length(ok),
+         " samples lack a valid cache (", paste(failed, collapse = ", "),
+         "). Successful sample caches are retained for retry.")
   }
+  dir.create(QCFolder, recursive = TRUE, showWarnings = FALSE)
   ok_idx <- which(ok)
   cached <- lapply(ok_idx, function(i) read_shift_qc_cache(df[i, ]))
 
@@ -330,7 +344,7 @@ shift_qc_build_combined_plot <- function(df, plot_idx) {
   data <- data.table::rbindlist(lapply(plots, function(p) attr(p, "data")), idcol = TRUE)
   res <- do.call(gridExtra::arrangeGrob, c(plots, ncol = 1, top = "Ribo-seq"))
 
-  output <- file.path(QCfolder(df), "pshifts_barplots.png")
+  output <- file.path(shift_qc_output_dir(df), "pshifts_barplots.png")
   dir.create(dirname(output), showWarnings = FALSE, recursive = TRUE)
   dpi <- ifelse(length(plot_idx) < 22, 300, 200)
   height_scaler <- 95
