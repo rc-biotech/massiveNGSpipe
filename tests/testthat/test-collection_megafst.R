@@ -179,3 +179,16 @@ test_that("stale .tmp files from an interrupted run are removed on the next upda
   megacovrle_update(runs, cov, mc)
   expect_false(file.exists(paste0(mc[1], ".tmp")))
 })
+
+test_that("forked page workers do not deadlock (no OpenMP thread changes inside workers)", {
+  skip_on_os("windows")
+  dir <- withr::local_tempdir(); runs <- paste0("SRR", 1:4)
+  cov <- fake_covrle_files(dir, runs); si <- fake_seqinfo()
+  fst::threads_fst(2, reset_after_fork = FALSE); fst::write_fst(data.frame(a = 1:1e5), file.path(dir, "warm.fst"))
+  res <- callr::r(function(runs, cov, si, out) {
+    suppressMessages(devtools::load_all("~/livemount/forks/massiveNGSpipe", quiet = TRUE))
+    fst::threads_fst(2, reset_after_fork = FALSE); fst::write_fst(data.frame(a = 1:1e5), tempfile())
+    megafst_update(runs, cov, si, out, tile_size = 2000, BPPARAM = BiocParallel::MulticoreParam(2))$plan$mode
+  }, args = list(runs, cov, si, file.path(dir, "m")), timeout = 120)
+  expect_identical(res, "full")
+})

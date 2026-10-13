@@ -161,9 +161,10 @@ megafst_write_batch <- function(covs, pages, op = c("add", "replace"), compress 
   runs <- names(covs)
   stopifnot(length(runs) == length(covs), !anyDuplicated(runs), !anyNA(runs))
   use_rle <- megafst_rle_available()
-  fst_threads <- max(1L, floor(parallel::detectCores() / max(1L, BiocParallel::bpnworkers(BPPARAM))))
+  # NB: never call fst::threads_fst() inside the forked workers: changing the OpenMP thread count in
+  # a child forked after the parent used OpenMP deadlocks (all workers in futex_wait; human megafst,
+  # 2026-10-13). Workers inherit the parent's fst thread setting.
   write_page <- function(i, pages, strand_list, runs, file_col, op, compress) {
-    fst::threads_fst(fst_threads)
     file <- pages[[file_col]][i]
     present <- if (file.exists(file)) fst::metadata_fst(file)$columnNames else character()
     todo <- if (op == "add") setdiff(runs, present) else intersect(runs, present)
