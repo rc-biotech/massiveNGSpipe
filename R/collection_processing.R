@@ -139,6 +139,7 @@ save_coverage_tiles <- function(filepath, chromosomes, chromosome_lengths,
 #' @param batch_size integer, libraries loaded per batch
 #' @param compress fst compression level
 #' @param keep_free_gb,timeout_minutes RAM guard, see wait_for_memory()
+#' @param ... passed to megafst_update() (e.g. compact_fraction, max_appends)
 #' @return invisible(NULL)
 fst_megaformat_make <- function(all_exp = list.experiments(validate = FALSE, pattern = "all_samples", libtypeExclusive = lib_type),
                                 lib_type = "RFP",
@@ -150,7 +151,8 @@ fst_megaformat_make <- function(all_exp = list.experiments(validate = FALSE, pat
                                 make_megacovrle = TRUE,
                                 fst_threads = 5,
                                 bp2 = 5, BPPARAM = BiocParallel::MulticoreParam(4, exportglobals = FALSE, log = FALSE),
-                                batch_size = 500, compress = 50, keep_free_gb = 32, timeout_minutes = 120) {
+                                batch_size = 500, compress = 50, keep_free_gb = 32, timeout_minutes = 120,
+                                ...) {
   fst::threads_fst(fst_threads, reset_after_fork = FALSE)
   for (organism in organisms) {
     df <- read.experiment(organism, validate = FALSE)
@@ -172,7 +174,7 @@ fst_megaformat_make <- function(all_exp = list.experiments(validate = FALSE, pat
     megafst_update(runs, cov_paths, seqinfo(df), file.path(resFolder(df), "collection_tables_indexed"),
                    tile_size = tile_size, batch_size = batch_size, compress = compress,
                    force = force_remake_megafst, keep_free_gb = keep_free_gb,
-                   timeout_minutes = timeout_minutes, BPPARAM = BPPARAM, bp2 = bp2)
+                   timeout_minutes = timeout_minutes, BPPARAM = BPPARAM, bp2 = bp2, ...)
   }
   message("Done")
   invisible(NULL)
