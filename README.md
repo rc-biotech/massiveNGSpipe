@@ -600,3 +600,18 @@ result$touched_sibling_files  # should be character(0)
 
 During download of .sra files, the extraction to .fastq is very hard drive intensive, we therefor implemented a tempdrive system to only run this step on the tempdrive (which is usually a scratch ssd on servers, i.e. much faster I/O).
 A potential crash that can happen is that the temp is filed by another user during the extraction, if so, restart the pipeline. 
+
+### OFST conversion worker budget and in-memory diagnostics
+
+With ORFik's `convert_bam_to_ofst_modes()` available, standard OFST conversion
+reuses one BAM import for requested mapper modes and writes weighted read-length
+diagnostics from loaded alignments. Mode-specific completion flags and RNA
+orientation sidecars remain intact. Set `config$threads$ofst <- 8L` for a separate
+sample budget; the new path caps it by sample count and a conservative available
+memory estimate. Other stages retain their configured worker counts. Without
+this setting it uses `threads$default`. Set `config$ofst_shared_bam <- FALSE` to
+select the established converter; installations without the new ORFik API
+fall back automatically. A 12-library RNA benchmark on 2026-10-13 reduced OFST
+wall time from 98–101 s (four workers) to 68–70 s (eight workers), with identical
+OFST and diagnostic files. This is an OFST benchmark, not an end-to-end pipeline
+speedup estimate.

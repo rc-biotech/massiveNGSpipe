@@ -917,6 +917,61 @@ convert_per_sample <- function(df, config, step_id, convert_fun,
   invisible(NULL)
 }
 
+# Dedicated sample budget, leaving other pipeline stages at their existing
+# worker count. Bound it by current memory with a conservative BAM expansion
+# estimate; this is a scheduling estimate, not an exact memory guarantee.
+ofst_worker_count <- function(file_bytes, requested, available_bytes) {
+  stopifnot(length(requested) == 1L, is.finite(requested), requested >= 1,
+            requested == as.integer(requested))
+  if (!length(file_bytes)) return(1L)
+  stopifnot(all(is.finite(file_bytes)), all(file_bytes >= 0))
+  cap <- min(as.integer(requested), length(file_bytes))
+  if (!is.finite(available_bytes) || available_bytes <= 0) return(1L)
+  per_worker <- max(file_bytes) * 16 + 512 * 1024^2
+  as.integer(max(1, min(cap, floor(available_bytes * .5 / per_worker))))
+}
+
+ofst_conversion_param <- function(df, config) {
+  step <- if (!is.null(config$threads[["ofst", exact = TRUE]])) "ofst" else "default"
+  files <- unlist(filepath(df, "default"), use.names = FALSE)
+  files <- files[files != "paired-end"]
+  usage <- get_system_usage()
+  available <- (usage$Memory_Total_GB - usage$Memory_Usage_GB) * 1e9
+  workers <- ofst_worker_count(file.size(files), config$threads[[step]], available)
+  message("OFST sample workers: ", workers, " (requested ", config$threads[[step]], ")")
+  bpparam_from_config(config, step, workers = workers)
+}
+
+# Import the BAM once per pending sample and publish each mapper mode separately.
+# Completion flags stay per mode; a resumed all-done/unique-pending sample only
+# rewrites the unique output. The original path remains available for old ORFik.
+convert_mapper_modes_per_sample <- function(df, config,
+    BPPARAM = ofst_conversion_param(df, config)) {
+  experiment <- name(df); run_ids <- runIDs(df)
+  done_all <- samples_done(config, "ofst", experiment)
+  done_unique <- samples_done(config, "ofst_unique", experiment)
+  idx <- which((config$all_mappers & !(run_ids %in% done_all)) |
+               (config$split_unique_mappers & !(run_ids %in% done_unique)))
+  BiocParallel::bplapply(idx, function(i, df, config, experiment, run_ids, done_all, done_unique) {
+    modes <- c(if (config$all_mappers && !(run_ids[i] %in% done_all)) "all",
+               if (config$split_unique_mappers && !(run_ids[i] %in% done_unique)) "unique")
+    ORFik::convert_bam_to_ofst_modes(df[i, ], modes = modes,
+      after_mode = function(mode, path, distribution) {
+        try({
+          out_dir <- file.path(dirname(path), "read_length_distribution")
+          if (is.null(distribution)) save_read_length_distribution(path, out_dir, run_ids[i])
+          else {
+            dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+            data.table::fwrite(distribution, file.path(out_dir, paste0(run_ids[i], ".csv")))
+          }
+        }, silent = TRUE)
+        set_sample_flag(config, if (mode == "all") "ofst" else "ofst_unique", experiment, run_ids[i])
+      })
+  }, df = df, config = config, experiment = experiment, run_ids = run_ids,
+    done_all = done_all, done_unique = done_unique, BPPARAM = BPPARAM)
+  invisible(NULL)
+}
+
 #' convert_bam_to_ofst(), plus save that one sample's read-length
 #' distribution right after
 #'
@@ -948,6 +1003,49 @@ convert_bam_to_ofst_with_length_dist <- function(df_one_row) {
 pipeline_create_ofst <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "ofst", name(df))) next
+    # Prepare once in the parent; fork workers share the exon index. Keep
+    # cached study-level mate choice separate from final-BAM orientation.
+    rna_rows <- which(toupper(as.character(df$libtype)) %in% c("RNA", "RNA-SEQ", "RNASEQ"))
+    if (length(rna_rows)) {
+      if (!exists("rna_strand_sidecar", envir = asNamespace("ORFik"), inherits = FALSE))
+        stop("Install the ORFik RNA strand implementation before RNA OFST conversion")
+      annotation <- rna_strand_regions(df)
+      options <- config[["rna_strand", exact = TRUE]]
+      if (is.null(options)) options <- list()
+      changed <- unresolved <- character(); strand_records <- list()
+      for (i in rna_rows) {
+        run_options <- options
+        if (!is.null(config$rna_strand_by_run[[runIDs(df[i, ])]]))
+          run_options <- modifyList(options, config$rna_strand_by_run[[runIDs(df[i, ])]])
+        record <- rna_strand_ensure(df[i, ], annotation, run_options, require_resolved = FALSE)
+        strand_records[[runIDs(df[i, ])]] <- record
+        if (record$status == "unknown") unresolved <- c(unresolved, runIDs(df[i, ]))
+        current <- TRUE
+        if (config$all_mappers) current <- rna_strand_ofst_current(df[i, ], record)
+        if (config$split_unique_mappers) {
+          one <- df[i, ]; uniqueMappers(one) <- TRUE
+          current <- current && rna_strand_ofst_current(one, record)
+        }
+        if (!current) changed <- c(changed, runIDs(df[i, ]))
+      }
+      rna_strand_write_table(df, strand_records)
+      if (length(unresolved)) stop("RNA orientation unresolved for ", paste(unresolved, collapse = ", "),
+        "; see aligned/QC_STATS/rna_strand.csv")
+      if (length(changed)) rna_strand_invalidate(df, config, changed)
+    }
+    shared_bam <- (config$all_mappers || config$split_unique_mappers) &&
+      !identical(config[["ofst_shared_bam", exact = TRUE]], FALSE) &&
+      "convert_bam_to_ofst_modes" %in% getNamespaceExports("ORFik")
+    if (shared_bam) {
+      convert_mapper_modes_per_sample(df, config)
+      for (unique_mode in c(if (config$all_mappers) FALSE, if (config$split_unique_mappers) TRUE)) {
+        one <- df; uniqueMappers(one) <- unique_mode
+        try(aggregate_read_length_distribution(file.path(dirname(filepath(one, "ofst")[1]),
+          "read_length_distribution")), silent = TRUE)
+      }
+      set_flag(config, "ofst", name(df))
+      next
+    }
     if (config$all_mappers) {
       convert_per_sample(df, config, "ofst", convert_bam_to_ofst_with_length_dist)
       try(aggregate_read_length_distribution(file.path(dirname(filepath(df, "ofst")[1]),
@@ -1203,13 +1301,19 @@ pipeline_count_table_psites <- function(df_list, config) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "pcounts", name(df))) next
     BPPARAM <- bpparam_from_config(config, "pcounts")
+    count_type <- "cov"
+    unit_path <- file.path(libFolder(df), ".rna_strand", "count_unit.rds")
+    if (all(toupper(as.character(df$libtype)) %in% c("RNA", "RNA-SEQ", "RNASEQ")) && file.exists(unit_path)) {
+      policy <- readRDS(unit_path)
+      count_type <- match.arg(policy$lib_type, c("ofst", "cov"))
+    }
     if (config$all_mappers)
-      ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE,
+      ORFik::countTable_regions(df, lib.type = count_type, forceRemake = TRUE,
                                 BPPARAM = BPPARAM)
     if (config$split_unique_mappers) {
       uniqueMappers(df) <- TRUE
       if (config$all_mappers) remove.experiments(df)
-      ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE,
+      ORFik::countTable_regions(df, lib.type = count_type, forceRemake = TRUE,
                                 BPPARAM = BPPARAM)
     }
     set_flag(config, "pcounts", name(df))
