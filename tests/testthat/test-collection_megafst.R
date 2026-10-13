@@ -164,3 +164,18 @@ test_that("C++ run-length writer (when available) gives pages identical to the R
   megafst_update(runs, cov, si, file.path(dir, "c"), tile_size = 2000, BPPARAM = sp)      # C++ append
   expect_identical(read_pages(file.path(dir, "c")), read_pages(file.path(dir, "r")))
 })
+
+test_that("stale .tmp files from an interrupted run are removed on the next update", {
+  dir <- withr::local_tempdir(); runs <- paste0("SRR", 1:3)
+  cov <- fake_covrle_files(dir, runs); si <- fake_seqinfo(); sp <- BiocParallel::SerialParam()
+  out <- file.path(dir, "m"); megafst_update(runs, cov, si, out, tile_size = 2000, BPPARAM = sp)
+  writeLines("half", file.path(out, "coverage_chrA_part1_forward.fst.tmp"))
+  dir.create(paste0(out, ".staging")); writeLines("half", file.path(paste0(out, ".staging"), "x.fst.tmp"))
+  megafst_update(runs, cov, si, out, tile_size = 2000, BPPARAM = sp)
+  expect_length(list.files(out, "\\.tmp$"), 0)
+  expect_false(dir.exists(paste0(out, ".staging")))
+  mc <- file.path(dir, "mc", c("f.qs", "r.qs")); megacovrle_update(runs, cov, mc)
+  writeLines("half", paste0(mc[1], ".tmp"))
+  megacovrle_update(runs, cov, mc)
+  expect_false(file.exists(paste0(mc[1], ".tmp")))
+})

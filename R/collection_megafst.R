@@ -314,6 +314,8 @@ megafst_update <- function(runs, cov_paths, seqinfo, output_dir, tile_size = 2e6
   if (is.null(lock)) stop("Another megafst build holds the lock for ", output_dir)
   on.exit(filelock::unlock(lock), add = TRUE)
 
+  # Under the lock no other builder writes here, so any *.tmp is left by an interrupted run
+  megafst_remove_stale_tmp(c(output_dir, paste0(output_dir, ".staging")))
   manifest_path <- file.path(output_dir, "megafst_manifest.fst")
   params_path <- file.path(output_dir, "megafst_params.rds")
   index_path <- file.path(output_dir, "coverage_index.fst")
@@ -375,6 +377,19 @@ megafst_update <- function(runs, cov_paths, seqinfo, output_dir, tile_size = 2e6
   invisible(list(plan = plan, output_dir = output_dir))
 }
 
+#' Delete *.tmp files left by an interrupted write (call only while holding the collection lock)
+#' @param dirs character, directories to clean (missing ones are ignored)
+#' @return invisible(character), removed files
+#' @noRd
+megafst_remove_stale_tmp <- function(dirs) {
+  tmp <- unlist(lapply(dirs[dir.exists(dirs)], list.files, pattern = "\\.tmp$", full.names = TRUE))
+  if (length(tmp)) {
+    message("-- Removing ", length(tmp), " stale .tmp file(s) from an interrupted run")
+    unlink(tmp)
+  }
+  invisible(tmp)
+}
+
 megafst_save_state <- function(lib, params, manifest_path, params_path) {
   tmp <- paste0(manifest_path, ".tmp"); fst::write_fst(lib, tmp); stopifnot(file.rename(tmp, manifest_path))
   tmp <- paste0(params_path, ".tmp"); saveRDS(params, tmp); stopifnot(file.rename(tmp, params_path))
@@ -419,6 +434,10 @@ megacovrle_update <- function(runs, cov_paths, file_paths, force = FALSE, covrle
   stopifnot(length(file_paths) == 2)
   dir.create(dirname(file_paths[1]), showWarnings = FALSE, recursive = TRUE)
   manifest_path <- file.path(dirname(file_paths[1]), "megacovrle_manifest.fst")
+  lock <- filelock::lock(file.path(dirname(file_paths[1]), ".megacovrle.lock"), exclusive = TRUE, timeout = 0)
+  if (is.null(lock)) stop("Another megacovrle build holds the lock for ", dirname(file_paths[1]))
+  on.exit(filelock::unlock(lock), add = TRUE)
+  megafst_remove_stale_tmp(dirname(file_paths[1]))
   lib <- megafst_library_table(runs, cov_paths)
   old <- if (file.exists(manifest_path) && all(file.exists(file_paths)) && !force)
     fst::read_fst(manifest_path, as.data.table = TRUE) else NULL

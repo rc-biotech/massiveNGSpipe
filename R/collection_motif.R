@@ -112,6 +112,7 @@ meta_motif_update <- function(df, letters_vec = c("P", "R"), extension = 300, ma
   lock <- filelock::lock(file.path(org_dir, ".motif.lock"), exclusive = TRUE, timeout = 0)
   if (is.null(lock)) stop("Another meta-motif build holds the lock for ", org_dir)
   on.exit(filelock::unlock(lock), add = TRUE)
+  megafst_remove_stale_tmp(org_dir)
 
   pairs <- as.vector(outer(letters_vec, letters_vec, paste0))
   anchors <- c("TIS", "TTS", pairs)
