@@ -15,7 +15,9 @@ metadata_conventions(dt, unicellular = unicellular_species())
 data.table of proposals in the vocabulary_check() report format
 }
 \description{
-Multicellular: primary tissue samples have CELL_LINE "primary" (placeholders like primary_fibroblast,
-embryonic, fibroblast become "primary" + TISSUE); empty CELL_LINE with a TISSUE -> "primary" (review).
+Multicellular: a sample that is not a cell line has CELL_LINE "primary", optionally followed by the one
+descriptor that would otherwise be lost (primary_fibroblast, primary_embryonic); never NONE or empty.
+fibroblast -> primary_fibroblast, embryonic -> primary_embryonic, Primary -> primary (TISSUE unchanged);
+empty CELL_LINE with a TISSUE -> "primary" (status convention_review: confirm it is not a cell line).
 Unicellular: CELL_LINE is the strain; missing TISSUE is not an issue.
 }

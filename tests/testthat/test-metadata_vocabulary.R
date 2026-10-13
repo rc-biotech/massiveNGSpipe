@@ -52,15 +52,15 @@ test_that("our cell line sheet is canonical: RiboSeqOrg spellings become aliases
   expect_identical(r[Run == "A" & column == "TISSUE" & status == "from_cell_line"]$proposed, character())
 })
 
-test_that("metadata_conventions: primary for multicellular placeholders, strains untouched for unicellular", {
-  dt <- data.table(Run = paste0("R", 1:5), BioProject = "P",
-                   ScientificName = c("Homo sapiens", "Homo sapiens", "Mus musculus", "Saccharomyces cerevisiae", "Homo sapiens"),
-                   CELL_LINE = c("primary_fibroblast", "Primary", "", "", "HeLa"),
-                   TISSUE = c("", "liver", "brain", "", "cervix"))
+test_that("metadata_conventions: primary[_descriptor] for multicellular placeholders, strains untouched", {
+  dt <- data.table(Run = paste0("R", 1:6), BioProject = "P",
+                   ScientificName = c("Homo sapiens", "Homo sapiens", "Mus musculus", "Saccharomyces cerevisiae", "Homo sapiens", "Homo sapiens"),
+                   CELL_LINE = c("fibroblast", "Primary", "", "", "HeLa", "primary_fibroblast"),
+                   TISSUE = c("skin", "liver", "brain", "", "cervix", "connective"))
   r <- metadata_conventions(dt)
-  expect_identical(r[Run == "R1" & column == "CELL_LINE"]$proposed, "primary")
-  expect_identical(r[Run == "R1" & column == "TISSUE"]$proposed, "fibroblast")
+  expect_identical(r[Run == "R1" & column == "CELL_LINE"]$proposed, "primary_fibroblast")
+  expect_false(any(r$column == "TISSUE"))                                          # tissue never overwritten
   expect_identical(r[Run == "R2"]$proposed, "primary")
   expect_identical(r[Run == "R3"]$status, "convention_review")
-  expect_false(any(c("R4", "R5") %in% r$Run))                                       # yeast strain / real cell line
+  expect_false(any(c("R4", "R5", "R6") %in% r$Run))                                 # strain, cell line, already ok
 })

@@ -165,8 +165,10 @@ unicellular_species <- function() {
 
 #' CELL_LINE / TISSUE convention proposals (see project decision 2026-10-13_cell_line_conventions)
 #'
-#' Multicellular: primary tissue samples have CELL_LINE "primary" (placeholders like primary_fibroblast,
-#' embryonic, fibroblast become "primary" + TISSUE); empty CELL_LINE with a TISSUE -> "primary" (review).
+#' Multicellular: a sample that is not a cell line has CELL_LINE "primary", optionally followed by the one
+#' descriptor that would otherwise be lost (primary_fibroblast, primary_embryonic); never NONE or empty.
+#' fibroblast -> primary_fibroblast, embryonic -> primary_embryonic, Primary -> primary (TISSUE unchanged);
+#' empty CELL_LINE with a TISSUE -> "primary" (status convention_review: confirm it is not a cell line).
 #' Unicellular: CELL_LINE is the strain; missing TISSUE is not an issue.
 #' @param dt metadata table with ScientificName, CELL_LINE, TISSUE, Run, BioProject
 #' @param unicellular species treated as unicellular
@@ -181,12 +183,9 @@ metadata_conventions <- function(dt, unicellular = unicellular_species()) {
     if (length(i)) out[[length(out) + 1L]] <<- data.table(Run = as.character(dt$Run[i]), BioProject = as.character(dt$BioProject[i]),
       column = column, value = value[i], status = status, proposed = proposed, proposed_column = column, evidence = evidence)
   }
-  placeholder_tissue <- c(primary_fibroblast = "fibroblast", fibroblast = "fibroblast", embryonic = "embryo")
-  i <- which(multi & tolower(cl) %in% names(placeholder_tissue))
-  add(i, "CELL_LINE", cl, "primary", "convention", "placeholder cell line -> primary")
-  j <- i[ti[i] == ""]
-  if (length(j)) add(j, "TISSUE", ti, unname(placeholder_tissue[tolower(cl[j])]), "convention", paste("from placeholder", cl[j]))
-  add(which(multi & cl == "Primary"), "CELL_LINE", cl, "primary", "convention", "case")
+  rename <- c(fibroblast = "primary_fibroblast", embryonic = "primary_embryonic", Primary = "primary", PRIMARY = "primary")
+  i <- which(multi & cl %in% names(rename))
+  if (length(i)) add(i, "CELL_LINE", cl, unname(rename[cl[i]]), "convention", "non-cell-line sample: primary[_descriptor]")
   add(which(multi & cl == "" & ti != ""), "CELL_LINE", cl, "primary", "convention_review",
       "multicellular sample with TISSUE but no CELL_LINE: primary tissue? (confirm not an unrecorded cell line)")
   if (!length(out)) return(data.table())
