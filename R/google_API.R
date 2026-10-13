@@ -192,8 +192,11 @@ write_sheet_safe_new <- function(file, google_url, sheet = 0,
         source = list(sheetId = new_temp_sheet_id,
                       startRowIndex = 0, startColumnIndex = 0,
                       endRowIndex = n_rows, endColumnIndex = n_cols),
+        # exact destination size: an open-ended destination makes the Sheets API tile (repeat) the
+        # block to fill the grid, duplicating every row when the tab has >= 2x the needed rows
         destination = list(sheetId = target_sheet_id,
-                           startRowIndex = 0, startColumnIndex = 0),
+                           startRowIndex = 0, startColumnIndex = 0,
+                           endRowIndex = n_rows, endColumnIndex = n_cols),
         pasteType = "PASTE_VALUES",
         pasteOrientation = "NORMAL"
       )),
