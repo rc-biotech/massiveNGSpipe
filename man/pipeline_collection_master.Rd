@@ -3,7 +3,9 @@
 \name{pipeline_collection_master}
 \alias{pipeline_collection_master}
 \title{Create the superset collection of all samples of all organisms
-Also saves a file in pipeline dir called ./metadata_done_samples.csv.}
+Also updates \code{metadata_done_samples.csv} in the pipeline dir from ALL done experiments
+(\code{\link{update_done_samples_metadata}}), and its cell line extended version used by
+RiboCrypt (\code{\link{extend_done_samples_metadata}}, sheet read only).}
 \usage{
 pipeline_collection_master(
   config,
@@ -13,7 +15,10 @@ pipeline_collection_master(
   done_organisms = unique(names(done_experiments)),
   path_suffix = "",
   BPPARAM = MulticoreParam(workers = bpparam()$workers, exportglobals = FALSE,
-    progressbar = TRUE, log = FALSE, force.GC = FALSE, fallback = T)
+    progressbar = TRUE, log = FALSE, force.GC = FALSE, fallback = T),
+  extend_metadata = TRUE,
+  max_removed = 0,
+  force_metadata = FALSE
 )
 }
 \arguments{
@@ -30,13 +35,24 @@ per species.}
 unique(names(done_experiments))}
 
 \item{path_suffix}{character, default "". Add suffix to saved collection name, like a date to seperate version.}
+
+\item{BPPARAM}{parallel parameters for reading experiments}
+
+\item{extend_metadata}{logical, default TRUE. Also update metadata_done_samples_extended.csv.}
+
+\item{max_removed}{integer, default 0. Number of previously listed samples allowed to
+disappear without \code{force}.}
+
+\item{force_metadata}{logical, default FALSE. Passed as \code{force} to update_done_samples_metadata.}
 }
 \value{
 invisible(NULL)
 }
 \description{
 Create the superset collection of all samples of all organisms
-Also saves a file in pipeline dir called ./metadata_done_samples.csv.
+Also updates \code{metadata_done_samples.csv} in the pipeline dir from ALL done experiments
+(\code{\link{update_done_samples_metadata}}), and its cell line extended version used by
+RiboCrypt (\code{\link{extend_done_samples_metadata}}, sheet read only).
 }
 \examples{
 #pipeline_collection_master(config = pipeline_config())

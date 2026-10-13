@@ -204,9 +204,14 @@ pipe_counts <- function(pipelines, config) {
 }
 
 #' Create the superset collection of all samples of all organisms
-#' Also saves a file in pipeline dir called ./metadata_done_samples.csv.
+#' Also updates \code{metadata_done_samples.csv} in the pipeline dir from ALL done experiments
+#' (\code{\link{update_done_samples_metadata}}), and its cell line extended version used by
+#' RiboCrypt (\code{\link{extend_done_samples_metadata}}, sheet read only).
 #' @inheritParams pipeline_merge_org
+#' @inheritParams update_done_samples_metadata
 #' @param path_suffix character, default "". Add suffix to saved collection name, like a date to seperate version.
+#' @param extend_metadata logical, default TRUE. Also update metadata_done_samples_extended.csv.
+#' @param force_metadata logical, default FALSE. Passed as \code{force} to update_done_samples_metadata.
 #' @return invisible(NULL)
 #' @export
 #' @examples
@@ -217,7 +222,8 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
                                     done_organisms = unique(names(done_experiments)),
                                     path_suffix = "", BPPARAM = MulticoreParam(workers = bpparam()$workers,
                                                                                exportglobals = FALSE, progressbar = TRUE,
-                                                                               log = FALSE, force.GC = FALSE, fallback = T)) {
+                                                                               log = FALSE, force.GC = FALSE, fallback = T),
+                                    extend_metadata = TRUE, max_removed = 0, force_metadata = FALSE) {
   message("- Collection of all samples of all organism")
   done_organisms <- unique(done_organisms)
   stopifnot(length(names(done_experiments)) > 0)
@@ -258,22 +264,15 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
   message("--- Trying to load created collection")
   df <- read.experiment(exp_name, output.env = new.env())
 
-  dt <- fread(config$complete_metadata)
-  dt_complete <- dt[Run %in% runIDs(df),]
-  dt_complete <- dt_complete[chmatch(Run, runIDs(df))]
-  if (libtype_df == "RFP") {
-    files <- filepath(df, "pshifted", base_folders = libFolder(df, mode = "all"))
-    dt_complete[, is_pshifted := grepl("_pshifted\\.ofst$", files)]
-    if (any(!dt_complete$is_pshifted)) {
-      warning("Some samples are not pshifted even though they are flagged as 'complete', they are listed below:")
-      print(dt_complete[is_pshifted == FALSE,])
-    } else (
-      message("All samples had existing pshifted files")
-    )
+  # Metadata of ALL done samples of the project (independent of the subset merged here), then the
+  # cell line extended version used by RiboCrypt (sheet read only).
+  all_done <- step_is_done_pipelines(config, "pcounts", pipelines)
+  dt_complete <- update_done_samples_metadata(config, pipelines, done_experiments = all_done,
+                                              max_removed = max_removed, force = force_metadata)
+  if (extend_metadata) {
+    tryCatch(extend_done_samples_metadata(config),
+             error = function(e) warning("Extended metadata not updated: ", conditionMessage(e)))
   }
-  fwrite(dt_complete, file.path(config$project, "metadata_done_samples.csv"))
-  message("Saved all complete studies metadata to: ", file.path(config$project, "metadata_done_samples.csv"))
-
   return(dt_complete)
 }
 

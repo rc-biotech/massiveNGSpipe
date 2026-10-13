@@ -14,7 +14,8 @@ detect_strand_mode(
   td = tempdir(),
   threads = 20,
   star = STAR.install(),
-  keepGenomeLoaded = c("LoadAndRemove", "LoadAndKeep", "NoSharedMemory")[1]
+  keepGenomeLoaded = c("LoadAndRemove", "LoadAndKeep", "NoSharedMemory")[1],
+  short_insert = FALSE
 )
 }
 \arguments{
@@ -36,6 +37,15 @@ detect_strand_mode(
 \item{star}{path to STAR, default STAR.install()}
 
 \item{keepGenomeLoaded}{character, default c("LoadAndRemove", "LoadAndKeep", "NoSharedMemory")\link{1}}
+
+\item{short_insert}{logical, default FALSE. TRUE for untrimmed reads from a
+short-insert library (see \code{short_insert_adapter()}): mates are then
+mostly adapter, so STAR's default 0.66-of-read-length filters
+(reported as "unmapped: too short") reject every pair. Lowers those
+filters to an absolute 20 nt match for this orientation probe only -- the
+real alignment trims adapters instead. Verified live on
+PRJNA1208460/SRR31941133 (1e6 pairs): 0 pairs aligned by default, 81\\%
+unique with this, R1/R2 transcript-sense overlaps 5.0M / 83k.}
 }
 \value{
 a named numeric (1 or 2), 1 means R1 is primary. Name gives ratio of overlaps of R1 / R2.
