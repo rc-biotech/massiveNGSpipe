@@ -157,6 +157,11 @@ step_is_next_not_done <- function(config, step, experiment
   all_flags <- file.exists(file.path(config[["flag"]], paste0(experiment, ".rds")))
   index <- which(all_steps %in% step)
   if (length(index) == 0) stop("'", step,"'", " is not a valid flag step!")
+  # The optional "contam" step (pipeline_config(contam = TRUE)) counts as satisfied for studies aligned
+  # before it was enabled: their trimmed inputs may be deleted, and their downstream steps are complete.
+  contam_i <- which(all_steps == "contam"); aligned_i <- which(all_steps == "aligned")
+  if (length(contam_i) && length(aligned_i) && !all_flags[contam_i] && all_flags[aligned_i])
+    all_flags[contam_i] <- TRUE
   all_previous_done <- if (index == 1) {
     TRUE
   } else all(all_flags[seq(index-1)])
