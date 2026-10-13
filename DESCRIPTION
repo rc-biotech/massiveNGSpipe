@@ -46,6 +46,7 @@ Imports:
     MatrixGenerics,
     methods,
     openssl,
+    parallel,
     plotly,
     purrr,
     qs2,

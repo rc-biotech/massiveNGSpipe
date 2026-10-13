@@ -150,3 +150,17 @@ test_that("pre-caching pages holding a subset of libraries are adopted and exten
   rm_dir <- file.path(dir, "rm"); legacy_pages(cov, runs, si, rm_dir, tile = 2000)
   expect_identical(megafst_update(runs[-2], cov[-2], si, rm_dir, tile_size = 2000, BPPARAM = sp)$plan$mode, "full")
 })
+
+test_that("C++ run-length writer (when available) gives pages identical to the R path", {
+  skip_if_not(megafst_rle_available(), "fst without write_rle_columns_fst")
+  dir <- withr::local_tempdir(); runs <- paste0("SRR", 1:6)
+  cov <- fake_covrle_files(dir, runs); si <- fake_seqinfo(); sp <- BiocParallel::SerialParam()
+  withr::with_options(list(massiveNGSpipe.megafst_rle = FALSE),
+    megafst_update(runs[1:4], cov[1:4], si, file.path(dir, "r"), tile_size = 2000, BPPARAM = sp))
+  megafst_update(runs[1:4], cov[1:4], si, file.path(dir, "c"), tile_size = 2000, BPPARAM = sp)
+  expect_identical(read_pages(file.path(dir, "c")), read_pages(file.path(dir, "r")))
+  withr::with_options(list(massiveNGSpipe.megafst_rle = FALSE),
+    megafst_update(runs, cov, si, file.path(dir, "r"), tile_size = 2000, BPPARAM = sp))   # R append
+  megafst_update(runs, cov, si, file.path(dir, "c"), tile_size = 2000, BPPARAM = sp)      # C++ append
+  expect_identical(read_pages(file.path(dir, "c")), read_pages(file.path(dir, "r")))
+})

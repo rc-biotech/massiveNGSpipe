@@ -160,7 +160,10 @@ megafst_write_batch <- function(covs, pages, op = c("add", "replace"), compress 
   op <- match.arg(op)
   runs <- names(covs)
   stopifnot(length(runs) == length(covs), !anyDuplicated(runs), !anyNA(runs))
+  use_rle <- megafst_rle_available()
+  fst_threads <- max(1L, floor(parallel::detectCores() / max(1L, BiocParallel::bpnworkers(BPPARAM))))
   write_page <- function(i, pages, strand_list, runs, file_col, op, compress) {
+    fst::threads_fst(fst_threads)
     file <- pages[[file_col]][i]
     present <- if (file.exists(file)) fst::metadata_fst(file)$columnNames else character()
     todo <- if (op == "add") setdiff(runs, present) else intersect(runs, present)
@@ -170,6 +173,20 @@ megafst_write_batch <- function(covs, pages, op = c("add", "replace"), compress 
     }
     if (!length(todo)) return(invisible(NULL))
     chr <- pages$chr[i]
+    if (use_rle && op == "add") {
+      # C++ path (fst fork >= 0.9.9.9005): decode each library's runs into one reused buffer while
+      # compressing; byte-identical to the R path below, ~2.5-3x faster, no dense page in memory.
+      rles <- lapply(strand_list[todo], function(x) x[[chr]])
+      vals <- lapply(rles, S4Vectors::runValue); lens <- lapply(rles, S4Vectors::runLength)
+      if (!length(present)) {
+        tmp <- paste0(file, ".tmp")
+        fst::write_rle_columns_fst(vals, lens, todo, pages$start[i], pages$end[i], tmp, compress = compress)
+        stopifnot(file.rename(tmp, file))
+      } else {
+        fst::append_rle_columns_fst(vals, lens, todo, pages$start[i], pages$end[i], file, compress = compress)
+      }
+      return(invisible(NULL))
+    }
     window <- IRanges::IRanges(pages$start[i], pages$end[i])
     dt <- setDT(lapply(strand_list[todo], function(x) as.integer(x[[chr]][window])))
     setnames(dt, todo)
@@ -195,6 +212,15 @@ megafst_write_batch <- function(covs, pages, op = c("add", "replace"), compress 
     rm(strand_list); gc(FALSE)
   }
   invisible(NULL)
+}
+
+#' Is the fst fork's run-length column writer available?
+#' @return logical(1)
+#' @noRd
+megafst_rle_available <- function() {
+  isTRUE(getOption("massiveNGSpipe.megafst_rle", TRUE)) &&
+    exists("write_rle_columns_fst", envir = asNamespace("fst"), inherits = FALSE) &&
+    exists("append_rle_columns_fst", envir = asNamespace("fst"), inherits = FALSE)
 }
 
 #' Check every page has exactly the expected columns and row count
