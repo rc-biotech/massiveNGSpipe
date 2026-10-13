@@ -163,6 +163,11 @@ test_that("C++ run-length writer (when available) gives pages identical to the R
     megafst_update(runs, cov, si, file.path(dir, "r"), tile_size = 2000, BPPARAM = sp))   # R append
   megafst_update(runs, cov, si, file.path(dir, "c"), tile_size = 2000, BPPARAM = sp)      # C++ append
   expect_identical(read_pages(file.path(dir, "c")), read_pages(file.path(dir, "r")))
+  Sys.setFileTime(cov[3], Sys.time() + 20)                                                 # one library changed
+  withr::with_options(list(massiveNGSpipe.megafst_rle = FALSE),
+    expect_identical(megafst_update(runs, cov, si, file.path(dir, "r"), tile_size = 2000, BPPARAM = sp)$plan$replace, runs[3]))
+  expect_identical(megafst_update(runs, cov, si, file.path(dir, "c"), tile_size = 2000, BPPARAM = sp)$plan$replace, runs[3])
+  expect_identical(read_pages(file.path(dir, "c")), read_pages(file.path(dir, "r")))      # C++ replace == R replace
 })
 
 test_that("stale .tmp files from an interrupted run are removed on the next update", {

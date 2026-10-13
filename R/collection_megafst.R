@@ -174,17 +174,20 @@ megafst_write_batch <- function(covs, pages, op = c("add", "replace"), compress 
     }
     if (!length(todo)) return(invisible(NULL))
     chr <- pages$chr[i]
-    if (use_rle && op == "add") {
-      # C++ path (fst fork >= 0.9.9.9005): decode each library's runs into one reused buffer while
-      # compressing; byte-identical to the R path below, ~2.5-3x faster, no dense page in memory.
-      rles <- lapply(strand_list[todo], function(x) x[[chr]])
-      vals <- lapply(rles, S4Vectors::runValue); lens <- lapply(rles, S4Vectors::runLength)
-      if (!length(present)) {
+    if (use_rle) {
+      # C++ path (fst fork >= 0.9.9.9006): each library's runs are decoded into one reused buffer
+      # (binary search on precomputed run ends, parallel fill) while compressing; byte-identical
+      # to the R path below, ~4-5x faster, no dense page in memory.
+      vals <- lapply(strand_list[todo], function(x) S4Vectors::runValue(x[[chr]]))
+      ends <- lapply(run_ends[todo], `[[`, chr)
+      if (op == "replace") {
+        fst::replace_rle_columns_fst(vals, ends, todo, pages$start[i], pages$end[i], file, compress = compress, ends = TRUE)
+      } else if (!length(present)) {
         tmp <- paste0(file, ".tmp")
-        fst::write_rle_columns_fst(vals, lens, todo, pages$start[i], pages$end[i], tmp, compress = compress)
+        fst::write_rle_columns_fst(vals, ends, todo, pages$start[i], pages$end[i], tmp, compress = compress, ends = TRUE)
         stopifnot(file.rename(tmp, file))
       } else {
-        fst::append_rle_columns_fst(vals, lens, todo, pages$start[i], pages$end[i], file, compress = compress)
+        fst::append_rle_columns_fst(vals, ends, todo, pages$start[i], pages$end[i], file, compress = compress, ends = TRUE)
       }
       return(invisible(NULL))
     }
@@ -204,13 +207,16 @@ megafst_write_batch <- function(covs, pages, op = c("add", "replace"), compress 
   }
   for (strand in c("forward", "reverse")) {
     strand_list <- lapply(covs, if (strand == "forward") f else r)
+    # cumulative run ends once per library and chromosome, shared by all pages (forked workers)
+    run_ends <- if (use_rle) lapply(strand_list, function(x) lapply(x, function(chr_rle)
+      cumsum(as.numeric(S4Vectors::runLength(chr_rle))))) else NULL
     file_col <- if (strand == "forward") "file_forward" else "file_reverse"
     # One parallel pass over all pages of this strand: forked workers share strand_list
     # (one fork set per strand per batch, not per chromosome).
     BiocParallel::bplapply(seq_len(nrow(pages)), write_page, pages = pages, strand_list = strand_list,
                            runs = runs, file_col = file_col, op = op, compress = compress,
                            BPPARAM = BPPARAM)
-    rm(strand_list); gc(FALSE)
+    rm(strand_list, run_ends); gc(FALSE)
   }
   invisible(NULL)
 }
@@ -220,8 +226,8 @@ megafst_write_batch <- function(covs, pages, op = c("add", "replace"), compress 
 #' @noRd
 megafst_rle_available <- function() {
   isTRUE(getOption("massiveNGSpipe.megafst_rle", TRUE)) &&
-    exists("write_rle_columns_fst", envir = asNamespace("fst"), inherits = FALSE) &&
-    exists("append_rle_columns_fst", envir = asNamespace("fst"), inherits = FALSE)
+    exists("replace_rle_columns_fst", envir = asNamespace("fst"), inherits = FALSE) &&
+    "ends" %in% names(formals(fst::write_rle_columns_fst))
 }
 
 #' Check every page has exactly the expected columns and row count
