@@ -260,9 +260,9 @@ megafst_stream_libraries <- function(lib, pages, op, batch_size, compress, BPPAR
 #' @param compress fst compression
 #' @param compact_fraction see megafst_plan()
 #' @param force logical, force a full rebuild
-#' @param adopt_existing logical, if no manifest exists but the live pages already contain exactly
-#' these libraries, record a manifest instead of rebuilding (libraries whose covRle is newer than
-#' the pages are then replaced). Avoids a full rebuild when first enabling caching.
+#' @param adopt_existing logical, if no manifest exists but the live pages hold a subset of these
+#' libraries with the same layout, use them as the baseline instead of rebuilding (missing libraries
+#' are appended, those whose covRle is newer than the pages are replaced). Avoids a full rebuild when first enabling caching.
 #' @inheritParams megafst_stream_libraries
 #' @return list(plan, output_dir), invisibly
 #' @export
@@ -299,6 +299,8 @@ megafst_update <- function(runs, cov_paths, seqinfo, output_dir, tile_size = 2e6
   plan <- if (force) list(mode = "full", reason = "forced", add = lib$Run, replace = character()) else
     megafst_plan(old, lib, params_old, params, compact_fraction, max_appends, batch_size)
   message("-- megafst plan: ", plan$mode, " (", plan$reason, ")")
+  staging <- paste0(output_dir, ".staging")
+  if (plan$mode != "full" && dir.exists(staging)) unlink(staging, recursive = TRUE)  # stale partial full build
   if (plan$mode == "none") return(invisible(list(plan = plan, output_dir = output_dir)))
 
   if (plan$mode == "incremental") {
@@ -315,7 +317,6 @@ megafst_update <- function(runs, cov_paths, seqinfo, output_dir, tile_size = 2e6
   }
 
   # Full rebuild in staging (resumable: existing staging pages keep their columns)
-  staging <- paste0(output_dir, ".staging")
   dir.create(staging, showWarnings = FALSE)
   staging_pages <- copy(pages)
   staging_pages[, file_forward := file.path(staging, basename(file_forward))]
@@ -353,10 +354,12 @@ megafst_try_adopt <- function(lib, pages, index_path, params) {
   files <- file.path(dirname(index_path), basename(c(pages$file_forward, pages$file_reverse)))
   if (!all(file.exists(files))) return(NULL)
   cols <- fst::metadata_fst(files[1])$columnNames
-  if (!setequal(cols, lib$Run)) return(NULL)
+  # Pages may hold a subset of today's libraries (collection grew): adopt them and let the plan
+  # append the rest. Libraries in the pages but no longer in the collection need a full rebuild.
+  if (!length(cols) || anyDuplicated(cols) || !all(cols %in% lib$Run)) return(NULL)
   if (!all(vapply(files, function(f) setequal(fst::metadata_fst(f)$columnNames, cols), logical(1)))) return(NULL)
   oldest_page <- min(as.numeric(file.info(files)$mtime))
-  old <- copy(lib)
+  old <- copy(lib[match(cols, Run)])
   # A library whose covRle is newer than the oldest page may not be reflected: mark it changed
   old[cov_mtime > oldest_page, cov_mtime := -1]
   list(old = old, params = params)

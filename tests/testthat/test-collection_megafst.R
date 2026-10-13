@@ -131,3 +131,19 @@ test_that("megacovrle_update adopts pre-caching unnamed files, names them on nex
   expect_identical(names(fw), c(runs, "SRR4"))
   expect_identical(unname(fw[1:3]), unname(lapply(covs, f)))
 })
+
+test_that("pre-caching pages holding a subset of libraries are adopted and extended", {
+  dir <- withr::local_tempdir(); runs <- paste0("SRR", 1:6)
+  cov <- fake_covrle_files(dir, runs); si <- fake_seqinfo(); sp <- BiocParallel::SerialParam()
+  ref <- legacy_pages(cov, runs, si, file.path(dir, "full"), tile = 2000)
+  old <- file.path(dir, "old")
+  legacy_pages(cov[1:4], runs[1:4], si, old, tile = 2000)          # legacy pages, no manifest, 4 libraries
+  dir.create(paste0(old, ".staging")); writeLines("x", file.path(paste0(old, ".staging"), "stale.fst"))
+  plan <- megafst_update(runs, cov, si, old, tile_size = 2000, BPPARAM = sp)$plan
+  expect_identical(plan$mode, "incremental"); expect_setequal(plan$add, runs[5:6])
+  expect_identical(read_pages(old), ref)
+  expect_false(dir.exists(paste0(old, ".staging")))
+  # a library present in the pages but removed from the collection cannot be adopted
+  rm_dir <- file.path(dir, "rm"); legacy_pages(cov, runs, si, rm_dir, tile = 2000)
+  expect_identical(megafst_update(runs[-2], cov[-2], si, rm_dir, tile_size = 2000, BPPARAM = sp)$plan$mode, "full")
+})
