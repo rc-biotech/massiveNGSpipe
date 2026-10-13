@@ -7,7 +7,8 @@
 sample_qc_table(
   exp,
   accepted_lengths = c(20, 21, 25:33),
-  exp_dir = ORFik::config()["exp"]
+  exp_dir = ORFik::config()["exp"],
+  metadata = NULL
 )
 }
 \arguments{
@@ -16,6 +17,11 @@ sample_qc_table(
 \item{accepted_lengths}{read lengths the pipeline P-shifts (config$accepted_lengths_rpf)}
 
 \item{exp_dir}{directory of experiment CSVs}
+
+\item{metadata}{NULL or the curated metadata (data.table with Run, e.g. \code{config$complete_metadata} read
+with \code{fread}); when given, its \code{KEEP} and \code{UNIQUE} columns are added as
+\code{metadata_keep} / \code{metadata_flag}, so data-derived review flags (e.g. "misclassified_cell_line")
+travel with the QC numbers. Flags are review status, not automatic exclusion.}
 }
 \value{
 data.table, one row per Run
