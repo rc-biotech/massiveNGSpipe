@@ -235,14 +235,23 @@ megafst_stream_libraries <- function(lib, pages, op, batch_size, compress, BPPAR
   max_page_rows <- max(pages$end - pages$start + 1)
   for (b in seq_along(batches)) {
     rows <- batches[[b]]
-    need <- sum(lib$cov_size[rows]) * covrle_memory_ratio / 1024^3 +   # covRle in memory
-      workers * max_page_rows * length(rows) * 4 * 2 / 1024^3        # per-worker dense page (+copy)
-    wait_for_memory(need, sprintf("megafst batch %d/%d (%d libraries)", b, length(batches), length(rows)),
-                    keep_free_gb, timeout_minutes)
-    message(sprintf("--- %s batch %d/%d: %d libraries", op, b, length(batches), length(rows)))
+    covs_gb <- sum(lib$cov_size[rows]) * covrle_memory_ratio / 1024^3
+    # Per forked worker: the dense page batch (+ one copy while writing) and, worst case, a
+    # copy-on-write duplicate of the batch's strand list (half the covRle). Underestimating this
+    # got a 12-worker human build OOM-killed (2026-10-13).
+    per_worker_gb <- 1.5 * (max_page_rows * length(rows) * 4 * 2 / 1024^3 + covs_gb / 2)  # 1.5: R temporaries
+    label <- sprintf("megafst batch %d/%d (%d libraries)", b, length(batches), length(rows))
+    wait_for_memory(covs_gb + per_worker_gb, label, keep_free_gb, timeout_minutes)
+    avail <- megafst_memory_available_gb()
+    fit <- if (is.na(avail)) workers else floor((avail - keep_free_gb - 1.5 * covs_gb) / per_worker_gb)
+    n_workers <- max(1L, min(workers, fit))
+    bp <- if (n_workers == workers || !is(BPPARAM, "MulticoreParam")) BPPARAM else
+      BiocParallel::MulticoreParam(n_workers, exportglobals = FALSE, log = FALSE)
+    message(sprintf("--- %s batch %d/%d: %d libraries, %d workers (%.0f GB/worker, %.0f GB available)",
+                    op, b, length(batches), length(rows), n_workers, per_worker_gb, avail))
     covs <- lapply(lib$cov_path[rows], ORFik:::read_RDSQS, nthread = 5)
     names(covs) <- lib$Run[rows]
-    megafst_write_batch(covs, pages, op, compress, BPPARAM)
+    megafst_write_batch(covs, pages, op, compress, bp)
     rm(covs); gc(FALSE)
   }
   invisible(NULL)
