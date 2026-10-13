@@ -1227,23 +1227,28 @@ pshift_preserve_sibling_offsets <- function(path, previous, unchanged_paths) {
   invisible(NULL)
 }
 
+#' @param extra_lengths NULL (default, from \code{config$pshift_extra_lengths}) or read lengths outside
+#'  \code{accepted_lengths} to add per sample when periodic, additively (see \code{pshift_add_extra_lengths()})
 #' @inheritParams pipeline_create_ofst
 pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_lengths_rpf,
                             reuse_shifts_if_existing = config$reuse_shifts_if_existing,
                             allowed_hard12_species = c("Escherichia coli", "Sars cov2"),
-                            BPPARAM = bpparam_from_config(config, "pshifted")) {
+                            BPPARAM = bpparam_from_config(config, "pshifted"),
+                            extra_lengths = config$pshift_extra_lengths) {
   for (df in df_list) {
     if (!step_is_next_not_done(config, "pshifted", name(df))) next
     res <- 1
     if (config$all_mappers) {
       res <- pshift_needed_subset(df, accepted_lengths, allowed_hard12_species, BPPARAM,
                                   config$max_no_adapter_removed_pct, reuse_shifts_if_existing)
+      res <- pshift_extra_lengths_hook(df, res, extra_lengths, BPPARAM)
     }
 
     if(config$split_unique_mappers & !inherits(res, "error")) {
       uniqueMappers(df) <- TRUE
       res <- pshift_needed_subset(df, accepted_lengths, allowed_hard12_species, BPPARAM,
                                   config$max_no_adapter_removed_pct, reuse_shifts_if_existing)
+      res <- pshift_extra_lengths_hook(df, res, extra_lengths, BPPARAM)
     }
 
     if(!inherits(res, "error")) {
