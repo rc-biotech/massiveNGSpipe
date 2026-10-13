@@ -20,3 +20,16 @@ test_that("sheet_apply_fixes edits only targeted cells, skips changed or missing
   again <- suppressMessages(sheet_apply_fixes(fixes[1:2], base_dir = base, use_google = FALSE))
   expect_true(all(again$status == "changed_meanwhile"))
 })
+
+test_that("locale guard: damaged values detected, bare decimals refused on upload", {
+  dt <- data.table(Run = paste0("R", 1:5), TIMEPOINT = c("0,5", "3333333333", "0.5", "CT04", "30min"), KEEP = TRUE)
+  chk <- metadata_locale_check(dt)
+  expect_identical(chk$problem, c("locale_damaged", "locale_damaged", "decimal_at_risk"))
+  base <- tempfile("fix"); dir.create(file.path(base, "NGS_pipeline"), recursive = TRUE)
+  fwrite(dt, file.path(base, "NGS_pipeline", "next_round_manual.csv"))
+  expect_error(sheet_apply_fixes(data.table(Run = "R1", column = "TIMEPOINT", old = "0,5", new = "0.5"),
+                                 base_dir = base, use_google = FALSE), "unit")
+  ok <- suppressMessages(sheet_apply_fixes(data.table(Run = "R1", column = "TIMEPOINT", old = "0,5", new = "30min"),
+                                           base_dir = base, use_google = FALSE))
+  expect_identical(ok$status, "would_apply")
+})

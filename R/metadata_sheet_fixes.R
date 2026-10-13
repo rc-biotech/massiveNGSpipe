@@ -20,6 +20,9 @@ sheet_apply_fixes <- function(fixes, project = "NGS_pipeline", base_dir = "~/liv
             !anyDuplicated(fixes[, .(Run, column)]))
   norm <- function(x) { x <- trimws(as.character(x)); x[is.na(x)] <- ""; x }
   fixes[, `:=`(old = norm(old), new = norm(new))]
+  bad <- fixes[grepl("^[0-9]*\\.[0-9]+$", new)]
+  if (nrow(bad)) stop("Bare decimal values would be corrupted by the sheet's locale (e.g. ", bad$new[1],
+                      "); store them with a unit, e.g. 0.5h, 0.3uM, Triton_0.1pct")
   sheet <- modality_read(project, base_dir, use_google)
   missing_cols <- setdiff(unique(fixes$column), names(sheet))
   if (length(missing_cols)) stop("Sheet has no column(s): ", paste(missing_cols, collapse = ", "))
@@ -59,4 +62,28 @@ sheet_apply_fixes <- function(fixes, project = "NGS_pipeline", base_dir = "~/liv
   fwrite(entry, log_file, append = file.exists(log_file))
   message(project, ": applied ", nrow(a), " fixes (log ", log_file, ")")
   fixes[]
+}
+
+#' Values a Google Sheet locale corrupts
+#'
+#' A sheet whose locale uses a decimal comma turns uploaded text like "0.5" into the number 0,5, and long decimals
+#' like 0.3333333333 can lose their separator entirely ("3333333333"). This flags values that look already damaged
+#' (\code{^[0-9]+,[0-9]+$}, 8+ digit numbers) and values at risk on upload (bare decimal numbers such as "0.5").
+#' Store such values with a unit (0.5h, 0.3uM, Triton_0.1pct) so they stay text.
+#' @param dt metadata table
+#' @param columns annotation columns to check
+#' @return data.table (Run, column, value, problem)
+#' @export
+metadata_locale_check <- function(dt, columns = c("CONDITION", "TIMEPOINT", "FRACTION", "BATCH", "REPLICATE", "GENE",
+                                                 "TISSUE", "CELL_LINE", "INHIBITOR")) {
+  dt <- as.data.table(dt)
+  rbindlist(lapply(intersect(columns, names(dt)), function(cl) {
+    v <- trimws(as.character(dt[[cl]])); v[is.na(v)] <- ""
+    damaged <- grepl("^[0-9]+,[0-9]+$", v) | grepl("^[0-9]{8,}$", v)
+    at_risk <- grepl("^[0-9]*\\.[0-9]+$", v)
+    i <- which(damaged | at_risk)
+    if (!length(i)) return(NULL)
+    data.table(Run = as.character(dt$Run[i]), column = cl, value = v[i],
+               problem = ifelse(damaged[i], "locale_damaged", "decimal_at_risk"))
+  }))
 }

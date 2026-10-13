@@ -371,6 +371,12 @@ pipeline_validate_metadata <- function(dt, config,
     fwrite(files, next_round_file)
     return(FALSE)
   }
+  # Values damaged or endangered by a decimal-comma sheet locale (e.g. 0,5 / 3333333333 / 0.5)
+  locale <- metadata_locale_check(files[KEEP %in% TRUE])
+  if (nrow(locale)) {
+    warning(nrow(locale), " metadata values look locale-damaged or are bare decimals (store with a unit): ",
+            paste(head(unique(paste0(locale$column, "=", locale$value)), 8), collapse = ", "), call. = FALSE)
+  }
   # Check if metadata is now valid
   files <- metadata_is_valid(files)
   if (!is.null(accessions) & only_curated) {
