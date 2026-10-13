@@ -354,13 +354,36 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
                                 return(res)
       }, region = region, BPPARAM = BPPARAM)
       names(count_lists) <- exps_species
+      # Run-keyed identity: each study's columns get Run + study in colData, validated against the experiment
+      count_lists <- lapply(seq_along(count_lists), function(k)
+        add_run_keys_to_counts(count_lists[[k]], df_list[[k]], study = gsub("-.*", "", exps_species[k])))
+      names(count_lists) <- exps_species
       count_list <- safe_se_cbind(count_lists)
+      stopifnot(ncol(count_list) == sum(vapply(count_lists, ncol, integer(1))), !anyDuplicated(count_list$Run))
       saveName <- file.path(count_folder, paste0("countTable_", region, ".qs"))
       qs2::qs_save(count_list, file = saveName, nthreads = 5)
       saveName <- file.path(count_folder, paste0("totalCounts_", region, ".rds"))
       saveRDS(colSums(assay(count_list)), file = saveName)
     }
   }
+}
+
+#' Add Run and study to the colData of a study count table
+#'
+#' The study's count table columns follow the experiment rows (labels = \code{bamVarName(df)}); this is asserted
+#' before the Run IDs are attached, so collections carry Run-keyed sample identity.
+#' @param se SummarizedExperiment count table of one study
+#' @param df the study's ORFik experiment
+#' @param study study accession
+#' @return se with colData columns Run and study
+#' @noRd
+add_run_keys_to_counts <- function(se, df, study) {
+  if (ncol(se) != nrow(df)) stop(study, ": count table has ", ncol(se), " columns for ", nrow(df), " samples")
+  if (!identical(colnames(se), bamVarName(df)))
+    stop(study, ": count table columns do not match the experiment labels (run refresh_study_labels or pcounts first)")
+  SummarizedExperiment::colData(se)$Run <- ORFik::runIDs(df)
+  SummarizedExperiment::colData(se)$study <- study
+  se
 }
 
 #' cbind a list of SummarizedExperiments, with a useful error on mismatch
