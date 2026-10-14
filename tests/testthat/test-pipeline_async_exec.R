@@ -180,3 +180,13 @@ test_that("run_experiment_subprocess does not retry at all when install_race_ret
     "is corrupt"
   )
 })
+
+test_that("run_experiment_subprocess runs the load_all() source tree in the child when the parent does", {
+  skip_if_not(!is.null(dev_package_path()))
+  f <- function(x) c(has_dev_fun = exists("dev_package_path"), x = x)
+  d <- tempfile()
+  r <- run_experiment_subprocess(f, list(x = 3), file.path(d, "o.log"), file.path(d, "e.log"), poll_interval = 1)
+  expect_identical(unname(r), c(1, 3))
+  g <- function() stop("child boom")
+  expect_error(run_experiment_subprocess(g, list(), file.path(d, "o2.log"), file.path(d, "e2.log"), poll_interval = 1), "child boom")
+})

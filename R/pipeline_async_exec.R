@@ -75,8 +75,20 @@ run_experiment_subprocess <- function(func, args = list(),
   attempt <- 0
   repeat {
     attempt <- attempt + 1
-    px <- callr::r_bg(func, args = args, package = "massiveNGSpipe",
-                      stdout = logfile_out, stderr = logfile_err)
+    dev <- dev_package_path()
+    px <- if (is.null(dev)) {
+      callr::r_bg(func, args = args, package = "massiveNGSpipe",
+                  stdout = logfile_out, stderr = logfile_err)
+    } else {
+      # parent runs the source tree via load_all(): the child must too, else functions newer than the installed
+      # build are missing there (2026-10-14: assert_base_space_fastq not found in trim, 8 B. subtilis studies)
+      callr::r_bg(function(.f, .args, .path) {
+        suppressMessages(pkgload::load_all(.path, quiet = TRUE, helpers = FALSE, attach_testthat = FALSE))
+        environment(.f) <- asNamespace("massiveNGSpipe")
+        do.call(.f, .args)
+      }, args = list(.f = func, .args = args, .path = dev), package = FALSE,
+      stdout = logfile_out, stderr = logfile_err)
+    }
     while (px$is_alive()) {
       Sys.sleep(poll_interval)
       if (!is.null(on_poll)) on_poll()
@@ -92,6 +104,13 @@ run_experiment_subprocess <- function(func, args = list(),
     }
     stop(outcome$error)
   }
+}
+
+#' Source path of massiveNGSpipe when this session loaded it with pkgload::load_all(), else NULL
+#' @noRd
+dev_package_path <- function() {
+  if (!requireNamespace("pkgload", quietly = TRUE) || !pkgload::is_dev_package("massiveNGSpipe")) return(NULL)
+  getNamespaceInfo("massiveNGSpipe", "path")
 }
 
 #' Does this condition look like the massiveNGSpipe install/lazy-load race?
