@@ -75,14 +75,16 @@ parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100,
   message("Start step pipeline:\n", steps_merged)
   exps <- pipelines_names(pipelines)
   steps_done <- all_substeps_done_all(config, steps, exps)
-  while(!all(steps_done) && !stop_requested(config)) {
+  while(!all(steps_done) && !stop_requested(config) && !all_pending_failed(config, exps[!steps_done])) {
     function_call(pipelines, config)
     steps_done <- all_substeps_done_all(config, steps, exps)
-    if (!all(steps_done) && !stop_requested(config)) {
+    if (!all(steps_done) && !stop_requested(config) && !all_pending_failed(config, exps[!steps_done])) {
       Sys.sleep(wait)
       pipeline_checklist(pipelines, config)
     }
   }
+  if (!all(steps_done) && all_pending_failed(config, exps[!steps_done]))
+    message("Giving up step pipeline (all remaining studies have error records this session):\n", steps_merged)
   # Always mark this stage-group's loop as exited, whether it finished
   # naturally or honored a stop request -- see mark_stage_exited()'s own
   # doc for why "only mark on stop" would leave abort_session_when_next_study_done_per_step()
@@ -184,4 +186,20 @@ pipelines_names <- function(pipelines, recursive = TRUE) {
                 function(x) lapply(x$organisms,
                                    function(o) o$conf["exp"])),
          recursive = recursive, use.names = FALSE)
+}
+
+#' Do all pending experiments have an error record this session?
+#'
+#' Failed studies are skipped for the rest of a session (\code{report_failed_pipe()}), so a stage loop waiting only on
+#' them can never finish; without this check \code{run_pipeline()} idled forever after a single subprocess failure
+#' (2026-10-14: fetch with a "~" log path, collapse with "cannot create R_TempDir"). Error records are keyed by study
+#' accession, experiments by name, so both are checked.
+#' @param config the mNGSp config object
+#' @param pending character, experiment names not yet done for this stage
+#' @return logical
+#' @noRd
+all_pending_failed <- function(config, pending) {
+  if (!length(pending) || is.null(config$error_dir) || !dir.exists(config$error_dir)) return(FALSE)
+  failed <- sub("\\.rds$", "", list.files(config$error_dir, "\\.rds$"))
+  all(pending %in% failed | sub("-.*", "", pending) %in% failed)
 }
