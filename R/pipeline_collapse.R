@@ -115,6 +115,8 @@ pipeline_collapse <- function(pipeline, config, pipelines = list(pipeline)) {
                                                                    runs_paired,
                                                                    config, experiment) {
             ORFik::collapse.fastq(read1_paths[[i]], outdir_paired, compress = TRUE)
+            if (runs_paired$Run[i] %in% reads_reverse_runs(dirname(outdir_paired)))
+              stop("reads_reverse_manual: paired-end run ", runs_paired$Run[i], " refused; confirm read-1 orientation")
             set_sample_flag(config, "collapsed", experiment, runs_paired$Run[i])
           }, read1_paths = read1_paths, outdir_paired = outdir_paired, runs_paired = runs_paired,
              config = config, experiment = experiment, BPPARAM = BPPARAM)
@@ -127,6 +129,10 @@ pipeline_collapse <- function(pipeline, config, pipelines = list(pipeline)) {
                                                                     runs_single,
                                                                     config, experiment) {
             ORFik::collapse.fastq(files_single[[i]], outdir_single, compress = TRUE)
+            # opt-in: reverse-complement libraries read from the RNA 3' side (R/read_orientation.R)
+            collapsed_file <- file.path(outdir_single, paste0("collapsed_", gsub(ORFik:::fastq_regex_pattern(), ".fasta",
+                                                                                 basename(files_single[[i]])), ".gz"))
+            orient_collapsed_fasta(collapsed_file, runs_single$Run[i], dirname(outdir_single))
             set_sample_flag(config, "collapsed", experiment, runs_single$Run[i])
           }, files_single = files_single, outdir_single = outdir_single, runs_single = runs_single,
              config = config, experiment = experiment, BPPARAM = BPPARAM)
