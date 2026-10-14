@@ -42,6 +42,7 @@ init_and_load_complete_metadata <- function(config, complete_metadata = config$c
   final_list <- blacklist_filter(final_list, blacklist_read(config, sync = FALSE))
   if (isTRUE(attr(final_list, "removed") > 0))
     message("- Blacklist: skipping ", attr(final_list, "removed"), " blacklisted samples")
+  final_list <- platform_guard(final_list, config)
 
   if (only_complete_genomes) {
     message("- Subsetting to only complete genomes")
@@ -447,4 +448,28 @@ reference_assembly <- function(organism) {
                "Bacillus subtilis" = "GCA_000009045")       # subsp. subtilis str. 168
   out <- unname(curated[organism]); out[is.na(out)] <- organism[is.na(out)]
   out
+}
+
+#' Exclude runs whose sequencing platform the short-read pipeline cannot process
+#'
+#' Long-read runs (Oxford Nanopore direct RNA, PacBio) are valid metadata (KEEP stays TRUE in the sheets) but must not
+#' enter the short-read trim/collapse/STAR presets. They are skipped at init with reason
+#' \code{requires_longread_processing} and listed in \code{<project>/excluded_runs_platform.csv} for a future
+#' long-read preset (codex-rna / user 2026-10-14: EndoC-betaH1 PRJNA703954 direct RNA).
+#' @param final_list metadata rows (needs Platform; returned unchanged without it)
+#' @param config pipeline config
+#' @param longread platforms excluded
+#' @return final_list without the excluded runs
+#' @noRd
+platform_guard <- function(final_list, config, longread = c("OXFORD_NANOPORE", "PACBIO_SMRT")) {
+  if (!"Platform" %in% names(final_list)) return(final_list)
+  ex <- toupper(final_list$Platform) %in% longread
+  if (any(ex)) {
+    out <- final_list[ex, intersect(c("Run", "BioProject", "ScientificName", "LIBRARYTYPE", "Platform", "Model"), names(final_list)), with = FALSE]
+    out[, reason := "requires_longread_processing"]
+    if (!is.null(config$project)) fwrite(out, file.path(config$project, "excluded_runs_platform.csv"))
+    message("- Platform guard: skipping ", sum(ex), " long-read runs (", paste(unique(out$Platform), collapse = ", "),
+            "); see excluded_runs_platform.csv")
+  }
+  final_list[!ex]
 }
