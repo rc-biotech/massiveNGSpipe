@@ -140,20 +140,27 @@ set_read_orientation <- function(exp, runs, reverse, config, source, note = "") 
 #' ofst (score-weighted), up to \code{max_rows} alignments per sample; samples with few CDS reads stay "unknown".
 #' Reads overlapping annotated ncRNA (either strand) are ignored: rRNA reads otherwise count as antisense where dubious
 #' ORFs are annotated antisense to rRNA (yeast rDNA YLR154W-A..F / YLR162W gave 0.07-0.66 "sense" in good libraries).
+#' The verdict uses the gene-level fraction (share of CDS transcripts with >= \code{min_gene_reads} reads whose reads
+#' are mostly sense, each transcript weighted equally), so a few huge pileups on unannotated rRNA cannot decide it
+#' (C. remanei: two predicted genes held 99\% of the antisense reads; read-level 0.11-0.61, all other species ~1).
 #' @param exp experiment name
 #' @param max_rows maximum alignment rows read per sample
 #' @param min_cds_reads minimum weighted CDS-overlapping reads for a verdict
 #' @param n_samples check at most this many samples (first ones), e.g. 2 for a server-wide sweep
-#' @return data.table(Run, cds_reads, sense_frac, verdict: sense / antisense / mixed / unknown)
+#' @param min_gene_reads minimum weighted reads for a transcript to count in the gene-level fraction
+#' @return data.table(Run, cds_reads, sense_frac (read level), genes, gene_sense_frac, verdict: sense / antisense /
+#' mixed / unknown, from gene_sense_frac)
 #' @export
-strand_qc <- function(exp, max_rows = 2e6, min_cds_reads = 1000, n_samples = Inf) {
+strand_qc <- function(exp, max_rows = 2e6, min_cds_reads = 1000, n_samples = Inf, min_gene_reads = 10) {
   df <- read.experiment(exp, validate = FALSE, output.env = new.env())
   if (nrow(df) > n_samples) df <- df[seq_len(n_samples), ]
-  cds <- unlist(loadRegion(df, "cds"), use.names = FALSE)
+  cds_grl <- loadRegion(df, "cds")
+  cds <- unlist(cds_grl, use.names = FALSE); cds_tx <- rep(seq_along(cds_grl), lengths(cds_grl))
   nc <- tryCatch(unlist(loadRegion(df, "ncRNA"), use.names = FALSE), error = function(e) GenomicRanges::GRanges())
   rbindlist(lapply(seq_len(nrow(df)), function(i) {
     f <- tryCatch(filepath(df[i, ], "ofst"), error = function(e) NA_character_)
-    if (is.na(f) || !file.exists(f)) return(data.table(Run = ORFik::runIDs(df)[i], cds_reads = NA_real_, sense_frac = NA_real_, verdict = "unknown"))
+    if (is.na(f) || !file.exists(f)) return(data.table(Run = ORFik::runIDs(df)[i], cds_reads = NA_real_, sense_frac = NA_real_,
+                                                       genes = NA_integer_, gene_sense_frac = NA_real_, verdict = "unknown"))
     x <- ORFik::fimport(f)
     if (length(x) > max_rows) x <- x[sort(sample.int(length(x), max_rows))]
     gr <- GenomicRanges::granges(x); w <- if (!is.null(S4Vectors::mcols(x)$score)) S4Vectors::mcols(x)$score else rep(1, length(x))
@@ -162,7 +169,17 @@ strand_qc <- function(exp, max_rows = 2e6, min_cds_reads = 1000, n_samples = Inf
     anti <- any_ & !sense
     if (length(nc)) { keep <- !IRanges::overlapsAny(gr, nc, ignore.strand = TRUE); sense <- sense & keep; anti <- anti & keep }
     tot <- sum(as.numeric(w[sense | anti])); sf <- if (tot > 0) sum(as.numeric(w[sense])) / tot else NA_real_
-    v <- if (tot < min_cds_reads) "unknown" else if (sf >= 0.8) "sense" else if (sf <= 0.2) "antisense" else "mixed"
-    data.table(Run = ORFik::runIDs(df)[i], cds_reads = tot, sense_frac = round(sf, 3), verdict = v)
+    use <- which(sense | anti)
+    ov <- GenomicRanges::findOverlaps(gr[use], cds, ignore.strand = TRUE)
+    pairs <- unique(data.table(read = use[S4Vectors::queryHits(ov)], tx = cds_tx[S4Vectors::subjectHits(ov)],
+                               same = as.character(BiocGenerics::strand(gr[use][S4Vectors::queryHits(ov)])) ==
+                                      as.character(BiocGenerics::strand(cds[S4Vectors::subjectHits(ov)]))))
+    pairs <- pairs[, .(same = any(same)), by = .(read, tx)]
+    pairs[, w := as.numeric(w[read])]
+    per_tx <- pairs[, .(s = sum(w[same]), a = sum(w[!same])), by = tx][s + a >= min_gene_reads]
+    gsf <- if (nrow(per_tx)) mean(per_tx$s > per_tx$a) else NA_real_
+    v <- if (tot < min_cds_reads || nrow(per_tx) < 20) "unknown" else if (gsf >= 0.8) "sense" else if (gsf <= 0.2) "antisense" else "mixed"
+    data.table(Run = ORFik::runIDs(df)[i], cds_reads = tot, sense_frac = round(sf, 3), genes = nrow(per_tx),
+               gene_sense_frac = round(gsf, 3), verdict = v)
   }))
 }
