@@ -39,6 +39,9 @@ init_and_load_complete_metadata <- function(config, complete_metadata = config$c
                                             only_complete_genomes = FALSE, only_complete_indices = FALSE) {
   if (!file.exists(complete_metadata)) stop("You have not create a successful metadata table yet!")
   final_list <- fread(complete_metadata)[KEEP == TRUE,]
+  final_list <- blacklist_filter(final_list, blacklist_read(config, sync = FALSE))
+  if (isTRUE(attr(final_list, "removed") > 0))
+    message("- Blacklist: skipping ", attr(final_list, "removed"), " blacklisted samples")
 
   if (only_complete_genomes) {
     message("- Subsetting to only complete genomes")

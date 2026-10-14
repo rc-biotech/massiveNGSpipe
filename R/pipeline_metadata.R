@@ -423,15 +423,17 @@ add_new_data <- function(accessions, config, organisms = "all",
                          open_google_sheet = interactive(),
                          organism_name_cleanup = TRUE,
                          BPPARAM = if (length(accessions) > 5) {bpparam()} else SerialParam()) {
-  if (file.exists(config$blacklist)) {
-    blacklist <- fread(config$blacklist)
-    if (any(blacklist$id %in% accessions)) {
-      print(blacklist$id[blacklist$id %in% accessions])
-      stop("You tried to add an id in blacklist, see above for which!")
-    }
+  blacklist <- blacklist_read(config)
+  whole <- blacklist[is.na(run_id)]$id
+  if (any(whole %in% accessions)) {
+    print(whole[whole %in% accessions])
+    stop("You tried to add an id in blacklist, see above for which!")
   }
   # Step1: Get all metadata
   all_SRA_metadata <- pipeline_metadata(accessions, config, BPPARAM = BPPARAM)
+  all_SRA_metadata <- blacklist_filter(all_SRA_metadata, blacklist)
+  if (isTRUE(attr(all_SRA_metadata, "removed") > 0))
+    message("Blacklist: removed ", attr(all_SRA_metadata, "removed"), " blacklisted samples")
   # Step2: Filter out what you do not want
   filtered_SRA_metadata <- pipeline_metadata_filter(all_SRA_metadata, organisms,
                                                     LibraryLayouts, LibraryStrategy,

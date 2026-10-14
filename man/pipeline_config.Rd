@@ -74,7 +74,9 @@ complete_metadata. This syncs automatically to the google_url sheet if included.
 
 \item{blacklist}{path, Which studies to ignore for this config,
 default: file.path(project_dir, "BLACKLIST.csv")\cr
-A csv with 1 column id, which gives BioProject IDs}
+A csv with columns id (study accession), run_id (blank = whole study blacklisted, else only that
+sample) and reason. See \code{blacklist_read()}; the online sheet URL is read from
+\if{html}{\out{<project>}}/blacklist_google_url.csv.}
 
 \item{google_url}{url or sheet object for google sheet to use. Set to NULL to
 not use google sheet.}
