@@ -12,7 +12,8 @@ pipeline_validate_metadata(
   output_file = config$complete_metadata,
   backup_file = config$backup_metadata,
   next_round_file = config$temp_metadata,
-  libtypes = "RFP"
+  libtypes = libtype_long_to_short(config$preset),
+  max_drop_fraction = 0.5
 )
 }
 \arguments{
@@ -40,10 +41,11 @@ inserted accessions (not the full list). Ignored if accessions is NULL.}
 \item{backup_file}{a path to store backup csv, default: config$backup_metadata,
 store all runs, even non Ribo-seq, such that it can be used if wanted.}
 
-\item{libtypes}{character vector, default "RFP". Which NGS library types to
-keep from all LIBRARYLAYOUT values. These names are made by mNGSp
-automatically. If you made "disome" as a LIBRARYLAYOUT category, then
-c("RFP", "disome") will keep both, but exclude any other.}
+\item{libtypes}{library types exported to output_file, default from the config preset
+(Ribo-seq -> "RFP", RNA-seq -> "RNA"; it used to be "RFP" for every preset, which wrote an empty RNA FINAL_LIST)}
+
+\item{max_drop_fraction}{numeric, refuse to overwrite output_file when the new table would have fewer than
+(1 - max_drop_fraction) of its current rows (default 0.5); set to 1 to allow any shrink}
 }
 \value{
 logical, TRUE if valid.

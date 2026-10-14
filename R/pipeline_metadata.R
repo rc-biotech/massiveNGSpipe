@@ -329,6 +329,10 @@ pipeline_metadata_annotate <- function(filtered_RFP) {
 #' @param output_file a path to store final Ribo csv, default config$complete_metadata
 #' @param backup_file a path to store backup csv, default: config$backup_metadata,
 #' store all runs, even non Ribo-seq, such that it can be used if wanted.
+#' @param libtypes library types exported to output_file, default from the config preset
+#' (Ribo-seq -> "RFP", RNA-seq -> "RNA"; it used to be "RFP" for every preset, which wrote an empty RNA FINAL_LIST)
+#' @param max_drop_fraction numeric, refuse to overwrite output_file when the new table would have fewer than
+#' (1 - max_drop_fraction) of its current rows (default 0.5); set to 1 to allow any shrink
 #' @return logical, TRUE if valid.
 pipeline_validate_metadata <- function(dt, config,
                                        accessions = NULL,
@@ -336,7 +340,8 @@ pipeline_validate_metadata <- function(dt, config,
                                        output_file = config$complete_metadata,
                                        backup_file = config$backup_metadata,
                                        next_round_file = config$temp_metadata,
-                                       libtypes = "RFP") {
+                                       libtypes = libtype_long_to_short(config$preset),
+                                       max_drop_fraction = 0.5) {
   message("-- Validating metadata")
   message("- Total input samples: ", nrow(dt))
   if (nrow(dt) == 0) {
@@ -391,7 +396,7 @@ pipeline_validate_metadata <- function(dt, config,
     print(head(files_to_check[not_unique == TRUE, ]$Run, 30))
   } else {
     export_sucessful_metadata(files, libtypes, output_file,
-                              next_round_file)
+                              next_round_file, max_drop_fraction)
     return(TRUE)
   }
   # If failed, check why, and save in bottom and do a new round of manual
@@ -584,8 +589,15 @@ metadata_columns_cleanup <- function(files, show_current_fill_stats = FALSE) {
 }
 
 export_sucessful_metadata <- function(files, libtypes, output_file,
-                                      next_round_file) {
+                                      next_round_file, max_drop_fraction = 0.5) {
   file_to_keep <- files[KEEP == TRUE & (LIBRARYTYPE %in% c(libtypes)),]
+  if (file.exists(output_file)) {
+    n_old <- nrow(fread(output_file, select = 1L))
+    if (n_old > 0 && nrow(file_to_keep) < (1 - max_drop_fraction) * n_old)
+      stop("Refusing to overwrite ", output_file, ": it has ", n_old, " rows, the new table ", nrow(file_to_keep),
+           " (LIBRARYTYPE in ", paste(libtypes, collapse = ","), "). Wrong libtypes/preset? ",
+           "Set max_drop_fraction = 1 to allow. Nothing written.")
+  }
   message("Congratulations!")
   message("Data is unique!")
   message("Number of samples marked as KEEP: (",
