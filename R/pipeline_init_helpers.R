@@ -61,7 +61,10 @@ init_and_load_complete_metadata <- function(config, complete_metadata = config$c
       gsub("_", " ", paste(x, collapse = " x "))
     }))
     complete_genomes_formated <- c(complete_genomes_formated, alternative_mixed_format)
-    final_list <- final_list[ScientificName %in% complete_genomes_formated,]
+    # match through the folder name (same mapping as reference_folder_name()), so strain keys such as
+    # "Zymomonas mobilis ZM4" -> zymomonas_mobilis_zm4 are found; title-casing the folder name could not round-trip
+    final_list <- final_list[ScientificName %in% complete_genomes_formated |
+                             reference_folder_name(ScientificName) %in% complete_genomes,]
 
     message("Complete genomes ratio:", round((length(complete_genomes) / total_genomes)*100, 2), "%")
     message("Used samples ratio:", round((nrow(final_list) / total_samples)*100, 2), "%")
