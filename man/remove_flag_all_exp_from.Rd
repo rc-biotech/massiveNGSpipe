@@ -4,7 +4,7 @@
 \alias{remove_flag_all_exp_from}
 \title{Remove flags for all pipelines specified}
 \usage{
-remove_flag_all_exp_from(config, from_step, exps)
+remove_flag_all_exp_from(config, from_step, exps, samples = FALSE)
 }
 \arguments{
 \item{config}{list, output from pipeline_config(), the global config for your
@@ -16,6 +16,8 @@ than this one.}
 
 \item{exps}{name of experiments (i.e. subsets names of pipelines,
 split by organisms.)}
+
+\item{samples}{logical, default FALSE; TRUE also deletes their per-sample markers (see \code{remove_flag_all_exp})}
 }
 \value{
 invisible(NULL)

@@ -4,7 +4,7 @@
 \alias{remove_flag_all_exp}
 \title{Remove flags for all pipelines specified}
 \usage{
-remove_flag_all_exp(config, steps = names(config$flag), exps)
+remove_flag_all_exp(config, steps = names(config$flag), exps, samples = FALSE)
 }
 \arguments{
 \item{config}{list, output from pipeline_config(), the global config for your
@@ -15,6 +15,11 @@ for given exp objects (i.e. a subset of pipelines)}
 
 \item{exps}{name of experiments (i.e. subsets names of pipelines,
 split by organisms.)}
+
+\item{samples}{logical, default FALSE. TRUE also deletes the per-sample markers of these steps
+(\code{<project>/sample_flags/<step>[_unique]/<exp>}). Use TRUE for a full re-run: per-sample markers make the
+stage skip those Runs, so with deleted intermediates (e.g. trimmed FASTQ) the next stage finds no input
+(2026-10-14: B. subtilis 168 re-run, trim skipped all Runs, collapse failed).}
 }
 \value{
 invisible(NULL)

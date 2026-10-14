@@ -265,9 +265,13 @@ remove_flag_all <- function(config, steps = names(config$flag), pipelines) {
 #' @inheritParams set_flag_all_exp
 #' @param steps, which flags to set to FALSE (not done)
 #'  for given exp objects (i.e. a subset of pipelines)
+#' @param samples logical, default FALSE. TRUE also deletes the per-sample markers of these steps
+#'  (\code{<project>/sample_flags/<step>[_unique]/<exp>}). Use TRUE for a full re-run: per-sample markers make the
+#'  stage skip those Runs, so with deleted intermediates (e.g. trimmed FASTQ) the next stage finds no input
+#'  (2026-10-14: B. subtilis 168 re-run, trim skipped all Runs, collapse failed).
 #' @return invisible(NULL)
 #' @export
-remove_flag_all_exp <- function(config, steps = names(config$flag), exps) {
+remove_flag_all_exp <- function(config, steps = names(config$flag), exps, samples = FALSE) {
   stopifnot(is_config(config))
   stopifnot(is.character(steps) & is.character(exps))
   if (length(steps) == 1 && steps == "all") {
@@ -279,6 +283,7 @@ remove_flag_all_exp <- function(config, steps = names(config$flag), exps) {
   for (e in exps) {
     for (step in steps) remove_flag(config, step, e)
   }
+  if (samples) remove_sample_flags(config, steps, exps)
   message("- Removed flags for pipeline subset:")
   message(paste(exps, collapse = ", "))
   return(invisible(NULL))
@@ -292,9 +297,10 @@ remove_flag_all_exp <- function(config, steps = names(config$flag), exps) {
 #' @param from_step, which flag to set to FALSE (not done)
 #'  for given exp objects (i.e. a subset of pipelines), and all steps higher
 #'  than this one.
+#' @param samples logical, default FALSE; TRUE also deletes their per-sample markers (see \code{remove_flag_all_exp})
 #' @return invisible(NULL)
 #' @export
-remove_flag_all_exp_from <- function(config, from_step, exps) {
+remove_flag_all_exp_from <- function(config, from_step, exps, samples = FALSE) {
   stopifnot(is_config(config))
   stopifnot(is.character(from_step), length(from_step) == 1)
   stopifnot(is.character(exps))
@@ -313,6 +319,7 @@ remove_flag_all_exp_from <- function(config, from_step, exps) {
       remove_flag(config, step, e)
     }
   }
+  if (samples) remove_sample_flags(config, steps, exps)
 
   message("- Removed flags for pipeline subset from step: ", from_step)
   message("- Steps reset: ", paste(steps, collapse = ", "))
@@ -363,4 +370,18 @@ add_step_to_pipeline <- function(config, short_name, FUN, group_name = name_of_f
   config$flag_steps <- flag_steps
   config$pipeline_steps <- pipeline_steps
   return(config)
+}
+
+#' Delete per-sample markers of steps (and their _unique variants) for experiments
+#' @param config pipeline config
+#' @param steps step ids
+#' @param exps experiment names
+#' @return character, the deleted marker directories (invisibly)
+#' @noRd
+remove_sample_flags <- function(config, steps, exps) {
+  dirs <- unlist(lapply(c(steps, paste0(steps, "_unique")), function(s) vapply(exps, function(e) sample_flag_dir(config, s, e), "")))
+  dirs <- dirs[dir.exists(dirs)]
+  unlink(dirs, recursive = TRUE)
+  if (length(dirs)) message("- Removed per-sample markers: ", length(dirs), " step/experiment folders")
+  invisible(dirs)
 }
