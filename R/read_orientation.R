@@ -138,6 +138,8 @@ set_read_orientation <- function(exp, runs, reverse, config, source, note = "") 
 #' Ribo-seq footprints should be sense to the CDS. A sample with mostly antisense CDS reads was probably sequenced from
 #' the RNA 3' side (see \code{set_read_orientation()}). This only FLAGS; it never changes orientation. Uses the pre-shift
 #' ofst (score-weighted), up to \code{max_rows} alignments per sample; samples with few CDS reads stay "unknown".
+#' Reads overlapping annotated ncRNA (either strand) are ignored: rRNA reads otherwise count as antisense where dubious
+#' ORFs are annotated antisense to rRNA (yeast rDNA YLR154W-A..F / YLR162W gave 0.07-0.66 "sense" in good libraries).
 #' @param exp experiment name
 #' @param max_rows maximum alignment rows read per sample
 #' @param min_cds_reads minimum weighted CDS-overlapping reads for a verdict
@@ -148,6 +150,7 @@ strand_qc <- function(exp, max_rows = 2e6, min_cds_reads = 1000, n_samples = Inf
   df <- read.experiment(exp, validate = FALSE, output.env = new.env())
   if (nrow(df) > n_samples) df <- df[seq_len(n_samples), ]
   cds <- unlist(loadRegion(df, "cds"), use.names = FALSE)
+  nc <- tryCatch(unlist(loadRegion(df, "ncRNA"), use.names = FALSE), error = function(e) GenomicRanges::GRanges())
   rbindlist(lapply(seq_len(nrow(df)), function(i) {
     f <- tryCatch(filepath(df[i, ], "ofst"), error = function(e) NA_character_)
     if (is.na(f) || !file.exists(f)) return(data.table(Run = ORFik::runIDs(df)[i], cds_reads = NA_real_, sense_frac = NA_real_, verdict = "unknown"))
@@ -157,6 +160,7 @@ strand_qc <- function(exp, max_rows = 2e6, min_cds_reads = 1000, n_samples = Inf
     sense <- IRanges::overlapsAny(gr, cds, ignore.strand = FALSE)
     any_ <- IRanges::overlapsAny(gr, cds, ignore.strand = TRUE)
     anti <- any_ & !sense
+    if (length(nc)) { keep <- !IRanges::overlapsAny(gr, nc, ignore.strand = TRUE); sense <- sense & keep; anti <- anti & keep }
     tot <- sum(as.numeric(w[sense | anti])); sf <- if (tot > 0) sum(as.numeric(w[sense])) / tot else NA_real_
     v <- if (tot < min_cds_reads) "unknown" else if (sf >= 0.8) "sense" else if (sf <= 0.2) "antisense" else "mixed"
     data.table(Run = ORFik::runIDs(df)[i], cds_reads = tot, sense_frac = round(sf, 3), verdict = v)

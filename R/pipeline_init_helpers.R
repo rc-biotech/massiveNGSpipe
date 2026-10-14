@@ -452,23 +452,25 @@ reference_assembly <- function(organism) {
 
 #' Exclude runs whose sequencing platform the short-read pipeline cannot process
 #'
-#' Long-read runs (Oxford Nanopore direct RNA, PacBio) are valid metadata (KEEP stays TRUE in the sheets) but must not
-#' enter the short-read trim/collapse/STAR presets. They are skipped at init with reason
-#' \code{requires_longread_processing} and listed in \code{<project>/excluded_runs_platform.csv} for a future
-#' long-read preset (codex-rna / user 2026-10-14: EndoC-betaH1 PRJNA703954 direct RNA).
+#' Long-read runs (Oxford Nanopore direct RNA, PacBio) and colour-space runs (ABI SOLiD: FASTQ in 0/1/2/3 colour calls,
+#' not bases) are valid metadata (KEEP stays TRUE in the sheets) but must not enter the short-read base-space
+#' trim/collapse/STAR presets. They are skipped at init with reason \code{requires_longread_processing} or
+#' \code{requires_colorspace_decoding} and listed in \code{<project>/excluded_runs_platform.csv} for a future preset
+#' (codex-rna / user 2026-10-14: EndoC-betaH1 PRJNA703954 direct RNA; SOLiD PRJNA603782 colour-space FASTQ confirmed).
 #' @param final_list metadata rows (needs Platform; returned unchanged without it)
 #' @param config pipeline config
-#' @param longread platforms excluded
+#' @param longread,colorspace platforms excluded
 #' @return final_list without the excluded runs
 #' @noRd
-platform_guard <- function(final_list, config, longread = c("OXFORD_NANOPORE", "PACBIO_SMRT")) {
+platform_guard <- function(final_list, config, longread = c("OXFORD_NANOPORE", "PACBIO_SMRT"), colorspace = "ABI_SOLID") {
   if (!"Platform" %in% names(final_list)) return(final_list)
-  ex <- toupper(final_list$Platform) %in% longread
+  pl <- toupper(final_list$Platform)
+  ex <- pl %in% c(longread, colorspace)
   if (any(ex)) {
     out <- final_list[ex, intersect(c("Run", "BioProject", "ScientificName", "LIBRARYTYPE", "Platform", "Model"), names(final_list)), with = FALSE]
-    out[, reason := "requires_longread_processing"]
+    out[, reason := ifelse(pl[ex] %in% colorspace, "requires_colorspace_decoding", "requires_longread_processing")]
     if (!is.null(config$project)) fwrite(out, file.path(config$project, "excluded_runs_platform.csv"))
-    message("- Platform guard: skipping ", sum(ex), " long-read runs (", paste(unique(out$Platform), collapse = ", "),
+    message("- Platform guard: skipping ", sum(ex), " long-read/colour-space runs (", paste(unique(out$Platform), collapse = ", "),
             "); see excluded_runs_platform.csv")
   }
   final_list[!ex]
