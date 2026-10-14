@@ -14,6 +14,7 @@ fastq_is_colorspace <- function(file, n_reads = 1000, min_frac = 0.9) {
   con <- if (grepl("\\.gz$", file)) gzfile(file, "r") else file(file, "r")
   on.exit(close(con))
   l <- readLines(con, n = 4 * n_reads, warn = FALSE)
+  if (length(l) < 2) return(FALSE)
   seqs <- l[seq(2, length(l), by = 4)]
   seqs <- seqs[!is.na(seqs) & nzchar(seqs)]
   if (!length(seqs)) return(FALSE)
