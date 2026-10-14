@@ -27,7 +27,7 @@ experiment_remove_runs(
 number of samples dropped, invisibly
 }
 \description{
-Rewrites the experiment CSV without \code{runs} (backup kept next to it) and removes the study's flags from the
+Rewrites the experiment CSV without \code{runs} (backup in \code{<project>/experiment_backups}, never in exp_dir) and removes the study's flags from the
 first step that combines samples (\code{merged_lib}) onwards, so the next pipeline run rebuilds the study pool,
 coverage formats and count tables from the remaining samples. Per-sample files of the dropped runs stay on disk.
 }

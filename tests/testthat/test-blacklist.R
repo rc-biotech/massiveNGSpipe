@@ -31,10 +31,12 @@ test_that("sheet_remove_runs drops only the given rows; experiment_remove_runs r
                '"RFP","leaf","3","WT","","/x/R3.bam","R3"'), file.path(ed, "P-x.csv"))
   steps <- c("pshifted", "merged_lib", "pcounts"); fl <- setNames(file.path(base, "flags", steps), steps)
   for (s in fl) { dir.create(s, recursive = TRUE); saveRDS(TRUE, file.path(s, "P-x.rds")) }
-  config <- structure(list(flag = fl), class = c("list", "mNGSp_config"))
+  config <- structure(list(flag = fl, project = base), class = c("list", "mNGSp_config"))
   testthat::local_mocked_bindings(is_config = function(x) TRUE)
   suppressMessages(experiment_remove_runs("P-x", "R2", config, exp_dir = ed, dry_run = FALSE))
   l <- readLines(file.path(ed, "P-x.csv"))
+  expect_identical(list.files(ed), "P-x.csv")                                       # no backup in exp_dir
+  expect_length(list.files(file.path(base, "experiment_backups")), 1L)
   expect_identical(length(l), 6L); expect_false(any(grepl("R2", l)))
   expect_true(file.exists(file.path(fl["pshifted"], "P-x.rds")))
   expect_false(file.exists(file.path(fl["merged_lib"], "P-x.rds")))

@@ -127,7 +127,7 @@ sheet_remove_runs <- function(runs, project = "NGS_pipeline", base_dir = "~/live
 
 #' Drop samples from a processed ORFik experiment
 #'
-#' Rewrites the experiment CSV without \code{runs} (backup kept next to it) and removes the study's flags from the
+#' Rewrites the experiment CSV without \code{runs} (backup in \code{<project>/experiment_backups}, never in exp_dir) and removes the study's flags from the
 #' first step that combines samples (\code{merged_lib}) onwards, so the next pipeline run rebuilds the study pool,
 #' coverage formats and count tables from the remaining samples. Per-sample files of the dropped runs stay on disk.
 #' @param exp experiment name
@@ -144,7 +144,9 @@ experiment_remove_runs <- function(exp, runs, config, exp_dir = ORFik::config()[
   message(exp, ": ", sum(drop), " of ", nrow(df), " samples to drop")
   if (dry_run || !any(drop)) return(invisible(sum(drop)))
   if (all(drop)) stop(exp, ": all samples would be dropped; remove the experiment instead")
-  file.copy(exp_file, paste0(exp_file, ".bak_", format(Sys.time(), "%Y%m%d_%H%M%S")))
+  # backup outside exp_dir: list.experiments() reads every file whose name contains ".csv"
+  bdir <- file.path(config$project, "experiment_backups"); dir.create(bdir, showWarnings = FALSE, recursive = TRUE)
+  file.copy(exp_file, file.path(bdir, paste0(exp, "_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".bak")))
   lines <- readLines(exp_file)
   hdr <- grep('^"?libtype"?,', lines)[1]
   stopifnot(!is.na(hdr), length(lines) - hdr == nrow(df))
