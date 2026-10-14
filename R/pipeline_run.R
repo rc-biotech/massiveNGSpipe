@@ -75,15 +75,15 @@ parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100,
   message("Start step pipeline:\n", steps_merged)
   exps <- pipelines_names(pipelines)
   steps_done <- all_substeps_done_all(config, steps, exps)
-  while(!all(steps_done) && !stop_requested(config) && !all_pending_failed(config, exps[!steps_done])) {
+  while(!all(steps_done) && !stop_requested(config) && !all_pending_failed(config, pending_exps(config, steps, exps))) {
     function_call(pipelines, config)
     steps_done <- all_substeps_done_all(config, steps, exps)
-    if (!all(steps_done) && !stop_requested(config) && !all_pending_failed(config, exps[!steps_done])) {
+    if (!all(steps_done) && !stop_requested(config) && !all_pending_failed(config, pending_exps(config, steps, exps))) {
       Sys.sleep(wait)
       pipeline_checklist(pipelines, config)
     }
   }
-  if (!all(steps_done) && all_pending_failed(config, exps[!steps_done]))
+  if (!all(steps_done) && all_pending_failed(config, pending_exps(config, steps, exps)))
     message("Giving up step pipeline (all remaining studies have error records this session):\n", steps_merged)
   # Always mark this stage-group's loop as exited, whether it finished
   # naturally or honored a stop request -- see mark_stage_exited()'s own
@@ -186,6 +186,19 @@ pipelines_names <- function(pipelines, recursive = TRUE) {
                 function(x) lapply(x$organisms,
                                    function(o) o$conf["exp"])),
          recursive = recursive, use.names = FALSE)
+}
+
+#' Experiments of a stage-group with at least one step not done
+#'
+#' \code{all_substeps_done_all()} returns one value per experiment x step, so indexing \code{exps} with it is wrong for
+#' multi-step stages (it produced NA and the give-up check never fired: ZM4 run hung 80 min, 2026-10-14).
+#' @param config pipeline config
+#' @param steps step ids of the stage-group
+#' @param exps experiment names
+#' @return character, the pending experiments
+#' @noRd
+pending_exps <- function(config, steps, exps) {
+  exps[!vapply(exps, function(e) all(all_substeps_done(config, steps, e)), logical(1))]
 }
 
 #' Do all pending experiments have an error record this session?
