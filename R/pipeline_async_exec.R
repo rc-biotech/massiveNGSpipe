@@ -59,6 +59,9 @@ run_experiment_subprocess <- function(func, args = list(),
                                       install_race_retries = 1,
                                       install_race_wait = 20) {
   stopifnot(logfile_out != logfile_err)
+  # processx opens these files itself and does not expand "~" (fails as "cannot start processx process ...
+  # system error 2"), e.g. with pipeline_config(project_dir = "~/...")
+  logfile_out <- path.expand(logfile_out); logfile_err <- path.expand(logfile_err)
   dir.create(dirname(logfile_out), showWarnings = FALSE, recursive = TRUE)
   dir.create(dirname(logfile_err), showWarnings = FALSE, recursive = TRUE)
 
