@@ -9,8 +9,6 @@ small-RNA or oligo-dT designs; 2026-10-14 barcode audit: PRJNA453992, PRJNA83533
 opposite strand, which breaks P-shifting and counting. For runs explicitly listed in
 \code{<trim dir>/reads_reverse_manual.csv} (columns \code{Run}, \code{reverse} TRUE/FALSE, \code{source}, \code{note}),
 the collapsed FASTA is reverse-complemented right after collapsing and before the sample's collapsed flag is set.
-Headers (and so the collapsed read-multiplicity weights) and lengths are unchanged. A hidden manifest
-(\code{.orientation_manifest.csv}: Run, file, sha of input and output, time) makes the step idempotent: a file whose
-current hash equals a recorded output hash is not flipped again; a re-collapsed file (new input hash) is flipped
-again. Default is off; paired-end runs are refused (orientation of read 1 must be confirmed separately).
+Headers (and so the collapsed read-multiplicity weights) and lengths are unchanged. A per-run transaction sidecar
+(\code{.orientation/<Run>.json}) makes it idempotent and crash-safe (see \code{orient_collapsed_fasta}). Default is off; paired-end runs are refused (orientation of read 1 must be confirmed separately).
 }

@@ -5,20 +5,19 @@
 #' opposite strand, which breaks P-shifting and counting. For runs explicitly listed in
 #' \code{<trim dir>/reads_reverse_manual.csv} (columns \code{Run}, \code{reverse} TRUE/FALSE, \code{source}, \code{note}),
 #' the collapsed FASTA is reverse-complemented right after collapsing and before the sample's collapsed flag is set.
-#' Headers (and so the collapsed read-multiplicity weights) and lengths are unchanged. A hidden manifest
-#' (\code{.orientation_manifest.csv}: Run, file, sha of input and output, time) makes the step idempotent: a file whose
-#' current hash equals a recorded output hash is not flipped again; a re-collapsed file (new input hash) is flipped
-#' again. Default is off; paired-end runs are refused (orientation of read 1 must be confirmed separately).
+#' Headers (and so the collapsed read-multiplicity weights) and lengths are unchanged. A per-run transaction sidecar
+#' (\code{.orientation/<Run>.json}) makes it idempotent and crash-safe (see \code{orient_collapsed_fasta}). Default is off; paired-end runs are refused (orientation of read 1 must be confirmed separately).
 #' @name read_orientation
 NULL
 
 #' @noRd
 reads_reverse_manual_path <- function(trimmed_dir) file.path(trimmed_dir, "reads_reverse_manual.csv")
 
+#' Per-run orientation transaction sidecar (no shared file between parallel collapse workers)
 #' @noRd
-orientation_manifest_path <- function(trimmed_dir) file.path(trimmed_dir, ".orientation_manifest.csv")
+orientation_state_path <- function(trimmed_dir, run) file.path(trimmed_dir, ".orientation", paste0(run, ".json"))
 
-#' Runs of a study marked for reverse-complementing
+#' Runs of a study marked for reverse-complementing (strict parsing)
 #' @param trimmed_dir the study's trim directory
 #' @return character vector of Run ids with reverse == TRUE
 #' @noRd
@@ -27,16 +26,32 @@ reads_reverse_runs <- function(trimmed_dir) {
   if (!file.exists(f)) return(character())
   x <- fread(f, colClasses = "character")
   if (!all(c("Run", "reverse") %in% names(x))) stop(f, " must have columns Run, reverse")
-  x$Run[toupper(trimws(x$reverse)) %in% c("TRUE", "T", "1")]
+  v <- toupper(trimws(x$reverse))
+  if (any(!v %in% c("TRUE", "FALSE"))) stop(f, ": reverse must be TRUE or FALSE (got ", paste(unique(x$reverse[!v %in% c("TRUE", "FALSE")]), collapse = ", "), ")")
+  if (anyDuplicated(x$Run)) stop(f, ": duplicated Run entries: ", paste(unique(x$Run[duplicated(x$Run)]), collapse = ", "))
+  x$Run[v == "TRUE"]
 }
 
 #' @noRd
-file_sha256 <- function(path) unname(tools::md5sum(path))  # md5 is enough to detect re-collapse vs own output
+file_md5 <- function(path) unname(tools::md5sum(path))
 
-#' Reverse-complement one collapsed FASTA if its run is marked (idempotent)
+#' @noRd
+write_json_atomic <- function(obj, path) {
+  dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
+  tmp <- paste0(path, ".tmp", Sys.getpid())
+  jsonlite::write_json(obj, tmp, auto_unbox = TRUE)
+  if (!file.rename(tmp, path)) { unlink(tmp); stop("cannot write ", path) }
+}
+
+#' Reverse-complement one collapsed FASTA if its run is marked (idempotent, crash-safe)
+#'
+#' Transaction per run in \code{<trim>/.orientation/<Run>.json}: the input md5 and the planned output md5 are recorded
+#' (state "prepared") before the atomic replacement, and state "done" after it. On a retry the current file's md5
+#' decides: equal to the recorded output -> already flipped (state repaired to done); equal to the recorded input or
+#' a new file (re-collapsed) -> flip. Each run has its own sidecar, so parallel collapse workers never share state.
 #' @param collapsed_file path to collapsed_<run>.fasta(.gz)
 #' @param run Run id
-#' @param trimmed_dir the study's trim directory (holds the manual table and manifest)
+#' @param trimmed_dir the study's trim directory (holds the manual table and sidecars)
 #' @param paired logical, TRUE refuses (read-1 orientation must be confirmed separately)
 #' @return "flipped", "already_flipped" or "not_marked", invisibly
 #' @noRd
@@ -44,21 +59,35 @@ orient_collapsed_fasta <- function(collapsed_file, run, trimmed_dir, paired = FA
   if (!run %in% reads_reverse_runs(trimmed_dir)) return(invisible("not_marked"))
   if (paired) stop("reads_reverse_manual: paired-end run ", run, " refused; confirm read-1 orientation separately")
   stopifnot(file.exists(collapsed_file))
-  man_f <- orientation_manifest_path(trimmed_dir)
-  man <- if (file.exists(man_f)) fread(man_f, colClasses = "character") else data.table()
-  cur <- file_sha256(collapsed_file)
-  if (nrow(man) && any(man$Run == run & man$output_md5 == cur)) return(invisible("already_flipped"))
+  sp <- orientation_state_path(trimmed_dir, run)
+  st <- if (file.exists(sp)) jsonlite::read_json(sp) else NULL
+  cur <- file_md5(collapsed_file)
+  if (!is.null(st) && identical(st$output_md5, cur)) {
+    if (!identical(st$state, "done")) { st$state <- "done"; write_json_atomic(st, sp) }   # crash after replace: repair
+    return(invisible("already_flipped"))
+  }
   seqs <- Biostrings::readDNAStringSet(collapsed_file)
   rc <- Biostrings::reverseComplement(seqs)
   stopifnot(identical(names(rc), names(seqs)), identical(width(rc), width(seqs)))
-  tmp <- file.path(dirname(collapsed_file), paste0(".", basename(collapsed_file), ".orient_tmp",
-                                                    if (grepl("\\.gz$", collapsed_file)) ".gz" else ""))
-  Biostrings::writeXStringSet(rc, tmp, compress = grepl("\\.gz$", collapsed_file))
-  file.rename(tmp, collapsed_file)
-  row <- data.table(Run = run, file = basename(collapsed_file), input_md5 = cur, output_md5 = file_sha256(collapsed_file),
-                    n_seqs = length(rc), time = format(Sys.time(), tz = "UTC", usetz = TRUE))
-  fwrite(rbind(man, row, fill = TRUE), man_f)
+  gz <- grepl("\\.gz$", collapsed_file)
+  tmp <- file.path(dirname(collapsed_file), paste0(".", basename(collapsed_file), ".orient_tmp", Sys.getpid(), if (gz) ".gz" else ""))
+  on.exit(if (file.exists(tmp)) unlink(tmp), add = TRUE)
+  Biostrings::writeXStringSet(rc, tmp, compress = gz)
+  st <- list(Run = run, file = basename(collapsed_file), input_md5 = cur, output_md5 = file_md5(tmp), n_seqs = length(rc),
+             state = "prepared", time = format(Sys.time(), tz = "UTC", usetz = TRUE))
+  write_json_atomic(st, sp)                                         # planned output recorded BEFORE the replacement
+  if (!file.rename(tmp, collapsed_file)) stop("orientation: cannot replace ", collapsed_file, " (original left unchanged)")
+  st$state <- "done"; write_json_atomic(st, sp)
   invisible("flipped")
+}
+
+#' Study summary of orientation transactions (read outside parallel workers)
+#' @param trimmed_dir the study's trim directory
+#' @return data.table, one row per run sidecar
+#' @noRd
+orientation_summary <- function(trimmed_dir) {
+  f <- list.files(file.path(trimmed_dir, ".orientation"), "\\.json$", full.names = TRUE)
+  rbindlist(lapply(f, function(x) as.data.table(jsonlite::read_json(x))), fill = TRUE)
 }
 
 #' Mark runs for reverse-complementing (or undo) and reset their processing from collapse
@@ -92,7 +121,15 @@ set_read_orientation <- function(exp, runs, reverse, config, source, note = "") 
   for (s in intersect(steps, c("collapsed", "aligned", "ofst", "ofst_unique", "covrle", "bigwig")))
     for (r in runs) unlink(file.path(sample_flag_dir(config, s, exp), paste0(r, ".rds")))
   remove_flag_all_exp(config, steps = steps, exps = exp)
-  message(exp, ": ", length(runs), " runs set to reverse = ", reverse, "; flags reset from collapsed")
+  # stale state for the affected runs only (siblings untouched): orientation sidecars, and their P-shift offsets in the
+  # shifting tables (all and unique mappers), so reuse_shifts_if_existing cannot reuse opposite-strand offsets
+  unlink(orientation_state_path(trimmed_dir, runs))
+  for (sh in list.files(libFolder(df), "^shifting_table\\.rds$", recursive = TRUE, full.names = TRUE)) {
+    tab <- readRDS(sh)
+    drop <- vapply(names(tab), function(n) any(vapply(runs, function(r) grepl(r, basename(n), fixed = TRUE), logical(1))), logical(1))
+    if (any(drop)) { file.copy(sh, paste0(sh, ".bak_orientation_", format(Sys.time(), "%Y%m%d_%H%M%S"))); saveRDS(tab[!drop], sh) }
+  }
+  message(exp, ": ", length(runs), " runs set to reverse = ", reverse, "; flags reset from collapsed; their shift offsets dropped")
   invisible(NULL)
 }
 
