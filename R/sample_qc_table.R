@@ -3,7 +3,7 @@
 #' Collects the per-sample statistics that are otherwise spread over a study's files into one Run-keyed table,
 #' so cross-study outlier detection (wrong adapter/barcode/UMI, failed P-shifting, non-Ribo-seq libraries) is
 #' cheap: fastp reports (raw/trimmed reads, adapter-trimmed %, trimmed length), the adapter/barcode table,
-#' STAR logs (unique / multi / too-short %; contaminant % from the rRNA/tRNA/ncRNA depletion step), aligned (pre-shift ofst) and P-shifted read-length distributions
+#' STAR logs (unique / multi / too-short %), aligned (pre-shift ofst) and P-shifted read-length distributions
 #' (score-weighted: median, mode, % inside \code{accepted_lengths}), the frame table (frame-0 % over all
 #' lengths and over accepted lengths) and the P-site offsets used. Missing sources give NA (older runs).
 #' @param exp experiment name
@@ -44,7 +44,8 @@ sample_qc_table <- function(exp, accepted_lengths = c(20, 21, 25:33), exp_dir = 
                no_adapter_removed_pct = num(`reads_no_adapter_removed fastp(%)`))]
     out <- merge(out, x, by = "Run", all.x = TRUE, sort = FALSE)
   }
-  # STAR logs (collapsed reads): genome (aligned/LOGS, LOGS_SINGLE, LOGS_PAIRED by pipeline era) and contaminants
+  # STAR logs (collapsed reads): genome (aligned/LOGS, LOGS_SINGLE, LOGS_PAIRED by pipeline era). Contaminant depletion
+  # is not used (old protocol; studies were reprocessed without it), so leftover contaminants_depletion/ logs are ignored.
   star_log <- function(dirs, r) {
     for (d in dirs) {
       f <- list.files(d, paste0(r, "_Log\\.final\\.out$"), full.names = TRUE)[1]
@@ -54,19 +55,14 @@ sample_qc_table <- function(exp, accepted_lengths = c(20, 21, 25:33), exp_dir = 
   }
   g <- function(l, key) num(sub("%", "", trimws(sub(".*\\|", "", grep(key, l, value = TRUE, fixed = TRUE)[1]))))
   genome_dirs <- list.dirs(al, recursive = FALSE)[grepl("^LOGS", basename(list.dirs(al, recursive = FALSE)))]
-  contam_dirs <- list.dirs(file.path(study_dir, "contaminants_depletion"), recursive = FALSE)
-  contam_dirs <- contam_dirs[grepl("^LOGS", basename(contam_dirs))]
   st <- rbindlist(lapply(runs, function(r) {
-    l <- star_log(genome_dirs, r); cl <- star_log(contam_dirs, r)
-    if (is.null(l) && is.null(cl)) return(NULL)
+    l <- star_log(genome_dirs, r)
+    if (is.null(l)) return(NULL)
     data.table(Run = r,
                star_input = if (!is.null(l)) g(l, "Number of input reads") else NA_real_,
                star_unique_pct = if (!is.null(l)) g(l, "Uniquely mapped reads %") else NA_real_,
                star_multi_pct = if (!is.null(l)) g(l, "% of reads mapped to multiple loci") else NA_real_,
-               star_too_short_pct = if (!is.null(l)) g(l, "% of reads unmapped: too short") else NA_real_,
-               contaminant_input = if (!is.null(cl)) g(cl, "Number of input reads") else NA_real_,
-               contaminant_pct = if (!is.null(cl)) g(cl, "Uniquely mapped reads %") + g(cl, "% of reads mapped to multiple loci") +
-                 g(cl, "% of reads mapped to too many loci") else NA_real_)
+               star_too_short_pct = if (!is.null(l)) g(l, "% of reads unmapped: too short") else NA_real_)
   }), fill = TRUE)
   if (nrow(st)) out <- merge(out, st, by = "Run", all.x = TRUE, sort = FALSE)
   # read length distributions (score-weighted), aligned = ofst, shifted = pshifted

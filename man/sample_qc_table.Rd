@@ -30,7 +30,7 @@ data.table, one row per Run
 Collects the per-sample statistics that are otherwise spread over a study's files into one Run-keyed table,
 so cross-study outlier detection (wrong adapter/barcode/UMI, failed P-shifting, non-Ribo-seq libraries) is
 cheap: fastp reports (raw/trimmed reads, adapter-trimmed \%, trimmed length), the adapter/barcode table,
-STAR logs (unique / multi / too-short \%; contaminant \% from the rRNA/tRNA/ncRNA depletion step), aligned (pre-shift ofst) and P-shifted read-length distributions
+STAR logs (unique / multi / too-short \%), aligned (pre-shift ofst) and P-shifted read-length distributions
 (score-weighted: median, mode, \% inside \code{accepted_lengths}), the frame table (frame-0 \% over all
 lengths and over accepted lengths) and the P-site offsets used. Missing sources give NA (older runs).
 }
