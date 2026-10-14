@@ -14,3 +14,29 @@ test_that("blacklist: old one-column format, study and run rows, filter and add"
   expect_identical(attr(out, "removed"), 4L)
   expect_identical(nrow(fread(f)), 3L)
 })
+
+test_that("sheet_remove_runs drops only the given rows; experiment_remove_runs rewrites the CSV and resets merge flags", {
+  base <- tempfile("rm"); dir.create(file.path(base, "NGS_pipeline"), recursive = TRUE)
+  f <- file.path(base, "NGS_pipeline", "next_round_manual.csv")
+  fwrite(data.table(Run = c("R1", "R2", "R3"), BioProject = "P", KEEP = TRUE), f)
+  res <- suppressMessages(sheet_remove_runs(c("R2", "R9"), base_dir = base, use_google = FALSE, dry_run = FALSE))
+  expect_identical(res$status, c("removed", "run_missing"))
+  expect_identical(fread(f)$Run, c("R1", "R3"))
+  expect_identical(fread(file.path(base, "NGS_pipeline", "metadata_removed_rows.csv"))$Run, "R2")
+  # experiment
+  ed <- tempfile("exp"); dir.create(ed)
+  writeLines(c('"name","P-x","","","","",""', '"gff","g.gtf.db","","","organism","X",""', '"fasta","g.fa","","","author","A",""',
+               '"libtype","stage","rep","condition","fraction","filepath","Run"',
+               '"RFP","leaf","1","WT","","/x/R1.bam","R1"', '"RFP","leaf","2","WT","","/x/R2.bam","R2"',
+               '"RFP","leaf","3","WT","","/x/R3.bam","R3"'), file.path(ed, "P-x.csv"))
+  steps <- c("pshifted", "merged_lib", "pcounts"); fl <- setNames(file.path(base, "flags", steps), steps)
+  for (s in fl) { dir.create(s, recursive = TRUE); saveRDS(TRUE, file.path(s, "P-x.rds")) }
+  config <- structure(list(flag = fl), class = c("list", "mNGSp_config"))
+  testthat::local_mocked_bindings(is_config = function(x) TRUE)
+  suppressMessages(experiment_remove_runs("P-x", "R2", config, exp_dir = ed, dry_run = FALSE))
+  l <- readLines(file.path(ed, "P-x.csv"))
+  expect_identical(length(l), 6L); expect_false(any(grepl("R2", l)))
+  expect_true(file.exists(file.path(fl["pshifted"], "P-x.rds")))
+  expect_false(file.exists(file.path(fl["merged_lib"], "P-x.rds")))
+  expect_false(file.exists(file.path(fl["pcounts"], "P-x.rds")))
+})

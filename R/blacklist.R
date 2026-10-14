@@ -88,3 +88,73 @@ blacklist_add <- function(config, id, run_id = NA_character_, reason = NA_charac
   }
   invisible(out)
 }
+
+#' Remove samples (rows) from a project's metadata sheet
+#'
+#' For blacklisted samples. The sheet is read fresh (online is the reference), the rows of \code{runs} are dropped,
+#' all other rows must stay identical (verified), the upload goes through \code{write_sheet_safe()} (local backup in
+#' \code{<project>/metadata_backups}) and is read back. Removed rows are saved to
+#' \code{<project>/metadata_removed_rows.csv} and logged in \code{metadata_fix_log.csv}.
+#' @param runs Run accessions to remove
+#' @inheritParams sheet_apply_fixes
+#' @return data.table(Run, status), status removed / would_remove / run_missing
+#' @export
+sheet_remove_runs <- function(runs, project = "NGS_pipeline", base_dir = "~/livemount/Bio_data",
+                              note = "", use_google = TRUE, dry_run = TRUE) {
+  runs <- unique(as.character(runs))
+  sheet <- modality_read(project, base_dir, use_google)
+  hit <- as.character(sheet$Run) %in% runs
+  res <- data.table(Run = runs, status = ifelse(runs %in% sheet$Run, if (dry_run) "would_remove" else "removed", "run_missing"))
+  print(res[, .N, by = status])
+  if (dry_run || !any(hit)) return(res[])
+  updated <- sheet[!hit]
+  as_txt <- function(x) { x <- as.character(x); x[is.na(x)] <- ""; x }
+  for (cl in names(sheet)) stopifnot(identical(as_txt(updated[[cl]]), as_txt(sheet[[cl]][!hit])))
+  modality_write(project, updated, base_dir, use_google)
+  back <- modality_read(project, base_dir, use_google)
+  if (nrow(back) != nrow(updated) || any(as.character(back$Run) %in% runs))
+    stop("Read-back of ", project, " still shows removed runs or a different row count; check backups")
+  removed <- cbind(data.table(time = format(Sys.time(), tz = "UTC", usetz = TRUE), note = note), sheet[hit])
+  f <- file.path(base_dir, project, "metadata_removed_rows.csv")
+  fwrite(removed, f, append = file.exists(f))
+  log_file <- file.path(base_dir, project, "metadata_fix_log.csv")
+  fwrite(data.table(time = removed$time, project = project, note = note, Run = as.character(sheet$Run[hit]),
+                    column = "ROW", old = "present", new = "removed", reason = "blacklisted sample"),
+         log_file, append = file.exists(log_file))
+  message(project, ": removed ", sum(hit), " rows (copies in ", f, ")")
+  res[]
+}
+
+#' Drop samples from a processed ORFik experiment
+#'
+#' Rewrites the experiment CSV without \code{runs} (backup kept next to it) and removes the study's flags from the
+#' first step that combines samples (\code{merged_lib}) onwards, so the next pipeline run rebuilds the study pool,
+#' coverage formats and count tables from the remaining samples. Per-sample files of the dropped runs stay on disk.
+#' @param exp experiment name
+#' @param runs Run accessions to drop
+#' @param config pipeline config
+#' @param exp_dir directory of experiment CSVs
+#' @param dry_run logical, default TRUE
+#' @return number of samples dropped, invisibly
+#' @export
+experiment_remove_runs <- function(exp, runs, config, exp_dir = ORFik::config()["exp"], dry_run = TRUE) {
+  exp_file <- file.path(exp_dir, paste0(exp, ".csv"))
+  df <- read.experiment(exp_file, validate = FALSE, output.env = new.env())
+  drop <- ORFik::runIDs(df) %in% runs
+  message(exp, ": ", sum(drop), " of ", nrow(df), " samples to drop")
+  if (dry_run || !any(drop)) return(invisible(sum(drop)))
+  if (all(drop)) stop(exp, ": all samples would be dropped; remove the experiment instead")
+  file.copy(exp_file, paste0(exp_file, ".bak_", format(Sys.time(), "%Y%m%d_%H%M%S")))
+  lines <- readLines(exp_file)
+  hdr <- grep('^"?libtype"?,', lines)[1]
+  stopifnot(!is.na(hdr), length(lines) - hdr == nrow(df))
+  keep_rows <- hdr + which(!drop)
+  writeLines(lines[c(seq_len(hdr), keep_rows)], exp_file)
+  check <- read.experiment(exp_file, validate = FALSE, output.env = new.env())
+  stopifnot(nrow(check) == sum(!drop), !any(ORFik::runIDs(check) %in% runs))
+  steps <- names(config$flag)
+  steps <- steps[which(steps == "merged_lib"):length(steps)]
+  remove_flag_all_exp(config, steps = steps, exps = exp)
+  message(exp, ": dropped ", sum(drop), " samples; flags reset from merged_lib (", paste(steps, collapse = ", "), ")")
+  invisible(sum(drop))
+}
