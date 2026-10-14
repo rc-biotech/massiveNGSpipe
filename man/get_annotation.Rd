@@ -10,7 +10,8 @@ get_annotation(
   genome = TRUE,
   GTF = TRUE,
   db = "ensembl",
-  gene_symbols = TRUE
+  gene_symbols = TRUE,
+  assembly = reference_assembly(organism)
 )
 }
 \arguments{
@@ -41,6 +42,9 @@ for reference assemblies and `"genbank"` for all available assemblies.}
 and store all gene symbols for all transcripts (coding and noncoding)-
 In a file called: "gene_symbol_tx_table.fst" in same folder as txdb.
 hgcn for human, mouse symbols for mouse and rat, more to be added.}
+
+\item{assembly}{assembly to download, default \code{reference_assembly(organism)}: the curated reference strain for
+organisms where Ensembl returns several strains (bacteria), else the organism name (first assembly, ORFik default)}
 }
 \value{
 the annotation paths as vector

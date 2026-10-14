@@ -129,16 +129,18 @@ get_annotation_and_index <- function(organism,
 #' @inheritParams ORFik::getGenomeAndAnnotation
 #' @param output.dir path, default: reference_folder_name(organism, TRUE)
 #' @return the annotation paths as vector
+#' @param assembly assembly to download, default \code{reference_assembly(organism)}: the curated reference strain for
+#'  organisms where Ensembl returns several strains (bacteria), else the organism name (first assembly, ORFik default)
 #' @export
 get_annotation <- function(organism,
       output.dir = reference_folder_name(organism, TRUE),
       genome = TRUE, GTF = TRUE, db = "ensembl",
-      gene_symbols = TRUE) {
+      gene_symbols = TRUE, assembly = reference_assembly(organism)) {
   # Download if not existing, else just load
   db_result <- try(
     annotation <- getGenomeAndAnnotation(
       organism = organism, db = db,
-      genome = genome, GTF = GTF,
+      genome = genome, GTF = GTF, assembly = assembly,
       phix = TRUE, ncRNA = TRUE, tRNA = TRUE, rRNA = TRUE,
       output.dir = output.dir, optimize = TRUE,
       pseudo_5UTRS_if_needed = 100, notify_load_existing = FALSE
@@ -150,7 +152,7 @@ get_annotation <- function(organism,
     db_result <- try(
       annotation <- getGenomeAndAnnotation(
         organism = organism, db = db,
-        genome = genome, GTF = GTF,
+        genome = genome, GTF = GTF, assembly = assembly,
         phix = TRUE, ncRNA = TRUE, tRNA = TRUE, rRNA = TRUE,
         output.dir = output.dir, optimize = TRUE,
         pseudo_5UTRS_if_needed = 100, notify_load_existing = FALSE,
@@ -426,4 +428,20 @@ bpparam_with_options <- function(config, workers = config$threads$default,
        logdir = parallel_conf$logdir,
        jobname = parallel_conf$jobname,
        stop.on.error = parallel_conf$stop.on.error)
+}
+
+#' Curated reference assembly per organism
+#'
+#' Ensembl Bacteria returns many strains per species and ORFik's default (\code{assembly = organism}) takes the first,
+#' which gave wrong-strain references (B. subtilis subsp. spizizenii TU-B-10 for strain 168 data, 2026-10-14). Organisms
+#' listed here get the standard laboratory reference strain; others keep the default. Strain-specific studies (e.g.
+#' Zymomonas mobilis ZM4) get their own organism key and reference folder instead.
+#' @param organism scientific name(s)
+#' @return assembly accession(s), or the organism name when not curated
+#' @export
+reference_assembly <- function(organism) {
+  curated <- c("Escherichia coli" = "GCA_000005845",        # K-12 MG1655
+               "Bacillus subtilis" = "GCA_000009045")       # subsp. subtilis str. 168
+  out <- unname(curated[organism]); out[is.na(out)] <- organism[is.na(out)]
+  out
 }
