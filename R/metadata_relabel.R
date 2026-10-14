@@ -67,19 +67,12 @@ refresh_study_labels <- function(exp, config, metadata = fread(config$complete_m
     if (!dir.exists(q)) next
     bdir <- file.path(backup_dir, if (unique_mode) "unique_mappers" else "all_mappers")
     dir.create(bdir, showWarnings = FALSE)
-    for (f in list.files(q, "^countTable_.*\\.qs$", full.names = TRUE)) {
+    for (f in list.files(q, "^countTable_.*\\.(qs|rds)$", full.names = TRUE)) {
       file.copy(f, bdir)
       se <- ORFik:::read_RDSQS(f)
       i <- match(colnames(se), old_lab)
       if (anyNA(i)) { warning("Unexpected columns in ", f, "; skipped"); next }
-      colnames(se) <- new_lab[i]
-      cd <- SummarizedExperiment::colData(se)
-      if ("SAMPLE" %in% names(cd)) cd$SAMPLE <- sample_new[i]
-      for (cl in intersect(c("stage", "condition", "fraction"), names(cd))) cd[[cl]] <- new[[cl]][i]
-      if ("replicate" %in% names(cd)) cd$replicate <- type.convert(new$rep[i], as.is = TRUE)
-      rownames(cd) <- new_lab[i]
-      SummarizedExperiment::colData(se) <- cd
-      ORFik:::save_RDSQS(se, f)
+      ORFik:::save_RDSQS(rename_se_samples(se, i, new_lab, sample_new, new), f)
     }
     for (f in file.path(q, c("Ribo_frames_all.csv", "Ribo_frames_badzero.csv"))) {
       if (!file.exists(f)) next
@@ -114,4 +107,88 @@ relabel_experiment_csv <- function(exp_file, runs, new) {
   fwrite(tab, tmp, append = TRUE, col.names = TRUE, quote = TRUE)
   if (!file.rename(tmp, exp_file)) stop("Could not replace ", exp_file)
   invisible(exp_file)
+}
+
+#' Rename the sample columns (and colData) of a count-table SummarizedExperiment
+#' @param se SummarizedExperiment
+#' @param i for each column of se, the index of its sample in the experiment
+#' @param new_lab,sample_new full and replicate-free labels per experiment sample
+#' @param new data.table(stage, rep, condition, fraction) per experiment sample
+#' @noRd
+rename_se_samples <- function(se, i, new_lab, sample_new, new) {
+  colnames(se) <- new_lab[i]
+  cd <- SummarizedExperiment::colData(se)
+  if ("SAMPLE" %in% names(cd)) cd$SAMPLE <- sample_new[i]
+  for (cl in intersect(c("stage", "condition", "fraction"), names(cd))) cd[[cl]] <- new[[cl]][i]
+  if ("replicate" %in% names(cd)) cd$replicate <- type.convert(new$rep[i], as.is = TRUE)
+  rownames(cd) <- new_lab[i]
+  SummarizedExperiment::colData(se) <- cd
+  se
+}
+
+#' Repair count tables whose sample columns lag behind the experiment labels
+#'
+#' Count tables (\code{QC_STATS/countTable_<region>.qs} and legacy \code{.rds}, both mapper branches) are keyed by
+#' sample label. Before 2026-10-14 \code{refresh_study_labels()} renamed only the \code{.qs} tables, so legacy
+#' \code{.rds} tables kept old labels (codex-rna: UOK262 RNA PRJNA950373 failed a TE count-source audit). Each stale
+#' column is mapped to a Run only by exact evidence, in this order: the current label; an explicit \code{mapping};
+#' this experiment's entries in \code{<project>/relabel_log.csv} (old or new label of a Run); finally, a single
+#' remaining column with a single remaining Run. No positional matching. Tables with an unmappable, duplicated or
+#' extra column are reported and left untouched. Counts are not recomputed. Backups go to
+#' \code{<project>/relabel_backups/<exp>_counttables_<stamp>} and every renamed column to
+#' \code{<project>/counttable_repair_log.csv}.
+#' @param exp experiment name
+#' @param config pipeline config (\code{config$project} holds the relabel log)
+#' @param mapping optional data.table(label, Run) for columns with no logged history (reviewed by a person)
+#' @param exp_dir directory of experiment CSVs
+#' @param dry_run logical, default TRUE: only report
+#' @return data.table, one row per stale column: file, column, Run, new, method, status
+#' @export
+repair_counttable_labels <- function(exp, config, mapping = NULL, exp_dir = ORFik::config()["exp"], dry_run = TRUE) {
+  df <- read.experiment(file.path(exp_dir, paste0(exp, ".csv")), validate = FALSE, output.env = new.env())
+  runs <- ORFik::runIDs(df); lab <- bamVarName(df); sample_new <- bamVarName(df, skip.replicate = TRUE)
+  norm <- function(x) { x <- as.character(x); x[is.na(x)] <- ""; x }
+  new <- data.table(stage = norm(df$stage), rep = norm(df$rep), condition = norm(df$condition), fraction = norm(df$fraction))
+  log_file <- file.path(config$project, "relabel_log.csv")
+  hist <- if (file.exists(log_file)) fread(log_file, colClasses = "character")[experiment == exp] else data.table()
+  hist <- if (nrow(hist)) unique(rbind(hist[, .(label = old, Run)], hist[, .(label = new, Run)])) else data.table(label = character(), Run = character())
+  if (!is.null(mapping)) { mapping <- as.data.table(mapping)[, .(label = as.character(label), Run = as.character(Run))]
+    stopifnot(!anyDuplicated(mapping$label), all(mapping$Run %in% runs)) }
+  report <- list(); stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
+  backup_dir <- file.path(config$project, "relabel_backups", paste0(exp, "_counttables_", stamp))
+  for (unique_mode in c(FALSE, TRUE)) {
+    d <- df; uniqueMappers(d) <- unique_mode; q <- QCfolder(d)
+    if (!dir.exists(q)) next
+    for (f in list.files(q, "^countTable_.*\\.(qs|rds)$", full.names = TRUE)) {
+      se <- ORFik:::read_RDSQS(f); cn <- colnames(se)
+      if (setequal(cn, lab) && !anyDuplicated(cn)) next
+      run <- runs[match(cn, lab)]; method <- ifelse(is.na(run), NA_character_, "current_label")
+      if (!is.null(mapping)) { k <- is.na(run) & cn %in% mapping$label; run[k] <- mapping$Run[match(cn[k], mapping$label)]; method[k] <- "explicit_mapping" }
+      for (j in which(is.na(run))) {
+        r <- unique(hist[label == cn[j]]$Run)
+        if (length(r) == 1) { run[j] <- r; method[j] <- "relabel_log" }
+      }
+      left_c <- which(is.na(run)); left_r <- setdiff(runs, run)
+      if (length(left_c) == 1 && length(left_r) == 1) { run[left_c] <- left_r; method[left_c] <- "single_leftover" }
+      status <- if (anyNA(run)) "unmapped_column" else if (anyDuplicated(run)) "duplicated_run" else
+        if (!setequal(run, runs)) "run_set_differs" else if (dry_run) "would_repair" else "repaired"
+      i <- match(run, runs)
+      stale <- which(is.na(i) | cn != lab[i])
+      report[[length(report) + 1]] <- data.table(file = f, column = cn[stale], Run = run[stale],
+                                                 new = lab[i][stale], method = method[stale], status = status)
+      if (status != "repaired") next
+      dir.create(file.path(backup_dir, if (unique_mode) "unique_mappers" else "all_mappers"), recursive = TRUE, showWarnings = FALSE)
+      file.copy(f, file.path(backup_dir, if (unique_mode) "unique_mappers" else "all_mappers"))
+      ORFik:::save_RDSQS(rename_se_samples(se, i, lab, sample_new, new), f)
+      stopifnot(setequal(colnames(ORFik:::read_RDSQS(f)), lab))
+    }
+  }
+  report <- rbindlist(report)
+  if (!dry_run && nrow(report[status == "repaired"])) {
+    rl <- file.path(config$project, "counttable_repair_log.csv")
+    fwrite(cbind(data.table(time = format(Sys.time(), tz = "UTC", usetz = TRUE), experiment = exp), report[status == "repaired"]),
+           rl, append = file.exists(rl))
+  }
+  message(exp, ": ", uniqueN(report$file), " stale count tables; ", paste(names(table(report$status)), table(report$status), collapse = ", "))
+  report
 }

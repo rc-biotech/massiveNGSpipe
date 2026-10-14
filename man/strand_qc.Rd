@@ -4,7 +4,13 @@
 \alias{strand_qc}
 \title{Strand QC: fraction of CDS-overlapping reads on the sense strand, per sample}
 \usage{
-strand_qc(exp, max_rows = 2e+06, min_cds_reads = 1000, n_samples = Inf)
+strand_qc(
+  exp,
+  max_rows = 2e+06,
+  min_cds_reads = 1000,
+  n_samples = Inf,
+  min_gene_reads = 10
+)
 }
 \arguments{
 \item{exp}{experiment name}
@@ -14,12 +20,20 @@ strand_qc(exp, max_rows = 2e+06, min_cds_reads = 1000, n_samples = Inf)
 \item{min_cds_reads}{minimum weighted CDS-overlapping reads for a verdict}
 
 \item{n_samples}{check at most this many samples (first ones), e.g. 2 for a server-wide sweep}
+
+\item{min_gene_reads}{minimum weighted reads for a transcript to count in the gene-level fraction}
 }
 \value{
-data.table(Run, cds_reads, sense_frac, verdict: sense / antisense / mixed / unknown)
+data.table(Run, cds_reads, sense_frac (read level), genes, gene_sense_frac, verdict: sense / antisense /
+mixed / unknown, from gene_sense_frac)
 }
 \description{
 Ribo-seq footprints should be sense to the CDS. A sample with mostly antisense CDS reads was probably sequenced from
 the RNA 3' side (see \code{set_read_orientation()}). This only FLAGS; it never changes orientation. Uses the pre-shift
 ofst (score-weighted), up to \code{max_rows} alignments per sample; samples with few CDS reads stay "unknown".
+Reads overlapping annotated ncRNA (either strand) are ignored: rRNA reads otherwise count as antisense where dubious
+ORFs are annotated antisense to rRNA (yeast rDNA YLR154W-A..F / YLR162W gave 0.07-0.66 "sense" in good libraries).
+The verdict uses the gene-level fraction (share of CDS transcripts with >= \code{min_gene_reads} reads whose reads
+are mostly sense, each transcript weighted equally), so a few huge pileups on unannotated rRNA cannot decide it
+(C. remanei: two predicted genes held 99\\% of the antisense reads; read-level 0.11-0.61, all other species ~1).
 }
