@@ -610,9 +610,29 @@ export_sucessful_metadata <- function(files, libtypes, output_file,
             " Number of samples ignored this way: ", nrow(invalid_libtypes))
 
   }
-  fwrite(files, next_round_file)
-  fwrite(file_to_keep, output_file)
+  fwrite(strip_double_quotes(files), next_round_file)
+  fwrite(strip_double_quotes(file_to_keep), output_file)
   return(invisible(NULL))
+}
+
+#' Replace runs of double quotes in character columns with a single apostrophe
+#'
+#' data.table 1.18.99 (dev, installed 2026-10) does not un-escape \code{""} inside quoted CSV fields, so every
+#' fread -> fwrite round trip doubles each quote: PRJNA209566 RNA sample titles grew to 4 million quotes in the RNA
+#' FINAL (2026-10-15). Sample metadata never needs literal double quotes, so they are removed at the read and write
+#' boundaries (sheet download, FINAL export).
+#' @param dt data.table
+#' @return dt (modified by reference), invisibly
+#' @noRd
+strip_double_quotes <- function(dt) {
+  for (cl in names(dt)[vapply(dt, is.character, logical(1))]) {
+    hit <- which(grepl("\"", dt[[cl]], fixed = TRUE))
+    if (length(hit)) {
+      warning("Replaced double quotes in ", length(hit), " values of column '", cl, "'", call. = FALSE)
+      set(dt, i = hit, j = cl, value = gsub("\"+", "'", dt[[cl]][hit]))
+    }
+  }
+  invisible(dt)
 }
 
 fill_with_random <- function(config, table_in = fread(config$temp_metadata), libtypes_keep = "all", checked_by = "auto",

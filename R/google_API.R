@@ -4,6 +4,7 @@ read_sheet_safe <- function(google_url, gargle_email = gargle_mail_safe()) {
   file <- tempfile(fileext = ".csv")
   drive_download(google_url, path = file, type = "csv", overwrite = TRUE)
   sheet <- fread(file)
+  strip_double_quotes(sheet)   # fread (data.table 1.18.99) does not un-escape "" -> quotes would double per round trip
   col_classes <- sapply(sheet, class)
   if (any(col_classes == "list")) warning("You have columns that were returned as list,
                                           check your google doc!")
