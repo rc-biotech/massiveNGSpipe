@@ -1,42 +1,18 @@
-# Unit tests for the trim-fusion redesign's massiveNGSpipe-side
-# orchestration (run_barcode_detection_and_trim(), R/fastq_helpers.R):
-# does it always do exactly ONE real adapter.sequence+trim.front+
-# trim.tail fastp pass, regardless of whether a barcode was detected --
-# not the old conditional (adapter-only pass, then MAYBE a second full
-# pass). Real fastp/fastqc/STAR calls are out of scope here (see
-# test-fastq_helpers.R's header) -- barcode_detector_single() is mocked
-# to return a canned result, and ORFik::STAR.align.single() is mocked to
-# record its calls instead of actually running. The underlying real-world
-# speed and detection-accuracy claims are verified separately, live,
-# against real production data (see the session's benchmark, not a unit
-# test -- real subprocess timing doesn't belong in a fast unit suite).
+# Adapter/front cuts may share a pass, but fastp fixed tail cuts occur before
+# adapter matching. Tail barcodes require the ordered streaming backend.
+# Biological sequence preservation is covered by the real fastp regression.
 
-test_that("run_barcode_detection_and_trim() does exactly one real pass when a barcode IS detected", {
-  calls <- list()
+test_that("tail barcodes use post-adapter trimming rather than the fused raw cut", {
+  seen <- NULL
   testthat::local_mocked_bindings(
-    barcode_detector_single = function(...) {
-      data.table::data.table(adapter = "AGATCGGAAGAGC", barcode_detected = TRUE,
-                             barcode5p_size = 4, barcode3p_size = 6)
+    barcode_detector_single = function(...) data.table::data.table(adapter="AGATCGGAAGAGC",barcode_detected=TRUE,barcode5p_size=4,barcode3p_size=6),
+    fastp_post_adapter_tail = function(file, file2, output.dir, adapter, trim.front, trim.tail) {
+      seen <<- list(file=file,file2=file2,adapter=adapter,front=trim.front,tail=trim.tail)
     }
   )
-  testthat::local_mocked_bindings(
-    "STAR.align.single" = function(file1, file2 = NULL, output.dir, adapter.sequence,
-                                   index.dir, steps, trim.front = 0, trim.tail = 0, ...) {
-      calls[[length(calls) + 1]] <<- list(file1 = file1, adapter.sequence = adapter.sequence,
-                                          trim.front = trim.front, trim.tail = trim.tail)
-      invisible(NULL)
-    },
-    .package = "ORFik"
-  )
-
-  study_sample <- data.table::data.table(Run = "SRR001", LibraryLayout = "SINGLE")
-  result <- run_barcode_detection_and_trim(study_sample, "fastq_dir", "target_dir", "trimmed_dir",
-                                           mode = "local", file = "raw.fastq")
-
-  expect_length(calls, 1) # exactly one real pass, not two
-  expect_identical(calls[[1]]$adapter.sequence, "AGATCGGAAGAGC")
-  expect_equal(calls[[1]]$trim.front, 4)
-  expect_equal(calls[[1]]$trim.tail, 6)
+  testthat::local_mocked_bindings("STAR.align.single"=function(...)stop("Unsafe fused trim called"),.package="ORFik")
+  result<-run_barcode_detection_and_trim(data.table::data.table(Run="SRR001",LibraryLayout="SINGLE"),"fastq_dir","target_dir","trimmed_dir",mode="local",file="raw.fastq")
+  expect_equal(seen,list(file="raw.fastq",file2=NULL,adapter="AGATCGGAAGAGC",front=4,tail=6))
   expect_true(result$barcode_detected)
 })
 
@@ -164,4 +140,17 @@ test_that("run_barcode_detection_and_trim() passes file2 through for paired-end 
                                  mode = "local", file = "raw_1.fastq", file2 = "raw_2.fastq")
 
   expect_identical(seen_file2, "raw_2.fastq")
+})
+
+
+test_that("an explicit adapter override survives an empty fastp adapter self-report", {
+  folder<-tempfile("adapter_override_");dir.create(folder)
+  data.table::fwrite(data.table::data.table(Run="SRR010",adapter="AGATCGGAAGAG"),file.path(folder,"adapters_manual.csv"))
+  seen<-NULL
+  testthat::local_mocked_bindings(
+    barcode_detector_single=function(...)data.table::data.table(adapter="passed",barcode_detected=TRUE,barcode5p_size=2,barcode3p_size=10),
+    fastp_post_adapter_tail=function(file,file2,output.dir,adapter,...)seen<<-adapter
+  )
+  run_barcode_detection_and_trim(data.table::data.table(Run="SRR010",LibraryLayout="SINGLE"),"raw","output",folder,mode="local",file="raw.fastq")
+  expect_identical(seen,"AGATCGGAAGAG")
 })

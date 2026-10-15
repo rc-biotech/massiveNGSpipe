@@ -385,7 +385,7 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
   }
 
   json_file <- grep(sample, dir(trimmed_dir, "\\.json$", full.names = TRUE), value = TRUE)
-  if (length(json_file) == 1) {
+  if (length(json_file) == 1 && detect_reads_to_process == 0) {
     trim_stats <- ORFik::trimming.table(trimmed_dir, json_file, TRUE)
     if (trim_stats$trim_mean_length <= check_at_mean_size) {
       return(data.table(id = sample, adapter = trim_stats$adapter,
@@ -404,7 +404,16 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
 
 
   file_trim <- try(run_files_organizer(study_sample, trimmed_dir)[[1]], silent = TRUE)
-  trimmed_file_exists <- !is(file_trim, "try-error")
+  # Pipeline detection must inspect raw-derived adapter-only reads, never a
+  # previously barcode-trimmed final output (or a partial retry output).
+  trimmed_file_exists <- !is(file_trim, "try-error") && detect_reads_to_process == 0
+  if (trimmed_file_exists) {
+    expected_report <- sub("/trimmed_", "/report_", sub("\\.fastq$", ".json", file_trim[1]))
+    if (!file.exists(expected_report)) {
+      message("Existing trimmed FASTQ has no report; regenerate detection from raw: ", sample)
+      trimmed_file_exists <- FALSE
+    }
+  }
   file <- try(run_files_organizer(study_sample, fastq_dir)[[1]][1], silent = TRUE)
   raw_file_exists <- !is(file, "try-error")
   # Download
@@ -669,29 +678,13 @@ constrain_barcode_sizes <- function(barcode5p_size, barcode3p_size, max_size_aft
   c(barcode5p_size = barcode5p_size, barcode3p_size = barcode3p_size)
 }
 
-#' Detect a sample's barcode sizes, then apply adapter+barcode trim in one pass
+#' Detect barcode sizes and trim them in the correct biological order
 #'
-#' Previously: a full-file adapter-only pass ran first (elsewhere, in
-#' pipeline_trim()), barcode sizes were detected from ITS output, and if
-#' a barcode was found, a SECOND full-file pass (front/tail trim) ran on
-#' top of that -- reprocessing essentially the same read count twice for
-#' every barcode-bearing RFP sample (the common case). Verified live on
-#' real production data (5M-read file): fusing into one pass is >2x
-#' faster (17-18s -> 7.6-10s), and detecting barcode sizes from a cheap
-#' subsample instead of the full file gives IDENTICAL results (500k-read
-#' subsample vs 5M-read full file, same detected size) at ~5x lower
-#' detection cost.
-#'
-#' Now: \code{barcode_detector_single()} detects sizes from a cheap
-#' \code{detect_reads_to_process}-sized subsample (or a manual override
-#' CSV, which needs no detection pass at all) instead of requiring a full
-#' pass to already exist, then exactly ONE real full fastp pass applies
-#' adapter + front/tail trim together -- run unconditionally, not just
-#' when a barcode is found (0/0 sizes are a harmless no-op), which
-#' collapses the old conditional second pass into the only pass. There is
-#' therefore no more "before_barcode_removal" intermediate to archive
-#' (nothing to move out of the way -- this is the only pass that ever
-#' writes trimmed_dir's real output).
+#' Front cuts can share the adapter pass. Fixed tail cuts must follow adapter
+#' removal: fastp applies trim_tail before its adapter matcher. For a nonzero
+#' 3-prime barcode and enabled adapter trimming, stream two fastp processes to
+#' keep one input read/output write without a large intermediate FASTQ. Other
+#' cases retain the existing single-pass path. Cheap detection is unchanged.
 #' @param file,file2 character, the RAW input fastq path(s) (file2 for
 #' paired-end; unused by detection itself -- barcode detection is
 #' single-end only by existing design, see \code{barcode_detector_pipeline()})
@@ -717,16 +710,28 @@ run_barcode_detection_and_trim <- function(study_sample, source_dir, target_dir,
   # can only have bases in {A, T, C, G}"). "auto" is the safe equivalent
   # here -- let fastp make its own determination on the full file.
   adapter_for_real_pass <- if (identical(barcode_dt$adapter, "passed")) "auto" else barcode_dt$adapter
+  # Explicit sample overrides must not be replaced by fastp's self-report
+  # sentinel (recent fastp versions can omit a supplied adapter from JSON).
+  manual_adapters <- file.path(trimmed_dir, "adapters_manual.csv")
+  if (file.exists(manual_adapters)) {
+    overrides <- data.table::fread(manual_adapters)
+    if (all(c("Run", "adapter") %in% names(overrides))) {
+      specified <- overrides[Run == study_sample$Run, adapter]
+      if (length(specified) == 1L && !is.na(specified) && nzchar(specified))
+        adapter_for_real_pass <- specified
+    }
+  }
 
-  ORFik::STAR.align.single(
-    file, file2,
-    output.dir = target_dir,
-    adapter.sequence = adapter_for_real_pass,
-    index.dir = "none",
-    steps = "tr",
-    trim.front = barcode_dt$barcode5p_size,
-    trim.tail = barcode_dt$barcode3p_size
-  )
+  if (barcode_dt$barcode3p_size > 0 && adapter_for_real_pass != "disable") {
+    fastp_post_adapter_tail(file, file2, output.dir = target_dir,
+      adapter = adapter_for_real_pass, trim.front = barcode_dt$barcode5p_size,
+      trim.tail = barcode_dt$barcode3p_size)
+  } else {
+    ORFik::STAR.align.single(
+      file, file2, output.dir = target_dir,
+      adapter.sequence = adapter_for_real_pass, index.dir = "none", steps = "tr",
+      trim.front = barcode_dt$barcode5p_size, trim.tail = barcode_dt$barcode3p_size)
+  }
 
   return(barcode_dt)
 }

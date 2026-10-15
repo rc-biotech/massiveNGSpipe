@@ -120,17 +120,25 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
                 run <- study_sample$Run
                 message(run)
                 filenames <- all_files[[i]]
+                assert_base_space_fastq(filenames[!is.na(filenames)], run)
                 single_end <- is.na(filenames[2])
                 file <- filenames[1]
                 file2 <- if(!single_end) filenames[2]
                 barcode_dt <- data.table()
                 check_for_barcodes <- runs[i]$LIBRARYTYPE == "RFP"
+                # RNA inputs built with small-RNA kits may require explicit
+                # random-end crops. Honor reviewed manual barcode rows without
+                # enabling automatic barcode guesses for ordinary RNA libraries.
+                manual_barcodes <- file.path(trimmed_dir, "barcodes_manual.csv")
+                if (!check_for_barcodes && file.exists(manual_barcodes)) {
+                  manual <- data.table::fread(manual_barcodes)
+                  check_for_barcodes <- "Run" %in% names(manual) && run %in% manual$Run
+                }
                 if (check_for_barcodes) {
                   # Detects barcode sizes from a cheap subsample, then
-                  # does the ONE real full adapter+barcode trim pass --
-                  # NOT detect_adapter_and_trim() first (that used to run
-                  # a full adapter-only pass which this then reprocessed
-                  # a second time in full; see run_barcode_detection_and_trim()).
+                  # applies front/adapter then post-adapter tail cuts.
+                  # Tail cuts stream through two fastp processes without
+                  # a large intermediate; see run_barcode_detection_and_trim().
                   barcode_dt <- run_barcode_detection_and_trim(study_sample, source_dir,
                                                                target_dir, trimmed_dir, mode,
                                                                file, file2)
@@ -351,6 +359,12 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
   # Untrimmed raw input (RNA-seq preset): check for short-insert libraries
   # first -- see short_insert_adapter() for the real case this comes from.
   raw_input <- !did_trim && !did_collapse
+  # Guard before adapter probing, strand detection or STAR: metadata may
+  # misidentify colour-space files as ordinary base-space RNA reads.
+  if (raw_input && length(pairs)) {
+    for (i in seq_along(pairs))
+      assert_base_space_fastq(pairs[[i]][!is.na(pairs[[i]])], runs$Run[i])
+  }
   adapter_rds <- file.path(output_dir, "inline_trim_adapter.rds")
   short_insert <- raw_input && length(pairs) > 0 &&
     (if (file.exists(adapter_rds)) !is.na(readRDS(adapter_rds))
@@ -370,23 +384,12 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
       saveRDS(strandMode, file.path(output_dir, "strandMode.rds"))
     } else strandMode <- readRDS(file.path(output_dir, "strandMode.rds"))
   }
-  # Adapter of the file actually aligned (R1 or R2, per strandMode), cached
-  # per study like strandMode.rds. NA = long-insert library, align raw
-  # reads unchanged as before; otherwise trim inline before genome step.
-  inline_adapter <- NA_character_
-  if (short_insert) {
-    if (!file.exists(adapter_rds)) {
-      first_index <- if (any_paired) first_pair_index else 1
-      inline_adapter <- short_insert_adapter(
-        pairs[[first_index]][ifelse(any_paired, strandMode, 1)])
-      saveRDS(inline_adapter, adapter_rds)
-    } else inline_adapter <- readRDS(adapter_rds)
-  }
-  inline_trim <- !is.na(inline_adapter)
-  if (inline_trim) {
-    message("Short-insert library with untrimmed adapter (", inline_adapter,
-            "), trimming inline with fastp before genome alignment")
-    steps <- paste("tr", steps, sep = "-")
+  # Select adapters per Run, not from the first library in the study.
+  # The old study-wide cache remains relevant only to the mate probe above.
+  inline_adapter <- stats::setNames(rep(NA_character_, nrow(runs)), runs$Run)
+  if (raw_input) for (i in seq_along(pairs)) {
+    mate <- if (length(pairs[[i]]) > 1L && !is.na(pairs[[i]][2])) strandMode else 1L
+    inline_adapter[[runs$Run[i]]] <- rna_inline_adapter(pairs[[i]][mate], runs$Run[i], output_dir)
   }
 
   if (nrow(runs) > 0) {
@@ -397,7 +400,6 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
                       keep.unaligned.genome, star.path, fastp.path,
                       input_dir, config, experiment, owner_id, keep_loaded_after,
                       inline_adapter) {
-        inline_trim <- !is.na(inline_adapter)
         cat("Total number of files are:\n")
         cat(length(pairs)); cat("\n")
         for (pair_index in seq_along(pairs)) {
@@ -406,6 +408,10 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
           cat("Run ", pair_index, " / ", length(pairs), "\n")
           single_end <- lengths(pairs[pair_index]) == 1
           run <- runs[pair_index]$Run
+          run_adapter <- inline_adapter[[run]]
+          inline_trim <- !is.na(run_adapter)
+          run_steps <- if (inline_trim) paste("tr", steps, sep = "-") else steps
+          if (inline_trim) message("Run ", run, ": trimming short-insert adapter ", run_adapter)
           is_last_sample <- identical(R1_R2, tail(pairs, 1)[[1]])
           # Keep the shared-memory index loaded unless this is the last
           # sample of THIS call AND nothing else (neither a known
@@ -446,12 +452,12 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
 
           align_attempt <- function(f1, f2, out_dir, ram_limit) {
             ORFik::STAR.align.single(f1, f2, output.dir = out_dir, index.dir = index,
-                                     steps = steps,
+                                     steps = run_steps,
                                      # NULL = fresh start (tr then ge): ORFik's
                                      # script runs ONLY the step named by
                                      # resume, it never continues past it.
                                      resume = if (inline_trim) NULL else "ge",
-                                     adapter.sequence = if (inline_trim) inline_adapter else "auto",
+                                     adapter.sequence = if (inline_trim) run_adapter else "auto",
                                      keep.index.in.memory = keep.index.in.memory,
                                      keep.unaligned.genome = keep.unaligned.genome,
                                      star.path = star.path, fastp = fastp.path,
@@ -593,7 +599,15 @@ alignment_final_checks <- function(input_dir, output_dir, runs, pairs, config, s
   if (any(dir_info$size == 0)) {
     stop("You have empty bam files in your aligned folder!")
   }
-  if (config$delete_collapsed_files) {
+  # Input retention follows the kind of file actually aligned. In the RNA
+  # preset these are raw FASTQs; delete_collapsed_files must not delete them.
+  input_paths <- as.character(fs::path_norm(path.expand(input_dir)))
+  trim_path <- as.character(fs::path_norm(path.expand(file.path(output_dir, "trim"))))
+  used_stage <- if (length(input_paths) && all(input_paths %in% file.path(trim_path, c("SINGLE", "PAIRED")))) "collapsed" else
+    if (length(input_paths) && all(input_paths == trim_path)) "trim" else "raw"
+  delete_inputs <- switch(used_stage, collapsed = config$delete_collapsed_files,
+                         trim = config$delete_trimmed_files, raw = config$delete_raw_files)
+  if (isTRUE(delete_inputs)) {
     # Only the input files actually resolved/used for the samples JUST
     # processed here -- never the whole directory (fs::dir_delete(input_dir)
     # used to do exactly that), which would also destroy every sibling's

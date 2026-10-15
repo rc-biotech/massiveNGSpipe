@@ -625,6 +625,32 @@ result$touched_sibling_files  # should be character(0)
 During download of .sra files, the extraction to .fastq is very hard drive intensive, we therefor implemented a tempdrive system to only run this step on the tempdrive (which is usually a scratch ssd on servers, i.e. much faster I/O).
 A potential crash that can happen is that the temp is filed by another user during the extraction, if so, restart the pipeline. 
 
+### Post-adapter tail barcodes (2026-10-12)
+
+A fastp fixed tail cut happens **before** adapter removal. Applying a detected
+3-prime barcode length together with a sequencing-adapter cut can therefore
+remove sequencing-adapter bases while leaving the biological barcode/UMI.
+The Ribo-seq trimming wrapper now streams an adapter/front pass into a second,
+adapter-disabled tail pass for nonzero tail barcodes. This keeps one disk read
+and final write without a large intermediate FASTQ. Front-only and
+adapter-disabled cases retain their single-pass path. Both stage reports are
+kept under `trim/trim_order_metrics/`; the canonical JSON combines original
+input statistics with final insert statistics and records the trim order.
+The canonical HTML describes the second stage; use the adapter-stage HTML for
+original-input plots. A failed stage blocks completion through `pipefail`.
+
+Pipeline barcode detection uses a bounded raw-derived adapter-only sample,
+rather than re-detecting barcodes in a previous final or partial output. An
+existing trimmed FASTQ without its JSON is not a valid detection cache.
+
+The correction was established by exact raw/trimmed comparisons and matched
+alignment pilots on PRJNA933910. Its GEO protocol specifies a 16-base front
+and a 10-base biological tail; a pilot arm previously labelled `tail15`
+actually removed 10 additional bases after an ineffective raw `tail5` cut.
+That label does **not** establish a 15-base biological tail. Existing products
+from a fused nonzero-tail trim need scoped provenance/sequence review before
+reprocessing; historical outputs and raw inputs should be preserved.
+
 ### OFST conversion worker budget and in-memory diagnostics
 
 With ORFik's `convert_bam_to_ofst_modes()` available, standard OFST conversion
@@ -639,3 +665,13 @@ fall back automatically. A 12-library RNA benchmark on 2026-10-13 reduced OFST
 wall time from 98–101 s (four workers) to 68–70 s (eight workers), with identical
 OFST and diagnostic files. This is an OFST benchmark, not an end-to-end pipeline
 speedup estimate.
+### Mixed RNA input lengths and retention
+
+RNA alignment detects short-insert adapters for each Run and the actual selected
+mate. Decisions, including absence of adapter, are cached under
+`aligned/.inline_trim/<Run>_adapter.rds` with input path/size/mtime checks. A
+long-insert first library therefore cannot suppress trimming of fragmented
+small-RNA-kit inputs later in the study. No strand-classification threshold is
+relaxed by adapter selection. Alignment cleanup uses the actual input stage's
+retention setting: raw RNA inputs obey `delete_raw_files`, independently of
+`delete_collapsed_files`.
