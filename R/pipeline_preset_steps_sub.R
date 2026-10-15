@@ -1267,6 +1267,10 @@ pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_
 
     if(!inherits(res, "error")) {
       set_flag(config, "pshifted", name(df))
+    } else {
+      # raise it: a returned error object left the flag unset without an error record, so pipe_pshift_and_validate
+      # retried the study forever (2026-10-15: PRJNA558435, 1 of 96 samples with no periodic accepted length, 2 h loop)
+      stop(name(df), ": P-shifting failed: ", conditionMessage(res), call. = FALSE)
     }
   }
 }
