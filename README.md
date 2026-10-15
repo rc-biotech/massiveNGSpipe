@@ -675,3 +675,23 @@ small-RNA-kit inputs later in the study. No strand-classification threshold is
 relaxed by adapter selection. Alignment cleanup uses the actual input stage's
 retention setting: raw RNA inputs obey `delete_raw_files`, independently of
 `delete_collapsed_files`.
+
+### RNA orientation on coordinate-sorted BAMs
+
+The fast default detector reads a coordinate prefix. To adjudicate ambiguous or
+conflicting calls with a genome-wide sample, use the native per-Run option:
+
+```r
+config$rna_strand_by_run[["SRR_example"]] <- list(
+  sampling = "whole_bam_random", sampling_fraction = 0.1,
+  sampling_seed = 17L, max_records = 10000000L)
+```
+
+This scans the BAM with samtools, then classifies the entire deterministic
+random subset using the existing informative-read and strand-fraction thresholds.
+Fraction/seed and the original BAM signature are included in the decision cache.
+A sample exceeding `max_records` fails explicitly; it cannot become a biased
+prefix decision. The method requires a full BAM scan and is opt-in. Classification
+as unstranded describes the counting evidence, not certification of the library
+preparation protocol. Sparse libraries remain unresolved if they cannot meet the
+informative-read minimum.

@@ -56,13 +56,38 @@ rna_strand_decide <- function(sense, antisense, min_informative,
 
 rna_strand_detect <- function(bam, annotation, max_records = 1000000L,
                               min_informative = 1000L, stranded_fraction = .8,
-                              unstranded_tolerance = .1) {
+                              unstranded_tolerance = .1, sampling = NULL,
+                              sampling_fraction = .1, sampling_seed = 17L) {
   stopifnot(length(max_records) == 1L, is.finite(max_records), max_records >= 1,
     length(min_informative) == 1L, min_informative >= 1,
     stranded_fraction > .5, stranded_fraction <= 1,
     unstranded_tolerance >= 0, unstranded_tolerance < stranded_fraction - .5)
   start <- proc.time()[[3]]
-  bf <- Rsamtools::BamFile(bam, yieldSize = as.integer(min(100000L, max_records)))
+  random <- identical(sampling, "whole_bam_random")
+  stopifnot(is.null(sampling) || random)
+  input <- bam
+  parameters <- list(max_records = max_records, min_informative = min_informative,
+    stranded_fraction = stranded_fraction, unstranded_tolerance = unstranded_tolerance)
+  if (random) {
+    stopifnot(length(sampling_fraction) == 1L, is.finite(sampling_fraction),
+      sampling_fraction > 0, sampling_fraction <= 1,
+      length(sampling_seed) == 1L, is.finite(sampling_seed), sampling_seed >= 0,
+      sampling_seed == as.integer(sampling_seed))
+    parameters <- c(parameters, list(sampling = sampling,
+      sampling_fraction = sampling_fraction, sampling_seed = sampling_seed))
+    if (sampling_fraction < 1) {
+      samtools <- Sys.which("samtools")
+      if (!nzchar(samtools)) stop("Whole-BAM strand sampling requires samtools")
+      input <- tempfile(fileext = ".bam")
+      on.exit(unlink(input), add = TRUE)
+      fraction <- format(sampling_fraction, scientific = FALSE, digits = 15, trim = TRUE)
+      seed_fraction <- paste0(sampling_seed, sub("^0", "", fraction))
+      status <- system2(samtools, c("view", "-s", seed_fraction, "-F", "2308",
+        "-b", "-o", shQuote(input), shQuote(path.expand(bam))))
+      if (status != 0L || !file.exists(input)) stop("Whole-BAM strand subsampling failed")
+    }
+  }
+  bf <- Rsamtools::BamFile(input, yieldSize = as.integer(min(100000L, max_records)))
   open(bf); on.exit(close(bf))
   param <- Rsamtools::ScanBamParam(
     flag = Rsamtools::scanBamFlag(isUnmappedQuery = FALSE,
@@ -87,7 +112,15 @@ rna_strand_detect <- function(bam, annotation, max_records = 1000000L,
     sense <- sense + chunk$sense_reads; antisense <- antisense + chunk$antisense_reads
     result <- rna_strand_decide(sense, antisense, min_informative,
                                stranded_fraction, unstranded_tolerance)
-    if (result$status != "unknown" || scanned >= max_records) break
+    # Coordinate-sorted prefixes can look strongly stranded even when the
+    # whole library is balanced. Consume the ENTIRE random subset; never
+    # accept an early classified prefix of that subset.
+    if (scanned >= max_records) {
+      if (random && length(GenomicAlignments::readGAlignments(bf, param = param)))
+        stop("Whole-BAM strand sample exceeds max_records; lower sampling_fraction or increase max_records")
+      break
+    }
+    if (!random && result$status != "unknown") break
     Rsamtools::yieldSize(bf) <- as.integer(min(100000L, max_records - scanned))
   }
   if (!exists("result", inherits = FALSE)) result <- rna_strand_decide(0L, 0L, min_informative,
@@ -96,8 +129,7 @@ rna_strand_detect <- function(bam, annotation, max_records = 1000000L,
     product_signature = rna_strand_signature(bam),
     source_bam_signature = rna_strand_signature(bam),
     annotation_signature = annotation$annotation_signature,
-    parameters = list(max_records = max_records, min_informative = min_informative,
-      stranded_fraction = stranded_fraction, unstranded_tolerance = unstranded_tolerance),
+    parameters = parameters,
     scanned_reads = scanned, unique_reads = unique,
     elapsed_seconds = proc.time()[[3]] - start, timestamp = as.character(Sys.time()),
     bam_layout = if (paired_seen) "paired_first_mate" else "single_mate",
@@ -112,11 +144,13 @@ rna_strand_ensure <- function(df, annotation, options = list(), require_resolved
   path <- ORFik:::rna_strand_sidecar(bam)
   parameters <- modifyList(list(max_records = 1000000L, min_informative = 1000L,
     stranded_fraction = .8, unstranded_tolerance = .1), options)
+  if (identical(parameters$sampling, "whole_bam_random"))
+    parameters <- modifyList(list(sampling_fraction = .1, sampling_seed = 17L), parameters)
   record <- if (file.exists(path)) readRDS(path) else NULL
   fresh <- !is.null(record) && identical(record$version, 1L) &&
     identical(record$product_signature, rna_strand_signature(bam)) &&
     identical(record$annotation_signature, annotation$annotation_signature) &&
-    identical(record$parameters, parameters)
+    identical(record$parameters[sort(names(record$parameters))], parameters[sort(names(parameters))])
   if (!fresh) {
     record <- do.call(rna_strand_detect, c(list(bam = bam, annotation = annotation), parameters))
     record$decision_id <- digest::digest(record[c("version", "product_signature",
