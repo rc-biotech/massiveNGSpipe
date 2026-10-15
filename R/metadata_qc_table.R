@@ -68,6 +68,11 @@ metadata_qc_table <- function(config = pipeline_config(),
   invisible(out)
 }
 
+#' Bump when the per-run (heavy) metric definitions change, to invalidate cached rows
+#' (v2, 2026-10-15: gene biotypes were not read, so rRNA/lncRNA shares were 0)
+#' @noRd
+QC_CACHE_VERSION <- "v2"
+
 #' @noRd
 qc_prepare_metadata <- function(metadata) {
   m <- copy(as.data.table(metadata))
@@ -142,7 +147,7 @@ qc_file_sig <- function(f) {
 qc_heavy_features <- function(st, org, cache_dir, workers) {
   if (is.null(st) || !nrow(st)) return(NULL)
   runs <- st[, .(Run, experiment, bam, cov)]
-  runs[, sig := paste(qc_file_sig(bam), qc_file_sig(cov))]
+  runs[, sig := paste(QC_CACHE_VERSION, qc_file_sig(bam), qc_file_sig(cov))]
   runs[, cache := file.path(cache_dir, experiment, paste0(Run, ".rds"))]
   cached <- lapply(runs$cache, function(f) if (file.exists(f)) tryCatch(readRDS(f), error = function(e) NULL) else NULL)
   ok <- vapply(seq_along(cached), function(i) !is.null(cached[[i]]) && identical(cached[[i]]$sig, runs$sig[i]), logical(1))
@@ -184,14 +189,16 @@ qc_species_bins <- function(study) {
   df <- read.experiment(study, validate = FALSE, output.env = new.env())
   txdb <- loadTxdb(df)
   exons_by_gene <- GenomicFeatures::exonsBy(txdb, by = "gene")
-  gtf <- tryCatch(getGtfPathFromTxdb(txdb, stop.error = FALSE), error = function(e) NULL)
+  gtf <- tryCatch(ORFik:::getGtfPathFromTxdb(txdb, stop.error = FALSE), error = function(e) NULL)
   biotype <- NULL
   if (!is.null(gtf) && file.exists(gtf)) {
     g <- tryCatch(rtracklayer::import(gtf, feature.type = "gene"), error = function(e) NULL)
-    if (!is.null(g) && "gene_biotype" %in% names(S4Vectors::mcols(g)))
-      biotype <- setNames(as.character(g$gene_biotype), as.character(g$gene_id))
+    bcol <- intersect(c("gene_biotype", "gene_type"), names(S4Vectors::mcols(g)))[1]   # Ensembl / GENCODE naming
+    if (!is.null(g) && !is.na(bcol))
+      biotype <- setNames(as.character(S4Vectors::mcols(g)[[bcol]]), as.character(g$gene_id))
   }
   if (is.null(biotype)) {   # no biotypes in the annotation: genes with a CDS are protein coding
+    message("-- no gene biotypes in the annotation; protein coding = genes with a CDS, rRNA/lncRNA shares not available")
     cds_genes <- unique(txNamesToGeneNames(names(loadRegion(txdb, "cds")), txdb))
     biotype <- setNames(ifelse(names(exons_by_gene) %in% cds_genes, "protein_coding", "other"), names(exons_by_gene))
   }
