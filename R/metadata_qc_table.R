@@ -32,6 +32,14 @@ metadata_qc_table <- function(config = pipeline_config(),
                               cache_dir = file.path(config$project, "qc_cache"),
                               terminal_bias_dir = "~/livemount/shared_projects/QC/data/terminal_bias_results_joanna",
                               organisms = NULL, workers = 16) {
+  done_path <- file.path(config$project, "metadata_done_samples.csv")
+  if (file.exists(done_path)) {
+    done_runs <- fread(done_path, select = "Run")$Run
+    stale <- setdiff(metadata$Run, done_runs); missing <- setdiff(done_runs, metadata$Run)
+    if (length(stale) || length(missing))
+      stop("metadata is out of sync with metadata_done_samples.csv (", length(stale), " runs no longer done, ",
+           length(missing), " done runs missing): rerun extend_done_samples_metadata(config) first")
+  }
   meta <- qc_prepare_metadata(metadata)
   if (!is.null(organisms)) meta <- meta[ScientificName %in% organisms]
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
