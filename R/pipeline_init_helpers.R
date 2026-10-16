@@ -457,7 +457,8 @@ reference_assembly <- function(organism) {
                "Cryptococcus neoformans var. grubii" = "GCF_000149245.1",  # H99 (CNA3); not JEC21
                "Pyricularia oryzae" = "GCF_000002495.2",             # 70-15 (MG8), classic reference
                "Fusarium graminearum" = "GCF_000240135.3",           # PH-1
-               "Penicillium oxalicum" = "GCF_001723175.1")
+               "Penicillium oxalicum" = "GCF_001723175.1",
+               "Naumovozyma castellii" = "GCF_000237345.1")       # CBS 4309
   out <- unname(curated[organism]); out[is.na(out)] <- organism[is.na(out)]
   out
 }
