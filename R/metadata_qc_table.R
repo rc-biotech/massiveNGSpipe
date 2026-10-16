@@ -157,6 +157,10 @@ qc_heavy_features <- function(st, org, cache_dir, workers) {
   if (is.null(st) || !nrow(st)) return(NULL)
   runs <- st[, .(Run, experiment, bam, cov)]
   runs[, sig := paste(QC_CACHE_VERSION, qc_file_sig(bam), qc_file_sig(cov))]
+  # GFF3 annotations (RefSeq/GenBank) got 0% coding before the gene-key fix: invalidate only those organisms' rows
+  ann <- tryCatch(ORFik:::getGtfPathFromTxdb(loadTxdb(read.experiment(st$experiment[1], validate = FALSE,
+                    output.env = new.env())), stop.error = FALSE), error = function(e) NULL)
+  if (!is.null(ann) && grepl("\\.gff3?(\\.gz)?$", ann)) runs[, sig := paste(sig, "gff3key")]
   runs[, cache := file.path(cache_dir, experiment, paste0(Run, ".rds"))]
   cached <- lapply(runs$cache, function(f) if (file.exists(f)) tryCatch(readRDS(f), error = function(e) NULL) else NULL)
   ok <- vapply(seq_along(cached), function(i) !is.null(cached[[i]]) && identical(cached[[i]]$sig, runs$sig[i]), logical(1))
@@ -239,8 +243,16 @@ qc_species_bins <- function(study) {
   if (!is.null(gtf) && file.exists(gtf)) {
     g <- tryCatch(rtracklayer::import(gtf, feature.type = "gene"), error = function(e) NULL)
     bcol <- intersect(c("gene_biotype", "gene_type"), names(S4Vectors::mcols(g)))[1]   # Ensembl / GENCODE naming
-    if (!is.null(g) && !is.na(bcol))
-      biotype <- setNames(as.character(S4Vectors::mcols(g)[[bcol]]), as.character(g$gene_id))
+    if (!is.null(g) && !is.na(bcol)) {
+      # gene key: GTF gene_id, or for GFF3 (RefSeq/GenBank) ID without "gene-", Name or locus_tag, whichever matches
+      # the txdb gene names best; below 50% matching, use the CDS rule instead (ZM4 GenBank GFF3 gave 0% coding)
+      m <- S4Vectors::mcols(g)
+      keys <- list(gene_id = m$gene_id, ID = if (!is.null(m$ID)) sub("^gene-", "", m$ID), Name = m$Name, locus_tag = m$locus_tag)
+      keys <- keys[!vapply(keys, is.null, logical(1))]
+      hit <- vapply(keys, function(k) mean(names(exons_by_gene) %in% as.character(k)), numeric(1))
+      if (length(hit) && max(hit) >= 0.5)
+        biotype <- setNames(as.character(m[[bcol]]), as.character(keys[[which.max(hit)]]))
+    }
   }
   if (is.null(biotype)) {   # no biotypes in the annotation: genes with a CDS are protein coding
     message("-- no gene biotypes in the annotation; protein coding = genes with a CDS, rRNA/lncRNA shares not available")
