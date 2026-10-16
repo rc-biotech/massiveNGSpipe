@@ -166,7 +166,7 @@ qc_heavy_features <- function(st, org, cache_dir, workers) {
     bins <- qc_species_bins(todo$experiment[1])
     res <- BiocParallel::bplapply(seq_len(nrow(todo)), function(i) {
       r <- todo[i]
-      row <- qc_cov_metrics(r$cov, bins)
+      row <- qc_cov_metrics(r$cov, bins)[, Run := r$Run]
       dir.create(dirname(r$cache), showWarnings = FALSE, recursive = TRUE)
       saveRDS(list(sig = r$sig, row = row), r$cache)
       row
@@ -174,7 +174,9 @@ qc_heavy_features <- function(st, org, cache_dir, workers) {
     res <- res[vapply(res, is.data.frame, logical(1))]
     rm(bins); gc()
   } else res <- list()
-  out <- rbindlist(c(lapply(cached[ok], function(x) x$row), res), fill = TRUE)
+  # cached rows written by d205caf..47325ee lack Run (qc_cov_metrics returns Run = NA): restore it from the cache key
+  cached_rows <- Map(function(x, run) { r <- copy(x$row); r[, Run := run]; r }, cached[ok], runs$Run[ok])
+  out <- rbindlist(c(cached_rows, res), fill = TRUE)
   drop <- intersect(c("Sequencing_Layout", "Soft_Clipped_Reads_Pct"), names(out))
   if (length(drop)) out[, (drop) := NULL]
   bam <- qc_bam_features(runs, cache_dir, workers)
