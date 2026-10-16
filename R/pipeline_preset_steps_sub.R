@@ -1222,9 +1222,30 @@ pshift_needed_subset <- function(df, accepted_lengths, allowed_hard12_species, B
     }
   }
 
-  res <- shiftFootprintsByExperimentSafe(df_subset, shifting_table, accepted_lengths,
-                                         allowed_hard12_species, BPPARAM,
-                                         max_no_adapter_removed_pct)
+  # ORFik::shiftFootprintsByExperiment() drops tx/txdb for ALL files when shift.list is given, so files without an
+  # entry are auto-detected without annotation and fail ("asTX: not all references are present"): PRJNA317266,
+  # PRJNA1047529 2026-10-16. Shift the files with known offsets and detect the rest in separate calls.
+  known <- if (is.null(shifting_table)) rep(FALSE, nrow(df_subset)) else ofst_filepath(df_subset) %in% names(shifting_table)
+  if (any(known) && !all(known)) {
+    message("- ", sum(known), " samples reuse known shifts, ", sum(!known), " are detected separately")
+    res <- shiftFootprintsByExperimentSafe(df_subset[known, ], shifting_table, accepted_lengths,
+                                           allowed_hard12_species, BPPARAM, max_no_adapter_removed_pct)
+    if (!inherits(res, "error")) {
+      table_path <- file.path(dirname(pshifted_filepath(df_subset[1, ])), "shifting_table.rds")
+      first <- readRDS(table_path)   # ORFik overwrites the table when the new names are not a subset of the old
+      res <- shiftFootprintsByExperimentSafe(df_subset[!known, ], NULL, accepted_lengths,
+                                             allowed_hard12_species, BPPARAM, max_no_adapter_removed_pct)
+      if (!inherits(res, "error")) {
+        second <- readRDS(table_path)
+        merged <- first; merged[names(second)] <- second
+        saveRDS(merged, table_path)
+      }
+    }
+  } else {
+    res <- shiftFootprintsByExperimentSafe(df_subset, shifting_table, accepted_lengths,
+                                           allowed_hard12_species, BPPARAM,
+                                           max_no_adapter_removed_pct)
+  }
   if (!inherits(res, "error")) {
     # ORFik only merges when the new entries are a subset of the old keys.
     # Removing changed-Run entries before a retry breaks that condition.
