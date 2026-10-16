@@ -100,7 +100,9 @@ get_annotation_and_index <- function(organism,
                                      gene_symbols = TRUE, dbs = c("ensembl", "refseq"),
                                      verbose = TRUE) {
   if (verbose) message("---- ", organism)
-  # Ensembl
+  # A curated assembly with a known database (reference_db) is downloaded from that database only
+  pinned <- reference_db(organism)
+  if (!is.na(pinned)) dbs <- pinned
   for (db in dbs) {
     annotation <- get_annotation(organism, dir, gene_symbols = gene_symbols,
                                  db = db)
@@ -445,9 +447,29 @@ bpparam_with_options <- function(config, workers = config$threads$default,
 #' @export
 reference_assembly <- function(organism) {
   curated <- c("Escherichia coli" = "GCA_000005845",        # K-12 MG1655
-               "Bacillus subtilis" = "GCA_000009045")       # subsp. subtilis str. 168
+               "Bacillus subtilis" = "GCA_000009045",       # subsp. subtilis str. 168
+               # fungal batch 2026-10-16 (see reference_db() for the database of each)
+               "Saccharomyces mikatae" = "GCF_947241705.1",          # IFO 1815
+               "Saccharomyces kudriavzevii" = "GCF_947243775.1",     # newer than Ensembl IFO1802 v1.0
+               "Saccharomyces arboricola" = "GCF_000292725.1",       # H-6 (RefSeq, not flagged reference)
+               "Saccharomyces jurei" = "GCA_900290405.1",            # GenBank only
+               "Saccharomyces uvarum" = "GCA_947243795.1",           # GenBank only
+               "Cryptococcus neoformans var. grubii" = "GCF_000149245.1",  # H99 (CNA3); not JEC21
+               "Pyricularia oryzae" = "GCF_000002495.2",             # 70-15 (MG8), classic reference
+               "Fusarium graminearum" = "GCF_000240135.3",           # PH-1
+               "Penicillium oxalicum" = "GCF_001723175.1")
   out <- unname(curated[organism]); out[is.na(out)] <- organism[is.na(out)]
   out
+}
+
+#' Database to download the curated assembly from (organisms without an entry use the normal db order)
+#' @param organism scientific name(s)
+#' @return character, "refseq" / "genbank" or NA
+#' @noRd
+reference_db <- function(organism) {
+  acc <- reference_assembly(organism)
+  ifelse(grepl("^GCF_", acc), "refseq", ifelse(grepl("^GCA_", acc) & !organism %in% c("Escherichia coli", "Bacillus subtilis"),
+                                              "genbank", NA_character_))
 }
 
 #' Exclude runs whose sequencing platform the short-read pipeline cannot process
