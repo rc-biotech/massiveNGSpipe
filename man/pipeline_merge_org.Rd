@@ -12,7 +12,8 @@ pipeline_merge_org(
   done_organisms = sort(unique(names(done_experiments))),
   libtype_to_merge = libtype_long_to_short(config$preset),
   suffix = "",
-  out_dir_base = config$config["bam"]
+  out_dir_base = config$config["bam"],
+  exclude_inhibitors = NULL
 )
 }
 \arguments{
@@ -28,6 +29,12 @@ per species.}
 \item{done_organisms}{Scientific name (e.g. Homo sapiens), which organisms to run merging for, default
 unique(names(done_experiments))}
 
+\item{exclude_inhibitors}{character, default NULL (whole-study pools). INHIBITOR values (from
+config$complete_metadata) to leave out of the master, matched as "_"-separated tokens, e.g.
+c("harr", "ltm", "lactim") keeps initiation-drug libraries (also "chx_harr") out of the pooled elongation track.
+Mixed studies then contribute per-sample P-shifted files; a merge_manifest.csv (included/excluded runs) is
+written to the master directory.}
+
 \item{path_suffix}{character, default "". Add suffix to saved experiment name,
 like a date to seperate version.}
 }
@@ -39,5 +46,7 @@ Collected
 }
 \examples{
 #config <- pipeline_config()
+# Elongation master without initiation-drug libraries:
+# pipeline_merge_org(config, exclude_inhibitors = c("harr", "ltm", "lactim"))
 
 }

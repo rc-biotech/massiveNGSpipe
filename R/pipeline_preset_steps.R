@@ -435,10 +435,17 @@ safe_se_cbind <- function(count_lists) {
 #' per species.
 #' @param done_organisms Scientific name (e.g. Homo sapiens), which organisms to run merging for, default
 #' unique(names(done_experiments))
+#' @param exclude_inhibitors character, default NULL (whole-study pools). INHIBITOR values (from
+#'  config$complete_metadata) to leave out of the master, matched as "_"-separated tokens, e.g.
+#'  c("harr", "ltm", "lactim") keeps initiation-drug libraries (also "chx_harr") out of the pooled elongation track.
+#'  Mixed studies then contribute per-sample P-shifted files; a merge_manifest.csv (included/excluded runs) is
+#'  written to the master directory.
 #' @return invisible(NULL)
 #' @export
 #' @examples
 #' #config <- pipeline_config()
+#' # Elongation master without initiation-drug libraries:
+#' # pipeline_merge_org(config, exclude_inhibitors = c("harr", "ltm", "lactim"))
 #'
 pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, only_complete_genomes = TRUE,
                                                                      gene_symbols = FALSE),
@@ -446,7 +453,8 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
                                done_organisms = sort(unique(names(done_experiments))),
                                libtype_to_merge = libtype_long_to_short(config$preset),
                                suffix = "",
-                               out_dir_base = config$config["bam"]) {
+                               out_dir_base = config$config["bam"],
+                               exclude_inhibitors = NULL) {
   message("- Merge all samples per organism")
   done_organisms <- unique(done_organisms)
   stopifnot(length(names(done_experiments)) > 0)
@@ -469,31 +477,101 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
     exp_name <- paste0(exp_name, suffix)
 
     out_dir <- file.path(out_dir_base, exp_name)
+    sel <- NULL
+    if (length(exclude_inhibitors)) {
+      sel <- merge_org_select_samples(exps_species, config, libtype_to_merge, exclude_inhibitors)
+      dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+      fwrite(sel$manifest, file.path(out_dir, "merge_manifest.csv"))
+    }
     if (config$all_mappers) {
       message("--- Merging all mappers..")
-      paths <- filepath(df, "default", base_folders = libFolder(df, mode = "all"))
-      ORFik::mergeLibs(df, out_dir, "all", "default", FALSE, paths = paths, filter_chunk_rows = 5e8)
-      make_additional_formats(df[1,], exp_name, out_dir)
+      if (is.null(sel)) {
+        paths <- filepath(df, "default", base_folders = libFolder(df, mode = "all"))
+        ORFik::mergeLibs(df, out_dir, "all", "default", FALSE, paths = paths, filter_chunk_rows = 5e8)
+        make_additional_formats(df[1,], exp_name, out_dir)
+      } else {
+        ORFik::mergeLibs(sel$df, out_dir, "all", "default", FALSE, paths = sel$paths_all,
+                         lib_names_full = paste0("input_", seq_len(nrow(sel$df))), filter_chunk_rows = 5e8)
+        make_additional_formats(sel$df[1,], exp_name, out_dir)
+      }
     }
 
     if (config$split_unique_mappers) {
       message("--- Merging Unique mappers only")
       df_unique_merged <- read.experiment(exp_name)
-      df_unique <- df_raw
-      uniqueMappers(df_unique) <- TRUE
       uniqueMappers(df_unique_merged) <- TRUE
-      df_unique <- update_path_per_sample(df_unique, libtype_df, libtype_to_merge = libtype_to_merge)
-      stopifnot(all(grepl("unique", filepath(df_unique, "default"))))
       out_dir_unique <- libFolder(df_unique_merged)
-      paths <- filepath(df_unique, "default",
-                        base_folders = libFolder(df_unique, mode = "all"))
-      ORFik::mergeLibs(df_unique, out_dir_unique, "all", "default", FALSE,
-                       paths = paths, filter_chunk_rows = 5e8)
+      if (is.null(sel)) {
+        df_unique <- df_raw
+        uniqueMappers(df_unique) <- TRUE
+        df_unique <- update_path_per_sample(df_unique, libtype_df, libtype_to_merge = libtype_to_merge)
+        stopifnot(all(grepl("unique", filepath(df_unique, "default"))))
+        paths <- filepath(df_unique, "default",
+                          base_folders = libFolder(df_unique, mode = "all"))
+        ORFik::mergeLibs(df_unique, out_dir_unique, "all", "default", FALSE,
+                         paths = paths, filter_chunk_rows = 5e8)
+      } else {
+        ORFik::mergeLibs(sel$df, out_dir_unique, "all", "default", FALSE, paths = sel$paths_unique,
+                         lib_names_full = paste0("input_", seq_len(nrow(sel$df))), filter_chunk_rows = 5e8)
+      }
       make_additional_formats_internal(df_unique_merged[1,])
       # fwrite(data.table(Run = runIDs(df)))
     }
   }
   return(invisible(NULL))
+}
+
+#' Select organism-master inputs, leaving out samples by inhibitor
+#'
+#' Studies without excluded samples contribute their whole-study pool (pshifted_merged/<libtype>.ofst), studies where
+#' every sample is excluded are dropped, and mixed studies contribute the per-sample P-shifted files of the retained
+#' samples. Inhibitors come from config$complete_metadata (Run -> INHIBITOR).
+#' @param exps named character, study experiment names of one organism
+#' @param config pipeline config
+#' @param libtype_to_merge library type, e.g. "RFP"
+#' @param exclude_inhibitors character, INHIBITOR tokens to leave out, matched as "_"-separated tokens
+#'  (so "harr" also removes "chx_harr"), e.g. c("harr", "ltm", "lactim")
+#' @return list(df, paths_all, paths_unique, manifest)
+#' @noRd
+merge_org_select_samples <- function(exps, config, libtype_to_merge, exclude_inhibitors) {
+  meta <- fread(config$complete_metadata, select = c("Run", "INHIBITOR"))
+  rows <- list(); pa <- character(); pu <- character(); man <- list()
+  for (e in unname(exps)) {
+    d <- read.experiment(e, validate = FALSE)
+    d <- d[d$libtype == libtype_to_merge, ]
+    if (nrow(d) == 0) next
+    runs <- ORFik::runIDs(d)
+    inh <- meta$INHIBITOR[match(runs, meta$Run)]
+    inh[is.na(inh)] <- ""
+    drop <- vapply(strsplit(tolower(inh), "_", fixed = TRUE), function(t) any(t %in% tolower(exclude_inhibitors)), logical(1))
+    mode <- if (!any(drop)) "study_pool" else if (all(drop)) "excluded_study" else "per_sample"
+    man[[e]] <- data.table(experiment = e, Run = runs, INHIBITOR = inh, included = !drop, input = mode)
+    if (mode == "excluded_study") next
+    if (mode == "study_pool") {
+      r <- d[1, ]
+      du <- r; uniqueMappers(du) <- TRUE
+      pool <- function(x) file.path(libFolder(x, mode = "all"), "pshifted_merged", paste0(libtype_to_merge, ".ofst"))
+      rows[[e]] <- r; pa <- c(pa, pool(r)); pu <- c(pu, pool(du))
+    } else {
+      r <- d[!drop, ]
+      du <- r; uniqueMappers(du) <- TRUE
+      rows[[e]] <- r
+      pa <- c(pa, filepath(r, "pshifted", base_folders = libFolder(r, mode = "all")))
+      pu <- c(pu, filepath(du, "pshifted", base_folders = libFolder(du, mode = "all")))
+    }
+  }
+  if (!length(rows)) stop("No inputs left after excluding inhibitors: ", paste(exclude_inhibitors, collapse = ", "))
+  df <- do.call(rbind, unname(rows))
+  df@listData$rep <- seq_len(nrow(df))
+  man <- rbindlist(man)
+  stopifnot(length(pa) == nrow(df), length(pu) == nrow(df), grepl("unique_mappers", pu))
+  missing <- c(pa[!file.exists(pa)], pu[!file.exists(pu)])
+  if (length(missing)) stop("Missing master inputs: ", paste(head(missing, 10), collapse = ", "))
+  message("--- Inputs: ", sum(man[, any(input == "study_pool"), by = experiment]$V1), " study pools, ",
+          uniqueN(man[input == "per_sample"]$experiment), " studies per sample (", sum(man$input == "per_sample" & man$included),
+          " samples), ", uniqueN(man[input == "excluded_study"]$experiment), " studies excluded; ",
+          sum(!man$included), " samples left out")
+  list(df = df, paths_all = pa, paths_unique = pu, manifest = man)
 }
 
 #' Convert library type from long name to short name
