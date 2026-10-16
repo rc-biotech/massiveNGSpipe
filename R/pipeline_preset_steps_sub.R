@@ -767,15 +767,21 @@ pipeline_cleanup_one_organism <- function(pipeline, organism, config) {
         # file and fs::file_move() moving it onto itself, which
         # reports [ENOENT] "no such file" and DELETES it instead of
         # no-op'ing (PRJNA926112-homo_sapiens, 2026-10-05).
-        has_pending_native_output <- vapply(study_org$Run, function(run) {
-          length(list.files(bam_dir, pattern = paste0("^.*", run, ".*_Aligned\\.sortedByCoord\\.out\\.bam$"))) > 0
-        }, logical(1))
+        # Native outputs are resolved with an anchored pattern (optional trim/collapse prefix, the exact Run, optional
+        # paired read-1 suffix), not match_bam_to_metadata()'s substring search, which also hit the stale <Run>.bam
+        # and then failed on paired names (<Run>_1_Aligned...): PRJNA1047529 RNA, 2026-10-16.
+        native_output <- vapply(study_org$Run, function(run) {
+          hit <- list.files(bam_dir, full.names = TRUE, pattern = paste0(
+            "^(collapsed_)?(trimmed2?_)?", run, "(_1|_R1_001)?_Aligned\\.sortedByCoord\\.out\\.bam$"))
+          if (length(hit) > 1) stop("Several STAR outputs for ", run, ": ", paste(basename(hit), collapse = ", "))
+          if (length(hit) == 0) NA_character_ else hit
+        }, character(1))
+        has_pending_native_output <- !is.na(native_output)
         rename_study_org <- study_org[has_pending_native_output]
         new_file_names <- fs::path(bam_dir, rename_study_org$Run, ext = "bam")
 
         if (nrow(rename_study_org) > 0) {
-          old_file_names <- match_bam_to_metadata(bam_dir, rename_study_org, FALSE,
-                                                  format = c("_Aligned.sortedByCoord.out.bam"))
+          old_file_names <- unname(native_output[has_pending_native_output])
 
           file_names_to_delete <- new_file_names[new_file_names != old_file_names]
           file_names_to_delete <- file_names_to_delete[file.exists(file_names_to_delete)]
