@@ -72,6 +72,7 @@ metadata_qc_table <- function(config = pipeline_config(),
 #' (v2, 2026-10-15: gene biotypes were not read, so rRNA/lncRNA shares were 0)
 #' @noRd
 QC_CACHE_VERSION <- "v2"
+QC_BAM_CACHE_VERSION <- "bam_v1"   # BAM metrics cached separately (genome-wide window sample)
 
 #' @noRd
 qc_prepare_metadata <- function(metadata) {
@@ -142,7 +143,7 @@ qc_file_sig <- function(f) {
   paste(ifelse(is.na(i$size), "NA", i$size), ifelse(is.na(i$mtime), "NA", format(as.numeric(i$mtime), digits = 15)))
 }
 
-#' Heavy per-run features (BAM prefix + coverage biotype metrics), cached per run
+#' Heavy per-run features (coverage biotype metrics cached per run; BAM metrics via qc_bam_features)
 #' @noRd
 qc_heavy_features <- function(st, org, cache_dir, workers) {
   if (is.null(st) || !nrow(st)) return(NULL)
@@ -157,7 +158,7 @@ qc_heavy_features <- function(st, org, cache_dir, workers) {
     bins <- qc_species_bins(todo$experiment[1])
     res <- BiocParallel::bplapply(seq_len(nrow(todo)), function(i) {
       r <- todo[i]
-      row <- cbind(qc_bam_metrics(r$bam, r$Run), qc_cov_metrics(r$cov, bins)[, Run := NULL])
+      row <- qc_cov_metrics(r$cov, bins)
       dir.create(dirname(r$cache), showWarnings = FALSE, recursive = TRUE)
       saveRDS(list(sig = r$sig, row = row), r$cache)
       row
@@ -165,21 +166,55 @@ qc_heavy_features <- function(st, org, cache_dir, workers) {
     res <- res[vapply(res, is.data.frame, logical(1))]
     rm(bins); gc()
   } else res <- list()
+  out <- rbindlist(c(lapply(cached[ok], function(x) x$row), res), fill = TRUE)
+  drop <- intersect(c("Sequencing_Layout", "Soft_Clipped_Reads_Pct"), names(out))
+  if (length(drop)) out[, (drop) := NULL]
+  bam <- qc_bam_features(runs, cache_dir, workers)
+  merge(out, bam, by = "Run", all = TRUE)
+}
+
+#' BAM metrics per run, cached separately from the coverage metrics (signature: QC_BAM_CACHE_VERSION + BAM file)
+#' @noRd
+qc_bam_features <- function(runs, cache_dir, workers) {
+  runs <- copy(runs)
+  runs[, bsig := paste(QC_BAM_CACHE_VERSION, qc_file_sig(bam))]
+  runs[, bcache := file.path(cache_dir, experiment, paste0(Run, "_bam.rds"))]
+  cached <- lapply(runs$bcache, function(f) if (file.exists(f)) tryCatch(readRDS(f), error = function(e) NULL) else NULL)
+  ok <- vapply(seq_along(cached), function(i) !is.null(cached[[i]]) && identical(cached[[i]]$sig, runs$bsig[i]), logical(1))
+  todo <- runs[!ok]
+  message("-- BAM QC: ", sum(ok), " cached, ", nrow(todo), " to compute")
+  res <- if (nrow(todo)) BiocParallel::bplapply(seq_len(nrow(todo)), function(i) {
+    r <- todo[i]
+    row <- qc_bam_metrics(r$bam, r$Run)
+    dir.create(dirname(r$bcache), showWarnings = FALSE, recursive = TRUE)
+    saveRDS(list(sig = r$bsig, row = row), r$bcache)
+    row
+  }, BPPARAM = BiocParallel::MulticoreParam(workers = min(workers, nrow(todo)), stop.on.error = FALSE)) else list()
+  res <- res[vapply(res, is.data.frame, logical(1))]
   rbindlist(c(lapply(cached[ok], function(x) x$row), res), fill = TRUE)
 }
 
-#' BAM prefix metrics (first 500k records; weights from collapsed read names "_x<count>")
+#' BAM metrics over the whole BAM, streamed in chunks (weights from collapsed read names "_x<count>").
+#' A coordinate-sorted prefix or genome-uniform windows are not representative of the reads (most reads sit on few
+#' highly expressed loci), so every record is counted; results are cached per BAM signature.
 #' @noRd
-qc_bam_metrics <- function(bam, run, n = 5e5) {
+qc_bam_metrics <- function(bam, run, chunk = 2e6) {
   empty <- data.table(Run = run, Sequencing_Layout = NA_character_, Soft_Clipped_Reads_Pct = NA_real_)
   if (is.na(bam) || !file.exists(bam)) return(empty)
   tryCatch({
-    bf <- Rsamtools::BamFile(bam, yieldSize = n); open(bf); on.exit(close(bf))
-    x <- Rsamtools::scanBam(bf, param = Rsamtools::ScanBamParam(what = c("qname", "flag", "cigar")))[[1]]
-    if (!length(x$flag)) return(empty)
-    w <- suppressWarnings(as.numeric(sub(".*_x", "", x$qname))); w[is.na(w)] <- 1
-    data.table(Run = run, Sequencing_Layout = ifelse(any(bitwAnd(x$flag, 1) > 0), "Paired-End", "Single-End"),
-               Soft_Clipped_Reads_Pct = 100 * sum(w[grepl("S", x$cigar)]) / max(1, sum(w)))
+    bf <- Rsamtools::BamFile(bam, yieldSize = chunk); open(bf); on.exit(close(bf))
+    p <- Rsamtools::ScanBamParam(what = c("qname", "flag", "cigar"))
+    tot <- 0; clip <- 0; paired <- FALSE
+    repeat {
+      x <- Rsamtools::scanBam(bf, param = p)[[1]]
+      if (!length(x$flag)) break
+      w <- suppressWarnings(as.numeric(sub(".*_x", "", x$qname))); w[is.na(w)] <- 1
+      tot <- tot + sum(w); clip <- clip + sum(w[grepl("S", x$cigar, fixed = TRUE)])
+      paired <- paired || any(bitwAnd(x$flag, 1L) > 0)
+    }
+    if (tot == 0) return(empty)
+    data.table(Run = run, Sequencing_Layout = ifelse(paired, "Paired-End", "Single-End"),
+               Soft_Clipped_Reads_Pct = 100 * clip / tot)
   }, error = function(e) empty)
 }
 
