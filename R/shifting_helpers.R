@@ -1,3 +1,20 @@
+#' shiftFootprintsByExperiment(), rerun single-threaded when parallel workers fail on the annotation
+#'
+#' Forked workers each reopen the txdb after the parent opened it; under load some returned incomplete regions
+#' ("asTX: not all references are present") while serial and low-worker runs of the same samples pass
+#' (PRJNA317266, PRJNA1047529, 2026-10-16). The same FFT mode is retried with SerialParam before any fallback.
+#' @noRd
+shift_serial_retry <- function(df, BPPARAM, ...) {
+  res <- tryCatch(shiftFootprintsByExperiment(df, ..., BPPARAM = BPPARAM), error = function(e) e)
+  if (inherits(res, "error") && grepl("not all references are present", conditionMessage(res), fixed = TRUE) &&
+      !is(BPPARAM, "SerialParam")) {
+    message("P-shifting hit the parallel annotation error; retrying the same settings with SerialParam")
+    res <- shiftFootprintsByExperiment(df, ..., BPPARAM = BiocParallel::SerialParam())
+  }
+  if (inherits(res, "error")) stop(res)
+  res
+}
+
 #' Try to shift 3 times, 1 strict shifting (full FFT), 2. less strict (wavelet),
 #' 3. Hard 12 for allowed species
 #' @noRd
@@ -8,10 +25,9 @@ shiftFootprintsByExperimentSafe <- function(df, shifting_table, accepted_lengths
   fft_strengths <- names(fft_files)
 
   fft_strength <- fft_strengths[1]
-  res <- tryCatch(shiftFootprintsByExperiment(df, output_format = "ofst",
+  res <- tryCatch(shift_serial_retry(df, BPPARAM, output_format = "ofst",
                                               accepted.lengths = accepted_lengths,
-                                              shift.list = shifting_table,
-                                              BPPARAM = BPPARAM),
+                                              shift.list = shifting_table),
                   error = function(e) {
                     message(conditionMessage(e))
                     message(name(df))
@@ -21,11 +37,10 @@ shiftFootprintsByExperimentSafe <- function(df, shifting_table, accepted_lengths
 
   if(inherits(res, "error")) {
     fft_strength <- fft_strengths[2]
-    res <- tryCatch(shiftFootprintsByExperiment(df, output_format = "ofst",
+    res <- tryCatch(shift_serial_retry(df, BPPARAM, output_format = "ofst",
                                                 accepted.lengths = accepted_lengths,
                                                 shift.list = shifting_table,
-                                                strict.fft = FALSE,
-                                                BPPARAM = BPPARAM),
+                                                strict.fft = FALSE),
                     error = function(e) {
                       message(conditionMessage(e))
                       message(name(df))
@@ -37,11 +52,10 @@ shiftFootprintsByExperimentSafe <- function(df, shifting_table, accepted_lengths
       if (organism(df) %in% allowed_hard12_species) {
         fft_strength <- fft_strengths[3]
         shifting_table <- template_shift_table(df, accepted_lengths)
-        res <- tryCatch(shiftFootprintsByExperiment(df, output_format = "ofst",
+        res <- tryCatch(shift_serial_retry(df, BPPARAM, output_format = "ofst",
                                                     accepted.lengths = accepted_lengths,
                                                     shift.list = shifting_table,
-                                                    strict.fft = FALSE,
-                                                    BPPARAM = BPPARAM),
+                                                    strict.fft = FALSE),
                         error = function(e) {
                           message(conditionMessage(e))
                           message(name(df))
