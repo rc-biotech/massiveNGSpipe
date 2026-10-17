@@ -89,7 +89,7 @@ test_that("convert_per_sample() keeps all-mappers and _unique passes on independ
 })
 
 test_that("pipeline_create_ofst() drives convert_per_sample() for the all-mappers pass only when split_unique_mappers is FALSE", {
-  config <- fake_config(extra = list(all_mappers = TRUE, split_unique_mappers = FALSE))
+  config <- fake_config(extra = list(all_mappers = TRUE, split_unique_mappers = FALSE, ofst_shared_bam = FALSE))
   stub <- fake_experiment_stub(run_ids = c("SRR001"))
   # step_is_next_not_done() needs every earlier step done, not just the
   # immediately-preceding one.
@@ -108,7 +108,7 @@ test_that("pipeline_create_ofst() drives convert_per_sample() for the all-mapper
 })
 
 test_that("pipeline_create_ofst() passes the length-distribution-saving wrapper, not plain convert_bam_to_ofst", {
-  config <- fake_config(extra = list(all_mappers = TRUE, split_unique_mappers = FALSE))
+  config <- fake_config(extra = list(all_mappers = TRUE, split_unique_mappers = FALSE, ofst_shared_bam = FALSE))
   stub <- fake_experiment_stub(run_ids = c("SRR001"))
   fake_mark_all_done(config, c("aligned", "cleanbam", "exp"), name(stub))
   seen_fun <- NULL
@@ -122,7 +122,7 @@ test_that("pipeline_create_ofst() passes the length-distribution-saving wrapper,
 })
 
 test_that("pipeline_create_ofst() also drives the _unique pass when split_unique_mappers is TRUE", {
-  config <- fake_config(extra = list(all_mappers = TRUE, split_unique_mappers = TRUE))
+  config <- fake_config(extra = list(all_mappers = TRUE, split_unique_mappers = TRUE, ofst_shared_bam = FALSE))
   stub <- fake_experiment_stub(run_ids = c("SRR001"))
   fake_mark_all_done(config, c("aligned", "cleanbam", "exp"), name(stub))
   calls <- list()

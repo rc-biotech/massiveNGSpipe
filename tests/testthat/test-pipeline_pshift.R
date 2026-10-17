@@ -49,11 +49,12 @@ test_that("pipeline_pshift() does NOT save length distributions after a failed s
   called <- FALSE
   testthat::local_mocked_bindings(
     ofst_filepath = function(df) file.path(tempdir(), "does_not_exist.ofst"),
-    shiftFootprintsByExperimentSafe = function(df, ...) structure(list(), class = "error"),
+    shiftFootprintsByExperimentSafe = function(df, ...) simpleError("simulated shift failure"),
     save_pshifted_length_distributions = function(df) called <<- TRUE
   )
 
-  pipeline_pshift(list(stub), config)
+  # a failed shift now stops with the shift's own error message (recorded by report_failed_pipe() upstream)
+  expect_error(pipeline_pshift(list(stub), config), "simulated shift failure")
 
   expect_false(called)
   expect_false(step_is_done(config, "pshifted", name(stub)))
