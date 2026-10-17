@@ -13,7 +13,8 @@ ai_context_snapshot(config)
 a list: \code{active_processes} (see
 \code{\link{studies_currently_processing}}), \code{checklist} (see
 \code{\link{checklist_health}}), \code{recent_errors} (see
-\code{\link{summarize_last_errors}}), \code{threads}
+\code{\link{summarize_last_errors}}), \code{current_errors} (\code{\link{pipeline_errors}}),
+\code{recent_error_events} (last 20 of \code{\link{pipeline_error_events}}), \code{threads}
 (\code{config$threads}), \code{thread_type} (character, the
 configured BPPARAM constructor's name), \code{mode}, \code{project}.
 }

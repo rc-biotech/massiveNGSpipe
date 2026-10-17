@@ -128,5 +128,9 @@ test_that("run_pipeline() writes '(aborted after N hours)' and still re-throws o
     invisible(capture.output(suppressWarnings(suppressMessages(run_pipeline(pipelines, config, wait = 1))))),
     "simulated crash"
   )
-  expect_match(newest_checklist_title(project), "\\(aborted after [0-9.]+ hours\\)$")
+  # the abort reason is appended to the title, and a crash record + event are left behind
+  expect_match(newest_checklist_title(project), "\\(aborted after [0-9.]+ hours: .*simulated crash\\)$")
+  sess <- list.dirs(file.path(project, "session_logs"), recursive = FALSE)
+  expect_true(any(file.exists(file.path(sess, "crash_run_pipeline.rds"))))
+  expect_true("crash" %in% pipeline_error_events(list(project = project))$event)
 })

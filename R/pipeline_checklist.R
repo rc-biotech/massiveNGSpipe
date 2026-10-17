@@ -494,8 +494,11 @@ pipeline_checklist <- function(pipelines, config, print = TRUE, run_status = NUL
 
   path <- checklist_path(config)
   dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
+  # 5th header slot: live error count. Read from the error flag files on every render, so an error cleared with
+  # clear_pipeline_error() (or a deleted flag file) disappears from the next checklist of a running pipeline.
+  error_line <- tryCatch(pipeline_error_summary_line(config), error = function(e) "")
   header <- c(sprintf("Pipeline status as of %s%s", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), status_note),
-             usage["line"], usage["drive_cap_note"], usage["backlog_cap_note"], "", "")
+             usage["line"], usage["drive_cap_note"], usage["backlog_cap_note"], error_line, "")
   # Write-then-rename, not a direct write to `path` -- a direct cat(file = path)
   # truncates the file immediately, then streams content into it, so a
   # concurrent reader (watch_pipeline_checklist()'s own readLines(path),
@@ -513,7 +516,7 @@ pipeline_checklist <- function(pipelines, config, print = TRUE, run_status = NUL
   file.rename(tmp, path)
 
   if (print) message(paste(c(usage["line"], usage["drive_cap_note"], usage["backlog_cap_note"],
-                             "", "", txt), collapse = "\n"))
+                             error_line, "", txt), collapse = "\n"))
   invisible(tab)
 }
 

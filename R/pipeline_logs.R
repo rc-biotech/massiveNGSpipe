@@ -104,14 +104,11 @@ is_progressing <- function(config, max_time_since_update = 1) {
 report_failed_pipe <- function(try, config, step, exp) {
 
   if (is(try, "try-error")) {
-    warning("Failed at step, ", step, "for exp: ", exp)
+    hint <- error_hint(as.character(try))
+    warning("Failed at step ", step, " for exp: ", exp, " -- ", error_one_line(try), " (likely cause: ", hint, ")")
     warning(as.character(try))
-    if (!is.null(config$error_dir)) {
-      error_call <- paste(exp, "(", step, ")", as.character(try), paste(Sys.time()))
-      error_path <- report_failed_pipe_path(config, exp)
-      dir.create(config$error_dir, showWarnings = FALSE, recursive = TRUE)
-      saveRDS(error_call, error_path)
-    }
+    # error flag file + events.jsonl + optional hook (R/pipeline_errors.R)
+    error_record_write(config, exp, step, try)
     return(FALSE)
   }
   return(TRUE)
@@ -144,7 +141,7 @@ session_error_dirs <- function(config) {
 #' @return named integer vector, names are session directory basenames
 #' @noRd
 session_error_dirs_count <- function(config) {
-  res <- sapply(session_error_dirs(config), function(x) length(list.files(x)))
+  res <- sapply(session_error_dirs(config), function(x) length(list.files(x, "\\.rds$")))
   names(res) <- basename(names(res))
   return(res)
 }
@@ -156,7 +153,7 @@ last_session_errors <- function(config, index = 1, regex = NULL) {
   all_sessions <- session_error_dirs(config)
   if (length(all_sessions) < index) stop("You selected session ", index, " , but there is only ",
                                          length(all_sessions), " existing sessions")
-  errors <- sapply(list.files(all_sessions[index], full.names = TRUE), readRDS)
+  errors <- sapply(list.files(all_sessions[index], "\\.rds$", full.names = TRUE), readRDS)
   names(errors) <- gsub(".*error_logs|\\.rds$", "", names(errors))
   if (!is.null(regex)) errors <- grep(regex, errors, value = TRUE)
   return(errors)

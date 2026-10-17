@@ -204,7 +204,8 @@ summarize_last_errors <- function(config, index = 1, regex = NULL) {
 #' @return a list: \code{active_processes} (see
 #' \code{\link{studies_currently_processing}}), \code{checklist} (see
 #' \code{\link{checklist_health}}), \code{recent_errors} (see
-#' \code{\link{summarize_last_errors}}), \code{threads}
+#' \code{\link{summarize_last_errors}}), \code{current_errors} (\code{\link{pipeline_errors}}),
+#' \code{recent_error_events} (last 20 of \code{\link{pipeline_error_events}}), \code{threads}
 #' (\code{config$threads}), \code{thread_type} (character, the
 #' configured BPPARAM constructor's name), \code{mode}, \code{project}.
 #' @export
@@ -214,6 +215,8 @@ ai_context_snapshot <- function(config) {
                                 error = function(e) data.table::data.table()),
     checklist = tryCatch(checklist_health(config), error = function(e) NULL),
     recent_errors = tryCatch(summarize_last_errors(config), error = function(e) data.table::data.table()),
+    current_errors = tryCatch(pipeline_errors(config), error = function(e) data.table::data.table()),
+    recent_error_events = tryCatch(pipeline_error_events(config, n = 20), error = function(e) data.table::data.table()),
     threads = config$threads,
     thread_type = tryCatch(get_fun_name(config$thread_type, "BiocParallel"), error = function(e) NA_character_),
     mode = config$mode,

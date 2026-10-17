@@ -26,22 +26,35 @@ run_pipeline <- function(pipelines, config, wait = 100) {
   config <- run_pipeline_set_up_session(pipelines, config)
 
   completed <- FALSE
+  abort_reason <- ""
   on.exit({
     if (!completed) {
       try(pipeline_checklist(pipelines, config, print = FALSE,
-                             run_status = paste0("aborted after ", format_elapsed_hours(config$init_time))),
+                             run_status = paste0("aborted after ", format_elapsed_hours(config$init_time),
+                                                 abort_reason)),
          silent = TRUE)
     }
   }, add = TRUE)
 
-  # Run pipeline
-  BiocParallel::bplapply(seq_along(config$pipeline_steps),
-                         function(i, config, pipelines, wait)
-      parallel_wrap(config$pipeline_steps[[i]], pipelines, config,
-                    config$flag_steps[[i]], wait,
-                    stage_name = names(config$flag_steps)[i]),
-    pipelines = pipelines, wait = wait, config = config,
-    BPPARAM = config$BPPARAM_MAIN)
+  # Run pipeline. Any condition that ends the session (error, interrupt) is recorded with its message and call
+  # stack in session_logs/<session>/crash_run_pipeline.rds and as a "crash" event before it propagates: two runs
+  # ended with a bare "Execution halted" and no message on 2026-10-17.
+  withCallingHandlers(
+    BiocParallel::bplapply(seq_along(config$pipeline_steps),
+                           function(i, config, pipelines, wait)
+        parallel_wrap(config$pipeline_steps[[i]], pipelines, config,
+                      config$flag_steps[[i]], wait,
+                      stage_name = names(config$flag_steps)[i]),
+      pipelines = pipelines, wait = wait, config = config,
+      BPPARAM = config$BPPARAM_MAIN),
+    error = function(e) {
+      abort_reason <<- paste0(": ", error_one_line(e))
+      pipeline_crash_record(config, "run_pipeline", e, sys.calls())
+    },
+    interrupt = function(e) {
+      abort_reason <<- ": interrupted (signal or Ctrl+C)"
+      pipeline_crash_record(config, "run_pipeline", simpleCondition("interrupt (SIGINT/Ctrl+C) received"))
+    })
 
   completed <- TRUE
   all_done <- all(pipeline_checklist(pipelines, config, print = FALSE)$state == "done")
@@ -76,15 +89,24 @@ parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100,
   exps <- pipelines_names(pipelines)
   steps_done <- all_substeps_done_all(config, steps, exps)
   while(!all(steps_done) && !stop_requested(config) && !all_pending_failed(config, pending_exps(config, steps, exps))) {
-    function_call(pipelines, config)
+    # Per-study errors are caught inside function_call (report_failed_pipe()); anything that escapes is a stage
+    # crash. Record it from inside this (forked) worker, whose console output may never reach the parent, then
+    # let it propagate as before.
+    withCallingHandlers(function_call(pipelines, config),
+      error = function(e) pipeline_crash_record(config, stage_name %||% steps_merged, e, sys.calls()))
     steps_done <- all_substeps_done_all(config, steps, exps)
     if (!all(steps_done) && !stop_requested(config) && !all_pending_failed(config, pending_exps(config, steps, exps))) {
       Sys.sleep(wait)
       pipeline_checklist(pipelines, config)
     }
   }
-  if (!all(steps_done) && all_pending_failed(config, pending_exps(config, steps, exps)))
-    message("Giving up step pipeline (all remaining studies have error records this session):\n", steps_merged)
+  if (!all(steps_done) && all_pending_failed(config, pending_exps(config, steps, exps))) {
+    pend <- pending_exps(config, steps, exps)
+    message("Giving up step pipeline (all remaining studies have error records this session):\n", steps_merged,
+            "\nFailed studies: ", paste(pend, collapse = ", "))
+    error_event_emit(config, list(event = "stage_gave_up", exp = paste(pend, collapse = ";"), step = stage_name %||% steps_merged,
+                                  message = "all remaining studies of this stage have error records", hint = ""))
+  }
   # Always mark this stage-group's loop as exited, whether it finished
   # naturally or honored a stop request -- see mark_stage_exited()'s own
   # doc for why "only mark on stop" would leave abort_session_when_next_study_done_per_step()
@@ -134,7 +156,7 @@ run_pipeline_set_up_session <- function(pipelines, config) {
 run_pipeline_end_session <- function(pipelines, config) {
   # Done
   no_errors <- ifelse(!is.null(config$error_dir) && dir.exists(config$error_dir),
-                      length(list.files(config$error_dir)) == 0,
+                      length(list.files(config$error_dir, "\\.rds$")) == 0,
                       TRUE)
   if (no_errors) {
     title_message <- "Pipeline is done, without any errors"
