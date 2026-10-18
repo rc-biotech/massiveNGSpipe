@@ -345,6 +345,10 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
     message("--- CBind count tables from studies")
     count_folder <- QCfolder(df)
     dir.create(count_folder, recursive = TRUE, showWarnings = FALSE)
+    # Run keys once per study (bamVarName()/runIDs() are not free; were recomputed for every region)
+    study_ids <- gsub("-.*", "", exps_species)
+    study_labels <- lapply(df_list, bamVarName)
+    study_runs <- lapply(df_list, ORFik::runIDs)
     for (region in c("mrna", "cds", "leaders", "trailers")) {
       message("---- ", region)
       count_lists <- bplapply(df_list,
@@ -354,11 +358,15 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
                                 return(res)
       }, region = region, BPPARAM = BPPARAM)
       names(count_lists) <- exps_species
-      # Run-keyed identity: each study's columns get Run + study in colData, validated against the experiment
-      count_lists <- lapply(seq_along(count_lists), function(k)
-        add_run_keys_to_counts(count_lists[[k]], df_list[[k]], study = gsub("-.*", "", exps_species[k])))
-      names(count_lists) <- exps_species
+      # Run-keyed identity: every study's columns are validated against its experiment labels, then Run + study
+      # are set once on the combined table (setting colData per study cost ~40% of the step in S4 validity checks;
+      # result identical to add_run_keys_to_counts() per study + cbind)
+      for (k in seq_along(count_lists)) check_counts_match_labels(count_lists[[k]], study_labels[[k]], study_ids[k])
       count_list <- safe_se_cbind(count_lists)
+      cd <- SummarizedExperiment::colData(count_list)
+      cd$Run <- unlist(study_runs, use.names = FALSE)
+      cd$study <- rep(study_ids, vapply(study_runs, length, integer(1)))
+      SummarizedExperiment::colData(count_list) <- cd
       stopifnot(ncol(count_list) == sum(vapply(count_lists, ncol, integer(1))), !anyDuplicated(count_list$Run))
       saveName <- file.path(count_folder, paste0("countTable_", region, ".qs"))
       qs2::qs_save(count_list, file = saveName, nthreads = 5)
@@ -378,12 +386,23 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
 #' @return se with colData columns Run and study
 #' @noRd
 add_run_keys_to_counts <- function(se, df, study) {
-  if (ncol(se) != nrow(df)) stop(study, ": count table has ", ncol(se), " columns for ", nrow(df), " samples")
-  if (!identical(colnames(se), bamVarName(df)))
-    stop(study, ": count table columns do not match the experiment labels (run refresh_study_labels or pcounts first)")
+  check_counts_match_labels(se, bamVarName(df), study)
   SummarizedExperiment::colData(se)$Run <- ORFik::runIDs(df)
   SummarizedExperiment::colData(se)$study <- study
   se
+}
+
+#' Assert a study count table's columns are exactly the experiment labels
+#' @param se SummarizedExperiment count table of one study
+#' @param labels character, \code{bamVarName(df)} of the study
+#' @param study study accession (for the error)
+#' @return invisible(TRUE)
+#' @noRd
+check_counts_match_labels <- function(se, labels, study) {
+  if (ncol(se) != length(labels)) stop(study, ": count table has ", ncol(se), " columns for ", length(labels), " samples")
+  if (!identical(colnames(se), labels))
+    stop(study, ": count table columns do not match the experiment labels (run refresh_study_labels or pcounts first)")
+  invisible(TRUE)
 }
 
 #' cbind a list of SummarizedExperiments, with a useful error on mismatch

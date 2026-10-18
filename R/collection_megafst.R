@@ -112,33 +112,41 @@ megafst_page_table <- function(seqinfo, tile_size, output_dir, bp2 = 5) {
 #' @noRd
 megafst_plan <- function(old, new, params_old, params_new, compact_fraction = 0.25,
                          max_appends = 64, batch_size = 500) {
-  full <- function(reason) list(mode = "full", reason = reason, add = new$Run, replace = character())
+  full <- function(reason) list(mode = "full", reason = reason, add = new$Run, replace = character(),
+                                removed = character(), tombstones = character())
   if (is.null(old) || is.null(params_old)) return(full("no manifest"))
   layout_keys <- c("format_version", "tile_size", "compress", "seq_names", "seq_lengths")
   if (!identical(params_old[layout_keys], params_new[layout_keys])) return(full("layout parameters changed"))
+  # Removed libraries become tombstones (2026-10-18): their columns stay in the pages, zeroed, and are dropped
+  # from the manifest; readers select columns by Run (RiboCrypt passes the experiment's runs). Before, one removed
+  # library forced a full rebuild (human: ~5.5 h for 4,123 libraries after removing 61 duplicates).
+  tomb_old <- params_old$tombstones %||% character()
   removed <- setdiff(old$Run, new$Run)
-  if (length(removed)) return(full(paste(length(removed), "libraries removed")))
   m <- merge(new, old, by = "Run", all.x = TRUE, suffixes = c("", "_old"), sort = FALSE)
-  add <- m[is.na(cov_path_old)]$Run
-  replace <- m[!is.na(cov_path_old) & (cov_path != cov_path_old | cov_mtime != cov_mtime_old |
-                                          cov_size != cov_size_old)]$Run
+  revived <- intersect(m[is.na(cov_path_old)]$Run, tomb_old)   # column still in the pages: overwrite it
+  add <- setdiff(m[is.na(cov_path_old)]$Run, revived)
+  replace <- c(m[!is.na(cov_path_old) & (cov_path != cov_path_old | cov_mtime != cov_mtime_old |
+                                            cov_size != cov_size_old)]$Run, revived)
+  tombstones <- union(setdiff(tomb_old, revived), removed)
   replaced_total <- (params_old$replaced_since_full %||% 0) + length(replace)
-  if (replaced_total > compact_fraction * nrow(new)) {
-    return(full(sprintf("%d replaced columns since last full build exceed %.0f%% of %d libraries",
-                        replaced_total, 100 * compact_fraction, nrow(new))))
+  if (replaced_total + length(tombstones) > compact_fraction * nrow(new)) {
+    return(full(sprintf("%d replaced + %d tombstoned columns since last full build exceed %.0f%% of %d libraries",
+                        replaced_total, length(tombstones), 100 * compact_fraction, nrow(new))))
   }
   # Each append/replace pass adds a column segment to every page; > ~80 segments slow cold reads
   # (benchmark B5), so compact with a staged full rebuild before that.
-  passes <- ceiling(length(add) / batch_size) + ceiling(length(replace) / batch_size)
+  passes <- ceiling(length(add) / batch_size) + ceiling(length(replace) / batch_size) + (length(removed) > 0)
   appends_total <- (params_old$appends_since_full %||% 0) + passes
   if (passes > 0 && appends_total > max_appends) {
     return(full(sprintf("%d append passes since last full build exceed %d (segment compaction)",
                         appends_total, max_appends)))
   }
-  if (!length(add) && !length(replace)) return(list(mode = "none", reason = "up to date",
-                                                   add = character(), replace = character()))
-  list(mode = "incremental", reason = sprintf("%d new, %d changed libraries", length(add), length(replace)),
-       add = add, replace = replace, passes = passes)
+  if (!length(add) && !length(replace) && !length(removed))
+    return(list(mode = "none", reason = "up to date", add = character(), replace = character(),
+                removed = character(), tombstones = tomb_old))
+  list(mode = "incremental", reason = sprintf("%d new, %d changed, %d removed (tombstoned) libraries",
+                                              length(add), length(replace), length(removed)),
+       add = add, replace = replace, removed = removed, tombstones = tombstones, passes = passes)
 }
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
@@ -221,6 +229,35 @@ megafst_write_batch <- function(covs, pages, op = c("add", "replace"), compress 
   invisible(NULL)
 }
 
+#' Zero the columns of removed libraries in every page (tombstones)
+#'
+#' Removed libraries keep their columns until the next full build; zeroing them means a reader that loads all
+#' columns (e.g. \code{load_collection(path)} without \code{columns}) gets no signal from them. One run of zeros
+#' per page, so this pass is cheap.
+#' @param pages page table
+#' @param runs character, columns to zero (must be present in every page)
+#' @inheritParams megafst_write_batch
+#' @return invisible(NULL)
+#' @noRd
+megafst_zero_columns <- function(pages, runs, compress = 50, BPPARAM = BiocParallel::SerialParam()) {
+  if (!length(runs)) return(invisible(NULL))
+  stopifnot(megafst_rle_available())
+  chr_len <- pages[, .(len = max(end)), by = chr]
+  zero_page <- function(i, pages, file_col) {
+    file <- pages[[file_col]][i]
+    present <- fst::metadata_fst(file)$columnNames
+    todo <- intersect(runs, present)
+    if (!length(todo)) return(invisible(NULL))
+    len <- as.numeric(chr_len[chr == pages$chr[i]]$len)
+    fst::replace_rle_columns_fst(rep(list(0L), length(todo)), rep(list(len), length(todo)), todo,
+                                 pages$start[i], pages$end[i], file, compress = compress, ends = TRUE)
+    invisible(NULL)
+  }
+  for (file_col in c("file_forward", "file_reverse"))
+    BiocParallel::bplapply(seq_len(nrow(pages)), zero_page, pages = pages, file_col = file_col, BPPARAM = BPPARAM)
+  invisible(NULL)
+}
+
 #' Is the fst fork's run-length column writer available?
 #' @return logical(1)
 #' @noRd
@@ -233,9 +270,10 @@ megafst_rle_available <- function() {
 #' Check every page has exactly the expected columns and row count
 #' @param pages data.table from megafst_page_table()
 #' @param runs character, expected column names
+#' @param tombstones character, columns of removed libraries that may remain (zeroed) until the next full build
 #' @return invisible(TRUE); errors listing offending files
 #' @noRd
-megafst_validate_pages <- function(pages, runs) {
+megafst_validate_pages <- function(pages, runs, tombstones = character()) {
   files <- c(pages$file_forward, pages$file_reverse)
   rows <- rep(pages$end - pages$start + 1, 2)
   bad <- character()
@@ -243,7 +281,7 @@ megafst_validate_pages <- function(pages, runs) {
     if (!file.exists(files[k])) { bad <- c(bad, paste(files[k], "missing")); next }
     m <- fst::metadata_fst(files[k])
     if (m$nrOfRows != rows[k]) bad <- c(bad, paste(files[k], "rows", m$nrOfRows, "!=", rows[k]))
-    if (!setequal(m$columnNames, runs) || anyDuplicated(m$columnNames))
+    if (!setequal(m$columnNames, c(runs, tombstones)) || anyDuplicated(m$columnNames))
       bad <- c(bad, paste(files[k], "columns differ from manifest"))
   }
   if (length(bad)) stop("megafst validation failed:\n", paste(utils::head(bad, 20), collapse = "\n"),
@@ -340,12 +378,14 @@ megafst_update <- function(runs, cov_paths, seqinfo, output_dir, tile_size = 2e6
     if (!is.null(adopted)) { old <- adopted$old; params_old <- adopted$params
       message("-- Adopted existing megafst pages as the cache baseline (", nrow(old), " libraries)") }
   }
-  plan <- if (force) list(mode = "full", reason = "forced", add = lib$Run, replace = character()) else
+  plan <- if (force) list(mode = "full", reason = "forced", add = lib$Run, replace = character(),
+                         removed = character(), tombstones = character()) else
     megafst_plan(old, lib, params_old, params, compact_fraction, max_appends, batch_size)
   message("-- megafst plan: ", plan$mode, " (", plan$reason, ")")
   staging <- paste0(output_dir, ".staging")
   if (plan$mode != "full" && dir.exists(staging)) unlink(staging, recursive = TRUE)  # stale partial full build
   if (plan$mode == "none") {
+    params$tombstones <- plan$tombstones
     if (!file.exists(manifest_path)) megafst_save_state(lib, params, manifest_path, params_path)  # persist adoption
     return(invisible(list(plan = plan, output_dir = output_dir)))
   }
@@ -357,7 +397,9 @@ megafst_update <- function(runs, cov_paths, seqinfo, output_dir, tile_size = 2e6
                              covrle_memory_ratio, keep_free_gb, timeout_minutes)
     megafst_stream_libraries(lib[Run %in% plan$add], pages, "add", batch_size, compress, BPPARAM,
                              covrle_memory_ratio, keep_free_gb, timeout_minutes)
-    megafst_validate_pages(pages, lib$Run)
+    if (length(plan$removed)) megafst_zero_columns(pages, plan$removed, compress, BPPARAM)
+    params$tombstones <- plan$tombstones
+    megafst_validate_pages(pages, lib$Run, params$tombstones)
     megafst_save_state(lib, params, manifest_path, params_path)
     if (!file.exists(index_path)) fst::write_fst(pages, index_path)
     return(invisible(list(plan = plan, output_dir = output_dir)))

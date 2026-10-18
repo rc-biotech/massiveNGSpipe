@@ -197,3 +197,36 @@ test_that("forked page workers do not deadlock (no OpenMP thread changes inside 
   }, args = list(runs, cov, si, file.path(dir, "m")), timeout = 120)
   expect_identical(res, "full")
 })
+
+test_that("removed libraries are tombstoned (zeroed, kept) instead of forcing a full rebuild; re-adding overwrites", {
+  skip_if_not(megafst_rle_available())
+  dir <- withr::local_tempdir(); runs <- paste0("SRR", 1:10)
+  cov <- fake_covrle_files(dir, runs); si <- fake_seqinfo(); sp <- BiocParallel::SerialParam()
+  ref <- legacy_pages(cov, runs, si, file.path(dir, "legacy"), tile = 2000)
+  out <- file.path(dir, "tomb")
+  megafst_update(runs, cov, si, out, tile_size = 2000, BPPARAM = sp)
+  res <- megafst_update(runs[-3], cov[-3], si, out, tile_size = 2000, BPPARAM = sp)
+  expect_identical(res$plan$mode, "incremental"); expect_identical(res$plan$removed, "SRR3")
+  pages <- read_pages(out)
+  for (nm in names(pages)) {
+    expect_true(all(pages[[nm]]$SRR3 == 0L))                               # tombstone zeroed
+    expect_identical(pages[[nm]][, -"SRR3"], ref[[nm]][, -"SRR3"])        # all other columns untouched
+  }
+  expect_identical(readRDS(file.path(out, "megafst_params.rds"))$tombstones, "SRR3")
+  expect_false("SRR3" %in% fst::read_fst(file.path(out, "megafst_manifest.fst"))$Run)
+  expect_identical(megafst_update(runs[-3], cov[-3], si, out, tile_size = 2000, BPPARAM = sp)$plan$mode, "none")
+  # the library comes back: its existing column is overwritten (replace), pages equal a full build again
+  res <- megafst_update(runs, cov, si, out, tile_size = 2000, BPPARAM = sp)
+  expect_identical(res$plan$replace, "SRR3"); expect_length(res$plan$add, 0)
+  expect_identical(read_pages(out), ref)
+  expect_length(readRDS(file.path(out, "megafst_params.rds"))$tombstones, 0)
+})
+
+test_that("tombstones count toward the compaction threshold", {
+  lib <- data.table::data.table(Run = paste0("R", 1:8), cov_path = paste0("p", 1:8), cov_mtime = 1, cov_size = 1)
+  p <- list(format_version = 1, tile_size = 1, compress = 50, seq_names = "a", seq_lengths = 1,
+            replaced_since_full = 0, appends_since_full = 0, tombstones = character())
+  expect_identical(megafst_plan(lib, lib[-1], p, p)$mode, "incremental")            # 1 of 7 < 25%
+  p$tombstones <- c("X1", "X2")
+  expect_identical(megafst_plan(lib, lib[-1], p, p)$mode, "full")                   # 3 tombstones > 25% of 7
+})
