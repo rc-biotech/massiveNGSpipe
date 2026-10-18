@@ -85,7 +85,7 @@ QC_BAM_CACHE_VERSION <- "bam_v1"   # BAM metrics cached separately (genome-wide 
 #' @noRd
 qc_prepare_metadata <- function(metadata) {
   m <- copy(as.data.table(metadata))
-  drop <- intersect(c("CT", "TC", "not_unique", "name", "KEEP", "UNIQUE", "CHECKED", "InsertSize", "InsertDev"), names(m))
+  drop <- intersect(c("CT", "TC", "not_unique", "name", "KEEP", "UNIQUE", "COMMENT", "CHECKED", "InsertSize", "InsertDev"), names(m))
   if (length(drop)) m[, (drop) := NULL]
   m[, mode := "online"]
   m[, study := paste(study_accession, reference_folder_name(ScientificName), sep = "-")]

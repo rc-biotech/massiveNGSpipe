@@ -310,7 +310,7 @@ pipeline_metadata_annotate <- function(filtered_RFP) {
                                                  ORFik:::inhibitorNames(), "auto")
   filtered_RFP[LIBRARYTYPE == "" & INHIBITOR != "", LIBRARYTYPE := "RFP"]
   # Add columns needed for checks
-  filtered_RFP[, `:=`(KEEP = "", UNIQUE = "", CHECKED = "", name = "", not_unique = "")]
+  filtered_RFP[, `:=`(KEEP = "", COMMENT = "", CHECKED = "", name = "", not_unique = "")]
   cat("Studies kept:", "\n")
   cat(length(unique(filtered_RFP$Submission)), "\n")
   cat("Library types detected", "\n")
@@ -825,3 +825,18 @@ add_meta_columns <- function(dt_temp,
   return(dt_temp)
 }
 
+
+
+#' Rename legacy sheet columns to their current names
+#'
+#' The free-text curation note column was called \code{UNIQUE} until 2026-10-18 (a leftover flag column, mostly
+#' empty) and is now \code{COMMENT}: the reason for \code{KEEP = FALSE}, "duplicate of <Run>", author-declared vs
+#' data-supported identity, and similar notes. Older sheets and csv copies are renamed on read so both work.
+#' @param dt a data.table of sheet / FINAL rows (modified by reference)
+#' @return dt, invisibly
+#' @export
+metadata_legacy_columns <- function(dt) {
+  if (is.data.frame(dt) && "UNIQUE" %in% names(dt) && !"COMMENT" %in% names(dt))
+    data.table::setnames(dt, "UNIQUE", "COMMENT")
+  invisible(dt)
+}

@@ -195,7 +195,7 @@ modality_url <- function(project, base_dir) {
 modality_read <- function(project, base_dir, use_google) {
   if (use_google) return(read_sheet_safe(modality_url(project, base_dir)))
   f <- file.path(base_dir, project, "next_round_manual.csv")
-  if (file.exists(f)) fread(f) else data.table()
+  if (file.exists(f)) metadata_legacy_columns(fread(f)) else data.table()
 }
 
 #' @noRd

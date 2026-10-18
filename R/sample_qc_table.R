@@ -10,7 +10,7 @@
 #' @param accepted_lengths read lengths the pipeline P-shifts (config$accepted_lengths_rpf)
 #' @param exp_dir directory of experiment CSVs
 #' @param metadata NULL or the curated metadata (data.table with Run, e.g. \code{config$complete_metadata} read
-#'  with \code{fread}); when given, its \code{KEEP} and \code{UNIQUE} columns are added as
+#'  with \code{fread}); when given, its \code{KEEP} and \code{COMMENT} (formerly \code{UNIQUE}) columns are added as
 #'  \code{metadata_keep} / \code{metadata_flag}, so data-derived review flags (e.g. "misclassified_cell_line")
 #'  travel with the QC numbers. Flags are review status, not automatic exclusion.
 #' @return data.table, one row per Run
@@ -107,7 +107,7 @@ sample_qc_table <- function(exp, accepted_lengths = c(20, 21, 25:33), exp_dir = 
   if (!is.null(metadata) && "Run" %in% names(metadata)) {
     m <- as.data.table(metadata)[Run %in% runs]
     m <- m[!duplicated(Run), .(Run, metadata_keep = if ("KEEP" %in% names(m)) as.character(KEEP) else NA_character_,
-                               metadata_flag = if ("UNIQUE" %in% names(m)) as.character(UNIQUE) else NA_character_)]
+                               metadata_flag = if ("COMMENT" %in% names(m)) as.character(COMMENT) else if ("UNIQUE" %in% names(m)) as.character(UNIQUE) else NA_character_)]
     out <- merge(out, m, by = "Run", all.x = TRUE, sort = FALSE)
   }
   out[match(runs, Run)]

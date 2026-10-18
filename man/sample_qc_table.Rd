@@ -19,7 +19,7 @@ sample_qc_table(
 \item{exp_dir}{directory of experiment CSVs}
 
 \item{metadata}{NULL or the curated metadata (data.table with Run, e.g. \code{config$complete_metadata} read
-with \code{fread}); when given, its \code{KEEP} and \code{UNIQUE} columns are added as
+with \code{fread}); when given, its \code{KEEP} and \code{COMMENT} (formerly \code{UNIQUE}) columns are added as
 \code{metadata_keep} / \code{metadata_flag}, so data-derived review flags (e.g. "misclassified_cell_line")
 travel with the QC numbers. Flags are review status, not automatic exclusion.}
 }

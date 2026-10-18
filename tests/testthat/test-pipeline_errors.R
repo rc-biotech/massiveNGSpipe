@@ -119,3 +119,13 @@ test_that("error records include console log error lines and use them for the hi
   expect_match(rec, "Likely cause: STAR index missing")
   expect_identical(console_error_excerpt(config, "NOPE"), character())
 })
+
+test_that("metadata_legacy_columns renames UNIQUE to COMMENT once and keeps values", {
+  dt <- data.table::data.table(Run = c("A", "B"), UNIQUE = c("", "duplicate of A"))
+  metadata_legacy_columns(dt)
+  expect_identical(names(dt), c("Run", "COMMENT"))
+  expect_identical(dt$COMMENT, c("", "duplicate of A"))
+  both <- data.table::data.table(Run = "A", UNIQUE = "x", COMMENT = "y")
+  metadata_legacy_columns(both)                     # already has COMMENT: untouched
+  expect_identical(names(both), c("Run", "UNIQUE", "COMMENT"))
+})
