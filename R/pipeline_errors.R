@@ -55,6 +55,8 @@ error_hint <- function(msg) {
     "no periodic or accepted read-lengths|Not enough reads in TIS region" =
       "no 3-nt periodicity: check adapter/barcode trimming, read lengths and whether the library is Ribo-seq",
     "detect_strand_mode" = "RNA strand detection failed: often a broken STAR index or too few mapped reads",
+    "RNA orientation unresolved" =
+      "RNA strand unresolved: see aligned/QC_STATS/rna_strand.csv. ~0 informative reads = empty BAM or not transcriptome RNA-seq (e.g. shRNA/CRISPR screen tags, DNA; PRJNA418238 2026-10-20) -> exclude the Runs; sense fraction between thresholds = moderately stranded -> per-run config$rna_strand_by_run",
     "fasterq-dump|prefetch|sra_to_fastq|aws.*s3" =
       "download failed: retry; check the accession, network and temp space",
     "lazy-load|lazy load|cannot open compressed file.*\\.rdb" =

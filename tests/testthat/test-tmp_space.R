@@ -127,3 +127,7 @@ test_that("error_hint prefers a specific remote error over the generic BiocParal
   expect_match(error_hint(msg), "periodicity")
   expect_match(error_hint("5 unevaluated and other errors"), "worker died")
 })
+
+test_that("error_hint explains unresolved RNA strand (empty BAM / screen assay vs moderate strandedness)", {
+  expect_match(error_hint("RNA orientation unresolved for SRR1, SRR2; see aligned/QC_STATS/rna_strand.csv"), "shRNA/CRISPR")
+})
