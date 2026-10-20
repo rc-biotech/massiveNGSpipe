@@ -53,3 +53,31 @@ test_that('Random sampling is opt-in and its cache key records all defaults', {
  rna_strand_ensure(NULL,annotation,list(sampling='whole_bam_random',sampling_seed=31L))
  expect_identical(calls,2L)
 })
+
+test_that('An under-informed prefix scan falls back to a whole-BAM random sample', {
+ skip_if(Sys.which('samtools') == '', 'samtools required')
+ d <- tempfile();dir.create(d);on.exit(unlink(d,recursive=TRUE))
+ sam <- file.path(d,'sorted.sam');bam <- file.path(d,'sorted.bam')
+ header <- c('@HD\tVN:1.6\tSO:coordinate','@SQ\tSN:chr1\tLN:10000','@SQ\tSN:chr2\tLN:10000')
+ # gene-poor prefix: 30k uniquely mapped reads outside any region, then 20k sense reads in a gene
+ first <- paste0('a',seq_len(30000L),'\t0\tchr1\t100\t60\t10M\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII\tNH:i:1')
+ second <- paste0('b',seq_len(20000L),'\t0\tchr2\t100\t60\t10M\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII\tNH:i:1')
+ writeLines(c(header,first,second),sam)
+ stopifnot(system2(Sys.which('samtools'),c('view','-b','-o',shQuote(bam),shQuote(sam)))==0L)
+ stopifnot(system2(Sys.which('samtools'),c('index',shQuote(bam)))==0L)
+ regions <- GenomicRanges::GRanges(c('chr1','chr2'),IRanges::IRanges(c(5000,90),c(5100,120)),strand='+')
+ annotation <- list(regions=regions,annotation_signature='fixture')
+ params <- list(max_records=20000L,min_informative=1000L,stranded_fraction=.8,unstranded_tolerance=.1)
+ prefix <- do.call(rna_strand_detect,c(list(bam=bam,annotation=annotation),params))
+ expect_identical(prefix$status,'unknown'); expect_equal(prefix$informative_reads,0)
+ expect_equal(rna_strand_mapped_reads(bam),50000)
+ fixed <- rna_strand_prefix_fallback(prefix,bam,annotation,params)
+ expect_identical(fixed$status,'stranded'); expect_identical(fixed$strandMode,1L)
+ expect_identical(fixed$parameters,params)  # cache key unchanged
+ expect_identical(fixed$sampling_fallback$sampling,'whole_bam_random')
+ expect_lt(fixed$scanned_reads,params$max_records)
+ # resolved or explicitly sampled scans are never touched
+ expect_identical(rna_strand_prefix_fallback(fixed,bam,annotation,params),fixed)
+ informative <- prefix; informative$informative_reads <- 5000
+ expect_identical(rna_strand_prefix_fallback(informative,bam,annotation,params),informative)
+})

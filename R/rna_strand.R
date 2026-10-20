@@ -137,6 +137,48 @@ rna_strand_detect <- function(bam, annotation, max_records = 1000000L,
     normalized = FALSE))
 }
 
+#' Retry an under-informed coordinate-prefix strand scan on a whole-BAM random sample
+#'
+#' The default scan reads the first \code{max_records} reads of the
+#' coordinate-sorted BAM. For deep libraries those can all fall in a gene-poor
+#' region (confirmed 2026-10-20, PRJNA765941: 1e6 reads all in chr1:10-632 kb,
+#' 0-4 informative reads, while 81 percent of reads map uniquely). Only when
+#' that prefix scan is "unknown" because it saw fewer than
+#' \code{min_informative} informative reads, the run is re-scanned once on a
+#' reproducible whole-BAM random sample sized to ~90 percent of
+#' \code{max_records}. Resolved prefix decisions are never changed, and the
+#' record keeps the requested parameters (so cached decisions stay fresh) with
+#' the sample used in \code{record$sampling_fallback}.
+#' @noRd
+rna_strand_prefix_fallback <- function(record, bam, annotation, parameters) {
+  if (!identical(record$status, "unknown") || !is.null(parameters$sampling) ||
+      isTRUE(record$informative_reads >= parameters$min_informative)) return(record)
+  total <- rna_strand_mapped_reads(bam)
+  if (is.na(total) || total <= parameters$max_records) return(record)
+  fraction <- signif(0.9 * parameters$max_records / total, 3)
+  message("- RNA strand: prefix scan of ", basename(bam), " saw ", record$informative_reads,
+          " informative reads; retrying on a whole-BAM random sample (fraction ", fraction, ")")
+  retry <- tryCatch(do.call(rna_strand_detect, c(list(bam = bam, annotation = annotation),
+    modifyList(parameters, list(sampling = "whole_bam_random", sampling_fraction = fraction,
+                                sampling_seed = 17L)))), error = function(e) {
+    message("- RNA strand fallback failed: ", conditionMessage(e)); NULL })
+  if (is.null(retry)) return(record)
+  retry$sampling_fallback <- retry$parameters[c("sampling", "sampling_fraction", "sampling_seed")]
+  retry$parameters <- parameters
+  retry
+}
+
+#' Mapped primary reads in an indexed BAM (samtools idxstats), NA if unavailable
+#' @noRd
+rna_strand_mapped_reads <- function(bam) {
+  samtools <- Sys.which("samtools")
+  if (!nzchar(samtools)) return(NA_real_)
+  out <- tryCatch(system2(samtools, c("idxstats", shQuote(path.expand(bam))), stdout = TRUE, stderr = FALSE),
+                  error = function(e) character())
+  if (!length(out)) return(NA_real_)
+  sum(as.numeric(vapply(strsplit(out, "\t"), `[`, character(1), 3)), na.rm = TRUE)
+}
+
 rna_strand_ensure <- function(df, annotation, options = list(), require_resolved = TRUE) {
   bam <- unlist(ORFik::filepath(df, "default"), use.names = FALSE)[1]
   if (length(bam) != 1L || !grepl("\\.bam$", bam))
@@ -153,6 +195,7 @@ rna_strand_ensure <- function(df, annotation, options = list(), require_resolved
     identical(record$parameters[sort(names(record$parameters))], parameters[sort(names(parameters))])
   if (!fresh) {
     record <- do.call(rna_strand_detect, c(list(bam = bam, annotation = annotation), parameters))
+    record <- rna_strand_prefix_fallback(record, bam, annotation, parameters)
     record$decision_id <- digest::digest(record[c("version", "product_signature",
       "annotation_signature", "parameters", "status", "read_strand")], algo = "xxhash64")
     dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
