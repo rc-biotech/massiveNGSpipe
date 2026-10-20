@@ -29,6 +29,17 @@ run_pipeline <- function(pipelines, config, wait = 100) {
   abort_reason <- ""
   on.exit({
     if (!completed) {
+      # Unwinds that bypass the error/interrupt handlers below (2026-10-17 and 2026-10-20 sessions ended with
+      # "Execution halted", an empty reason and no crash record, right after a stage worker exited): record what
+      # R itself last saw, so the next occurrence leaves evidence.
+      if (!nzchar(abort_reason)) {
+        last_err <- trimws(tryCatch(geterrmessage(), error = function(e) ""))
+        abort_reason <- paste0(": unhandled unwind", if (nzchar(last_err)) paste0(" (last R error: ", substr(last_err, 1, 300), ")"))
+        try(pipeline_crash_record(config, "run_pipeline_unwind",
+                                  simpleCondition(paste0("run_pipeline unwound without a handled condition; last R error: ",
+                                                         last_err, "; pid ", Sys.getpid())),
+                                  sys.calls()), silent = TRUE)
+      }
       try(pipeline_checklist(pipelines, config, print = FALSE,
                              run_status = paste0("aborted after ", format_elapsed_hours(config$init_time),
                                                  abort_reason)),
