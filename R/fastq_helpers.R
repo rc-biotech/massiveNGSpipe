@@ -737,6 +737,18 @@ run_barcode_detection_and_trim <- function(study_sample, source_dir, target_dir,
       trim.front = barcode_dt$barcode5p_size, trim.tail = barcode_dt$barcode3p_size)
   }
 
+  anchored <- anchored_front_settings(trimmed_dir, study_sample$Run,
+    paired = !is.null(file2) && length(file2) > 0L && !is.na(file2))
+  if (!is.null(anchored)) {
+    id <- tools::file_path_sans_ext(sub("\\.gz$", "", basename(file)))
+    details <- anchored_front_trim_fastq(
+      file.path(target_dir, "trim", paste0("trimmed_", id, ".fastq")), anchored,
+      report_json = file.path(target_dir, "trim", paste0("report_", id, ".json")))
+    barcode_dt[, anchored_front_base := anchored$base]
+    barcode_dt[, anchored_front_min := anchored$min]
+    barcode_dt[, anchored_front_max := anchored$max]
+    barcode_dt[, anchored_front_removed_bases := details$removed_bases]
+  }
   return(barcode_dt)
 }
 
