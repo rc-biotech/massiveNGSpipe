@@ -155,7 +155,7 @@ download_sra_ebi <- function(accession, outdir, compress) {
 sra_to_fastq <- function(accession, outdir, compress = TRUE,
                          sratoolkit_path = fs::path_dir(ORFik::install.sratoolkit()),
                          PAIRED_END, study_info_dt = NULL,
-                         fasterq_temp_dir = check_tempdir_has_space_sra_to_fastq(accession, outdir, tempdir(), PAIRED_END, study_info_dt),
+                         fasterq_temp_dir = NULL,
                          progress_bar = FALSE) {
   message("Extracting SRA run:", accession)
   sra_path <- fs::path_join(c(outdir, accession))
@@ -167,13 +167,30 @@ sra_to_fastq <- function(accession, outdir, compress = TRUE,
   stopifnot(file.exists(sratoolkit_binary))
 
   progress_bar <- ifelse(progress_bar, "-p", "")
-  using_temp_dir <- fasterq_temp_dir == tempdir()
+  # Temp drive (tempdir(), i.e. the shared root disk) only with a granted space
+  # claim (R/tmp_space.R): the claim covers a per-run work dir that is always
+  # deleted afterwards, also on error, and by the next claimer if this process dies.
+  claim <- NULL; claim_root <- tmp_claim_root()
+  if (is.null(fasterq_temp_dir)) {
+    work_dir <- file.path(tempdir(), paste0("fasterq_", accession))
+    need_gb <- fasterq_tmp_need_gb(accession, outdir, PAIRED_END, study_info_dt)
+    claim <- tmp_space_claim(claim_root, need_gb, paths = work_dir)
+    if (!is.null(claim)) {
+      on.exit(tmp_space_release(claim_root, claim), add = TRUE)
+      dir.create(work_dir, showWarnings = FALSE, recursive = TRUE)
+      fasterq_temp_dir <- work_dir
+    } else {
+      message("- Not enough claimable temp space (", round(need_gb, 1), " GB), extracting on the output drive")
+      fasterq_temp_dir <- outdir
+    }
+  }
+  using_temp_dir <- !is.null(claim)
   threads <- ifelse(using_temp_dir, "--threads 24", "--threads 6")
   temp_path <- sra_path
   if (using_temp_dir) {
     message("- Copying file to temp drive..")
-    temp_path <- file.path(tempdir(), accession)
-    file.copy(sra_path, temp_path)
+    temp_path <- file.path(fasterq_temp_dir, accession)
+    if (!isTRUE(file.copy(sra_path, temp_path))) stop("Copying .sra file to temp drive failed (disk full?)")
   }
   ret <- system2(sratoolkit_binary,
                  c(temp_path, "-f", progress_bar, "-t", fasterq_temp_dir,
@@ -184,17 +201,17 @@ sra_to_fastq <- function(accession, outdir, compress = TRUE,
   out_file_temp <- paste0(temp_path, if(PAIRED_END) c("_1", "_2"), ".fastq")
 
   if (ret != 0) {
-    file.remove(c(out_file_temp, temp_path))
+    rm_files <- c(out_file_temp, temp_path)
+    file.remove(rm_files[file.exists(rm_files)])
     stop("Fasterq dump failed!")
   }
   if (using_temp_dir) {
     message("- Copying file back to main drive..")
     stopifnot(all(file.exists(out_file_temp)))
     out_file <- paste0(sra_path, if(PAIRED_END) c("_1", "_2"), ".fastq")
-    file.copy(out_file_temp, out_file, overwrite = TRUE)
-    file.remove(c(out_file_temp, temp_path))
-    lite_file <- paste0(temp_path, "_1", ".fastq")
-    if (file.exists(lite_file)) file.remove(lite_file)
+    if (!all(file.copy(out_file_temp, out_file, overwrite = TRUE)))
+      stop("Copying fastq back to main drive failed (disk full?)")
+    # work dir (with any lite file / fasterq.tmp.* leftovers) is removed by the claim release
   }
 
   # Compress the output if needed
@@ -328,6 +345,24 @@ validate_fastq_download <- function(filenames, accession, PAIRED_END, is_compres
 find_ascp_srr_url <- function(run_accession) {
   ORFik::find_url_ebi(run_accession, ebi_file_format = "sra_ftp",
                       convert_to_ascp = TRUE)
+}
+
+#' GB a fasterq-dump extraction on a temp drive needs at most
+#'
+#' Copied .sra file + fastq output + fasterq-dump's own scratch (about the
+#' output size), plus 10 percent. The output estimate is
+#' \code{estimate_fastq_tmp_gb()} when the run's SraRunInfo row is known,
+#' otherwise 5x the .sra size (x2 for paired end), as before.
+#' @noRd
+fasterq_tmp_need_gb <- function(accession, outdir, PAIRED_END, study_info_dt = NULL) {
+  sra_file <- fs::path_join(c(outdir, accession))
+  sra_gb <- if (file.exists(sra_file)) file.size(sra_file) / 1024^3 else 0
+  fastq_gb <- NA_real_
+  if (!is.null(study_info_dt) && accession %in% study_info_dt$Run)
+    fastq_gb <- tryCatch(estimate_fastq_tmp_gb(study_info_dt[Run == accession])$total_GiB, error = function(e) NA_real_)
+  if (is.na(fastq_gb) || fastq_gb <= 0)
+    fastq_gb <- (if (sra_gb > 0) 5 * sra_gb else 5) * ifelse(PAIRED_END, 2, 1)
+  1.1 * (sra_gb + 2 * fastq_gb)
 }
 
 check_tempdir_has_space_sra_to_fastq <- function(accession, outdir, tempdir, PAIRED_END, study_info_dt = NULL) {

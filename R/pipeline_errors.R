@@ -23,6 +23,25 @@ NULL
 #' @param msg character, error message(s)
 #' @return character, a short hint, or \code{"unknown"}
 #' @export
+#' Disk-full hint from the drives themselves
+#'
+#' Error texts from a full disk are often empty or misleading (a worker killed
+#' while writing, "cannot create R_TempDir"); checking free space at error time
+#' is more reliable. Checks tempdir() and the raw/processed data drives.
+#' @param config the mNGSp config object
+#' @param min_gb numeric, default 2: below this a drive counts as full
+#' @return character hint or NULL
+#' @noRd
+low_disk_hint <- function(config, min_gb = 2) {
+  dirs <- c(temp = tempdir(), raw = unname(config$config["fastq"]), processed = unname(config$config["bam"]))
+  dirs <- dirs[!is.na(dirs) & dir.exists(dirs)]
+  free <- vapply(dirs, tmp_free_gb, numeric(1))
+  full <- !is.na(free) & free < min_gb
+  if (!any(full)) return(NULL)
+  paste0("disk full: ", paste(sprintf("%s drive (%s) %.1f GB free", names(dirs)[full], dirs[full], free[full]),
+                              collapse = "; "))
+}
+
 error_hint <- function(msg) {
   hints <- c(
     "could not open genome file|genomeParameters.txt" =
@@ -33,8 +52,6 @@ error_hint <- function(msg) {
       "disk full: check df for the raw/processed drive and the temp directory",
     "cannot allocate|std::bad_alloc|Killed|out of memory|vector memory exhausted" =
       "out of memory: lower threads for this step or wait for RAM",
-    "unevaluated and other errors" =
-      "a parallel worker died without an R error (often killed by the OOM killer or a signal)",
     "no periodic or accepted read-lengths|Not enough reads in TIS region" =
       "no 3-nt periodicity: check adapter/barcode trimming, read lengths and whether the library is Ribo-seq",
     "detect_strand_mode" = "RNA strand detection failed: often a broken STAR index or too few mapped reads",
@@ -48,7 +65,9 @@ error_hint <- function(msg) {
     "object '.*' not found|could not find function" =
       "code error (missing object or function): likely a bug or a version mismatch, report it",
     "subscript out of bounds|missing value where TRUE/FALSE needed|arguments imply differing number of rows" =
-      "code or metadata edge case: inspect the study's metadata and report it")
+      "code or metadata edge case: inspect the study's metadata and report it",
+    "unevaluated and other errors" =
+      "a parallel worker died without an R error (often killed by the OOM killer or a signal)")
   msg <- paste(msg, collapse = "\n")
   for (p in names(hints)) if (grepl(p, msg, ignore.case = TRUE)) return(unname(hints[p]))
   "unknown"
@@ -138,6 +157,8 @@ error_record_write <- function(config, exp, step, err) {
   # is in this session's console logs, so the matching lines are added to the record and used for the hint.
   console <- tryCatch(console_error_excerpt(config, exp), error = function(e) character())
   hint <- error_hint(c(txt, console))
+  low <- tryCatch(low_disk_hint(config), error = function(e) NULL)
+  if (!is.null(low)) hint <- low
   path <- NA_character_
   if (!is.null(config$error_dir)) {
     path <- report_failed_pipe_path(config, exp)

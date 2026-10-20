@@ -82,6 +82,10 @@ fastqc_parse_adapters <- function(file, nreads, adapters_file =
                                   fs::path(tempdir(), "adapter_candidates.txt")) {
 
   qc_report_path <- run_fastqc(file, nreads, adapters_file)
+  # The report dir (html, zip, extracted folder) is only needed for parsing;
+  # R would otherwise keep it in tempdir() until the session exits (forever
+  # after a crash).
+  on.exit(unlink(dirname(dirname(qc_report_path)), recursive = TRUE), add = TRUE)
   return(read_fastq_adapter_output(qc_report_path))
 }
 
