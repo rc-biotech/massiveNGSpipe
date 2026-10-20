@@ -540,6 +540,14 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
           #TODO: Now _1 and _2 will be kept, but fixed in cleanup, do I want it like that ?
           set_sample_flag(config, "aligned", experiment, run)
         }
+        # Samples deferred for RAM (ram_decision "defer" -> next) are not failures: skip the final checks (which
+        # would stop with "missing bam files", PRJNA923630 SRR25954676, 2026-10-20); the caller then leaves the
+        # study flag unset so the stage loop retries the deferred samples on its next round.
+        deferred <- setdiff(runs$Run, samples_done(config, "aligned", experiment))
+        if (length(deferred)) {
+          message("- Deferred for RAM, will retry next round: ", paste(deferred, collapse = ", "))
+          return(invisible("deferred"))
+        }
         alignment_final_checks(input_dir, output_dir, runs, pairs, config, steps)
       },
       args = list(pairs = pairs, runs = runs, strandMode = strandMode,
@@ -554,7 +562,9 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
       on_poll = function() pipeline_checklist(pipelines, config)
     )
   }
-  set_flag(config, "aligned", conf["exp"])
+  # Not done while samples are deferred for RAM (see the subprocess above); the stage loop calls again.
+  if (all(runs_full$Run %in% samples_done(config, "aligned", experiment)))
+    set_flag(config, "aligned", conf["exp"])
 }
 
 #' Remove contaminants and align the reads to genome, for every organism
