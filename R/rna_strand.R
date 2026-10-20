@@ -198,6 +198,11 @@ rna_strand_ensure <- function(df, annotation, options = list(), require_resolved
     identical(record$product_signature, rna_strand_signature(bam)) &&
     identical(record$annotation_signature, annotation$annotation_signature) &&
     identical(record$parameters[sort(names(record$parameters))], parameters[sort(names(parameters))])
+  # A cached under-informed prefix result from before the whole-BAM fallback existed (PRJNA765941, 2026-10-20) is
+  # re-evaluated once; records that already went through the fallback carry sampling_fallback and stay cached.
+  if (fresh && identical(record$status, "unknown") && is.null(record$sampling_fallback) &&
+      is.null(parameters$sampling) && isTRUE(record$informative_reads < parameters$min_informative))
+    fresh <- FALSE
   if (!fresh) {
     record <- do.call(rna_strand_detect, c(list(bam = bam, annotation = annotation), parameters))
     record <- rna_strand_prefix_fallback(record, bam, annotation, parameters)

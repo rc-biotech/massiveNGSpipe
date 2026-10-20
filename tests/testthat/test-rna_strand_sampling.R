@@ -95,3 +95,29 @@ test_that('Reads on a chromosome missing from the annotation do not break strand
  res <- rna_strand_detect(bam,list(regions=regions,annotation_signature='fixture'))
  expect_identical(res$status,'stranded'); expect_identical(res$strandMode,1L)
 })
+
+test_that('A cached under-informed unknown record (pre-fallback) is re-evaluated once', {
+ d <- tempfile();dir.create(d);on.exit(unlink(d,recursive=TRUE))
+ bam <- file.path(d,'x.bam');writeLines('fixture',bam)
+ annotation <- list(annotation_signature='fixture')
+ calls <- 0L
+ testthat::local_mocked_bindings(filepath=function(...)bam,.package='ORFik')
+ testthat::local_mocked_bindings(
+  rna_strand_detect=function(bam,annotation,...){
+   calls <<- calls+1L
+   list(version=1L,product_signature=rna_strand_signature(bam),annotation_signature=annotation$annotation_signature,
+        parameters=list(...),status='unknown',read_strand=NA_character_,strandMode=NA_integer_,informative_reads=0)
+  },
+  rna_strand_prefix_fallback=function(record,bam,annotation,parameters){
+   record$status <- 'stranded'; record$strandMode <- 1L; record$informative_reads <- 5000
+   record$sampling_fallback <- list(sampling='whole_bam_random'); record
+  })
+ # simulate an old cached record: detect without fallback, then save as ensure would have
+ old <- rna_strand_detect(bam,annotation,max_records=1000000L,min_informative=1000L,stranded_fraction=.8,unstranded_tolerance=.1)
+ old$decision_id <- 'old'; dir.create(dirname(ORFik:::rna_strand_sidecar(bam)),showWarnings=FALSE,recursive=TRUE)
+ saveRDS(old,ORFik:::rna_strand_sidecar(bam)); calls <- 0L
+ r <- rna_strand_ensure(NULL,annotation,list(),require_resolved=FALSE)
+ expect_identical(calls,1L); expect_identical(r$status,'stranded')
+ r2 <- rna_strand_ensure(NULL,annotation,list(),require_resolved=FALSE)
+ expect_identical(calls,1L)  # fallback record stays cached
+})
