@@ -151,6 +151,7 @@ psite_reshift_app <- function(config, exp_names = reshift_app_exp_names(config),
       split_list <- split(tab, by = "lib", keep.by = FALSE)
       split_list <- lapply(split_list, setDT)
 
+      pshift_mark_offsets_pending(rv$current_table_path, split_list, "Shiny manual offset edit")
       saveRDS(split_list, rv$current_table_path)
       saveRDS(TRUE, file.path(dirname(input$study), "manually_checked_shifts.rds"))
       check_verified_file()

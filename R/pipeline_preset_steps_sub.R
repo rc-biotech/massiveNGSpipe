@@ -1158,7 +1158,8 @@ pshift_sample_valid <- function(df_one_row) {
   if (!file.exists(ofst_path)) return(FALSE)
   pshifted_path <- pshifted_filepath(df_one_row)
   if (!file.exists(pshifted_path)) return(FALSE)
-  file.info(pshifted_path)$mtime >= file.info(ofst_path)$mtime
+  isTRUE(file.info(pshifted_path)$mtime >= file.info(ofst_path)$mtime) &&
+    pshift_offset_binding_valid(df_one_row)
 }
 
 #' One mapper-mode pass of pshift, subsetting to only the samples that
@@ -1233,8 +1234,17 @@ pshift_needed_subset <- function(df, accepted_lengths, allowed_hard12_species, B
   }
 
   # Mitoribosome profiling: offsets measured on mitochondrial CDSs (R/pshift_mito.R), passed as known shifts.
-  if (any(is_mito_sample(df_subset))) {
-    mito_tables <- mito_shift_tables(df_subset)
+  mito_auto <- is_mito_sample(df_subset)
+  if (any(mito_auto)) {
+    mito_rows <- which(mito_auto)
+    explicit <- vapply(mito_rows, function(i) {
+      one <- df_subset[i, ]
+      file.exists(pshift_offset_record_paths(ofst_filepath(one), pshifted_filepath(one))$pending)
+    }, logical(1))
+    mito_auto[mito_rows[explicit]] <- FALSE
+  }
+  if (any(mito_auto)) {
+    mito_tables <- mito_shift_tables(df_subset[mito_auto, ])
     if (is.null(shifting_table)) shifting_table <- list()
     shifting_table[names(mito_tables)] <- mito_tables
   }
@@ -1268,6 +1278,7 @@ pshift_needed_subset <- function(df, accepted_lengths, allowed_hard12_species, B
     # Removing changed-Run entries before a retry breaks that condition.
     if (!is.null(previous))
       pshift_preserve_sibling_offsets(shift_path, previous, ofst_filepath(df[!needs, ]))
+    pshift_record_applied_offsets(df_subset)
     save_pshifted_length_distributions(df_subset)
   }
   res

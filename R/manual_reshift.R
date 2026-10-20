@@ -40,9 +40,14 @@ manual_reshift <- function(exp, offsets, config = pipeline_config(), note = "") 
   df <- read.experiment(exp, validate = FALSE)
   ofst_files <- filepath(df, "ofst")
   shifts <- stats::setNames(rep(list(offsets), length(ofst_files)), ofst_files)
+  pshift_stage_offsets(df, shifts, reason = note)
+  downstream_steps <- names(config$flag)
+  downstream_steps <- downstream_steps[which(downstream_steps == "pshifted"):length(downstream_steps)]
+  remove_flag_all_exp(config, steps = downstream_steps, exps = exp)
 
   ORFik::shiftFootprintsByExperiment(df, output_format = "ofst", shift.list = shifts)
   ORFik::shifts_save(shifts, file.path(libFolder(df), "pshifted"))
+  pshift_record_applied_offsets(df)
   ORFik::shiftPlots(df, output = "auto", plot.ext = ".png")
   shift_qc(df, max_no_adapter_removed_pct = config$max_no_adapter_removed_pct)
   save_pshifted_length_distributions(df)
@@ -50,9 +55,6 @@ manual_reshift <- function(exp, offsets, config = pipeline_config(), note = "") 
   saveRDS(TRUE, file.path(QCfolder(df), "manually_checked_shifts.rds"))
   log_manual_reshift(exp, offsets, note, config)
 
-  downstream_steps <- names(config$flag)
-  downstream_steps <- downstream_steps[which(downstream_steps == "pshifted"):length(downstream_steps)]
-  remove_flag_all_exp(config, steps = downstream_steps, exps = exp)
   set_flag(config, "pshifted", exp)
   invisible(NULL)
 }

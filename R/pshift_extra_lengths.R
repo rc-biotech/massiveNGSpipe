@@ -60,12 +60,15 @@ pshift_add_extra_lengths <- function(exp, extra_lengths = c(22:24, 34:40), out_d
   added <- attr(ext, "added")
   message(name(df), ": added ", NROW(added), " (length, offset) rows over ", nrow(df), " samples")
   if (!NROW(added)) return(invisible(added))
-  out <- if (is.null(out_dir)) ORFik::pasteDir(libFolder(df), "/pshifted/") else paste0(sub("/+$", "", out_dir), "/")
+  out <- if (is.null(out_dir)) paste0(sub("/+$", "", libFolder(df)), "/pshifted/") else paste0(sub("/+$", "", out_dir), "/")
   dir.create(out, recursive = TRUE, showWarnings = FALSE)
   ORFik::shiftFootprintsByExperiment(df, out.dir = out, output_format = "ofst", shift.list = ext,
                                      accepted.lengths = sort(unique(c(unlist(lapply(ext, `[[`, "fraction"))))),
                                      BPPARAM = BPPARAM)
-  if (is.null(out_dir)) save_pshifted_length_distributions(df)
+  if (is.null(out_dir)) {
+    pshift_record_applied_offsets(df)
+    save_pshifted_length_distributions(df)
+  }
   invisible(added)
 }
 

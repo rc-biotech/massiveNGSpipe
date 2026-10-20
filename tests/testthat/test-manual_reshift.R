@@ -28,6 +28,8 @@ test_that("manual_reshift() writes the marker, clears downstream flags, sets psh
     .package = "ORFik"
   )
   testthat::local_mocked_bindings(
+    pshift_stage_offsets = function(df, ...) shift_calls[["pending"]] <<- TRUE,
+    pshift_record_applied_offsets = function(df, ...) shift_calls[["applied"]] <<- TRUE,
     shift_qc = function(df, ...) shift_calls[["qc"]] <<- TRUE,
     save_pshifted_length_distributions = function(df) shift_calls[["dist"]] <<- TRUE
   )
@@ -37,6 +39,8 @@ test_that("manual_reshift() writes the marker, clears downstream flags, sets psh
   # The real shift + its persistence + QC regeneration all happened.
   expect_length(shift_calls[["shift"]], 2) # one entry per ofst file
   expect_identical(shift_calls[["save"]]$shifts, shift_calls[["shift"]])
+  expect_true(shift_calls[["pending"]])
+  expect_true(shift_calls[["applied"]])
   expect_true(shift_calls[["plots"]])
   expect_true(shift_calls[["qc"]])
   expect_true(shift_calls[["dist"]])

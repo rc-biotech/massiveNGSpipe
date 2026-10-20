@@ -27,6 +27,7 @@ test_that("pipeline_pshift() saves length distributions after a successful all-m
     # No ofst file "exists" for this fake path -- pshift_sample_valid()
     # returns FALSE, so this sample is treated as needing a shift.
     ofst_filepath = function(df) file.path(tempdir(), "does_not_exist.ofst"),
+    pshift_record_applied_offsets = function(df) invisible(NULL), # native I/O mocked in this orchestration test
     shiftFootprintsByExperimentSafe = function(df, ...) "ok", # not an "error"-classed object
     save_pshifted_length_distributions = function(df) called_with <<- df
   )
