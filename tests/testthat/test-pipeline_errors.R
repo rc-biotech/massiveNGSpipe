@@ -120,6 +120,25 @@ test_that("error records include console log error lines and use them for the hi
   expect_identical(console_error_excerpt(config, "NOPE"), character())
 })
 
+test_that("a lost worker error is recovered from this session's BiocParallel task logs", {
+  config <- local_err_config()
+  config$parallel_conf <- list(logdir = file.path(config$project, "log_pipeline"))
+  d <- file.path(config$parallel_conf$logdir, "collapse"); dir.create(d, recursive = TRUE)
+  fq <- "/x/PRJ7-mus_musculus/trim/trimmed_SRR1.fastq"
+  writeLines(c("ERROR [2026-10-16 09:00:00] old error from an earlier session",
+               "ERROR [2026-10-17 11:00:00] Error in .Call2(\"read_fastq_files\", ...): reading FASTQ file x: cannot read line 9, line is too long",
+               "stderr and stdout:", paste("File 1/1: ", fq)), file.path(d, "collapse.task2.log"))
+  writeLines(c("ERROR [2026-10-17 11:00:00] unrelated study", "File 1/1:  /x/PRJ8-homo_sapiens/trim/a.fastq"),
+             file.path(d, "collapse.task1.log"))
+  ex <- bp_task_error_excerpt(config, "PRJ7")
+  expect_length(ex, 1); expect_match(ex, "line is too long")
+  suppressWarnings(report_failed_pipe(try(stop("BiocParallel errors\n  0 remote errors, element index: \n  3 unevaluated and other errors"),
+                                          silent = TRUE), config, "collapse", "PRJ7"))
+  rec <- readRDS(file.path(config$error_dir, "PRJ7.rds"))
+  expect_match(rec, "Likely cause: corrupt FASTQ")
+  expect_identical(bp_task_error_excerpt(config, "PRJ9"), character())
+})
+
 test_that("metadata_legacy_columns renames UNIQUE to COMMENT once and keeps values", {
   dt <- data.table::data.table(Run = c("A", "B"), UNIQUE = c("", "duplicate of A"))
   metadata_legacy_columns(dt)

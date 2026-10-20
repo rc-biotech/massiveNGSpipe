@@ -68,6 +68,8 @@ error_hint <- function(msg) {
       "code error (missing object or function): likely a bug or a version mismatch, report it",
     "subscript out of bounds|missing value where TRUE/FALSE needed|arguments imply differing number of rows" =
       "code or metadata edge case: inspect the study's metadata and report it",
+    "line is too long|read_fastq_files|invalid FASTQ|FASTQ.*(truncated|malformed)" =
+      "corrupt FASTQ (e.g. a block of NUL bytes from an interrupted write, PRJNA630198 2026-10-20): check the file, delete it and the run's fetch/trim markers, re-fetch",
     "unevaluated and other errors" =
       "a parallel worker died without an R error (often killed by the OOM killer or a signal)")
   msg <- paste(msg, collapse = "\n")
@@ -158,6 +160,9 @@ error_record_write <- function(config, exp, step, err) {
   # Subprocess errors often only say "see error above": the real cause (e.g. STAR "could not open genome file")
   # is in this session's console logs, so the matching lines are added to the record and used for the hint.
   console <- tryCatch(console_error_excerpt(config, exp), error = function(e) character())
+  # "0 remote errors, N unevaluated": the worker's own R error is often only in the BiocParallel task logs
+  if (grepl("unevaluated and other errors", txt))
+    console <- c(console, tryCatch(bp_task_error_excerpt(config, exp), error = function(e) character()))
   hint <- error_hint(c(txt, console))
   low <- tryCatch(low_disk_hint(config), error = function(e) NULL)
   if (!is.null(low)) hint <- low
@@ -194,6 +199,35 @@ console_error_excerpt <- function(config, exp, n = 6) {
   hits <- grep("FATAL|ERROR|Error|error:|failed|Killed|exhausted|cannot|No such file", lines, value = TRUE)
   hits <- unique(trimws(hits)); hits <- hits[nzchar(hits)]
   utils::tail(substr(hits, 1, 300), n)
+}
+
+#' ERROR lines from this session's BiocParallel task logs that concern one experiment
+#'
+#' With \code{bpstopOnError} a worker's R error can be missing from the returned BiocParallel error ("0 remote
+#' errors, N unevaluated", PRJNA630198 collapse 2026-10-20: ShortRead "line is too long" on a corrupt FASTQ, misread
+#' as a killed worker). The task logs (\code{<parallel_conf$logdir>/<step>/<step>.task<i>.log}) keep it. The log
+#' directory is shared by concurrent pipeline sessions, so only logs that mention \code{exp} and were written since
+#' this session started are read, and only \code{ERROR [time]} lines from that time on are returned.
+#' @param config the mNGSp config object
+#' @param exp character, experiment name or study accession
+#' @param n integer, max lines
+#' @return character vector (possibly empty)
+#' @noRd
+bp_task_error_excerpt <- function(config, exp, n = 4) {
+  logdir <- config$parallel_conf$logdir
+  if (is.null(logdir) || is.na(logdir) || !dir.exists(logdir)) return(character())
+  since <- suppressWarnings(as.POSIXct(basename(config$error_dir %||% ""), tz = ""))
+  if (is.na(since)) since <- Sys.time() - 24 * 3600
+  files <- list.files(logdir, pattern = "\\.task[0-9]+\\.log$", recursive = TRUE, full.names = TRUE)
+  files <- files[file.mtime(files) >= since]
+  hits <- unlist(lapply(files, function(f) {
+    lines <- readLines(f, warn = FALSE)
+    if (!any(grepl(exp, lines, fixed = TRUE))) return(character())
+    err <- grep("^ERROR \\[", lines, value = TRUE)
+    t <- suppressWarnings(as.POSIXct(sub("^ERROR \\[([^]]+)\\].*", "\\1", err), tz = ""))
+    err[!is.na(t) & t >= since]
+  }), use.names = FALSE)
+  utils::tail(substr(unique(hits), 1, 300), n)
 }
 
 #' Record an unexpected crash of a stage loop or of run_pipeline() itself
