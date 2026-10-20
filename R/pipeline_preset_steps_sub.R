@@ -1222,6 +1222,13 @@ pshift_needed_subset <- function(df, accepted_lengths, allowed_hard12_species, B
     }
   }
 
+  # Mitoribosome profiling: offsets measured on mitochondrial CDSs (R/pshift_mito.R), passed as known shifts.
+  if (any(is_mito_sample(df_subset))) {
+    mito_tables <- mito_shift_tables(df_subset)
+    if (is.null(shifting_table)) shifting_table <- list()
+    shifting_table[names(mito_tables)] <- mito_tables
+  }
+
   # ORFik::shiftFootprintsByExperiment() drops tx/txdb for ALL files when shift.list is given, so files without an
   # entry are auto-detected without annotation and fail ("asTX: not all references are present"): PRJNA317266,
   # PRJNA1047529 2026-10-16. Shift the files with known offsets and detect the rest in separate calls.
