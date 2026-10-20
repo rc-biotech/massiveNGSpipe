@@ -132,3 +132,81 @@ test_that('extra-length production writer refreshes provenance, scratch writer d
   pshift_add_extra_lengths('test',23L);expect_identical(records,1L)
   pshift_add_extra_lengths('test',23L,out_dir=tempfile('scratch_'));expect_identical(records,1L)
 })
+
+provenance_recipe <- function(lengths = c(27,28)) pshift_detection_recipe(lengths, character(), 80)
+
+test_that('automatic reuse requires bound unchanged source and recipe, not table existence', {
+  f<-provenance_fixture();mock_provenance_paths(f);one<-f$df[1,];r<-provenance_recipe()
+  expect_null(pshift_reusable_offsets(one,r)) # legacy entry
+  pshift_record_applied_offsets(one,recipe=r)
+  expect_identical(pshift_reusable_offsets(one,r),pshift_canonical_offsets(f$shifts[[1]]))
+  unlink(f$post[1]) # regeneration on unchanged source can safely reuse
+  expect_identical(pshift_reusable_offsets(one,r),pshift_canonical_offsets(f$shifts[[1]]))
+  expect_null(pshift_reusable_offsets(one,r,FALSE))
+  writeLines('new retrimmed raw input',f$raw[1])
+  expect_null(pshift_reusable_offsets(one,r))
+})
+
+test_that('mask expansion invalidates new resume and automatic reuse certificates', {
+  f<-provenance_fixture();mock_provenance_paths(f);one<-f$df[1,];r<-provenance_recipe()
+  pshift_record_applied_offsets(one,recipe=r)
+  expect_true(pshift_recipe_valid(one,provenance_recipe(c(28,27,27))))
+  expect_false(pshift_recipe_valid(one,provenance_recipe(20:40)))
+  expect_null(pshift_reusable_offsets(one,provenance_recipe(20:40)))
+  pshift_record_applied_offsets(one) # extra length writer keeps same-source recipe
+  expect_false(pshift_recipe_valid(one,provenance_recipe(20:40)))
+})
+
+test_that('explicit requests survive no-reuse, but stale/corrupt requests stop before writing', {
+  f<-provenance_fixture();mock_provenance_paths(f);one<-f$df[1,];r<-provenance_recipe()
+  pshift_mark_offsets_pending(f$table,f$shifts[1],'reviewed')
+  expect_identical(pshift_reusable_offsets(one,r,FALSE),pshift_canonical_offsets(f$shifts[[1]]))
+  changed<-f$shifts;changed[[1]]$offsets_start[1]<- -13L;saveRDS(changed,f$table)
+  expect_error(pshift_reusable_offsets(one,r,FALSE),'differ from explicit request')
+  saveRDS(f$shifts,f$table);writeLines('new source',f$raw[1])
+  expect_error(pshift_reusable_offsets(one,r,FALSE),'differ from explicit request')
+})
+
+test_that('retrimming enters fresh native detection and preserves a valid sibling table', {
+  f<-provenance_fixture();mock_provenance_paths(f);r<-provenance_recipe()
+  pshift_record_applied_offsets(f$df,recipe=r)
+  writeLines('changed raw source',f$raw[1]);got<-list();fresh<-f$shifts[1]
+  fresh[[1]]$offsets_start<-c(-13L,-12L)
+  testthat::local_mocked_bindings(is_mito_sample=function(df)rep(FALSE,nrow(df)),
+    shiftFootprintsByExperimentSafe=function(df,shifting_table,...){
+      got[[length(got)+1L]]<<-list(ids=runIDs(df),shifts=shifting_table)
+      saveRDS(fresh,f$table);writeLines('fresh detected native output',f$post[1]);NULL},
+    save_pshifted_length_distributions=function(df)NULL)
+  pshift_needed_subset(f$df,c(27,28),character(),BiocParallel::SerialParam(),80,TRUE)
+  expect_identical(got[[1]]$ids,'SRR001');expect_null(got[[1]]$shifts)
+  expect_identical(readRDS(f$table)[[f$raw[2]]],f$shifts[[2]])
+  expect_true(pshift_sample_valid(f$df[1,]));expect_true(pshift_sample_valid(f$df[2,]))
+})
+
+test_that('no-reuse native route still applies explicit mitochondrial requests', {
+  f<-provenance_fixture();mock_provenance_paths(f);one<-f$df[1,];got<-NULL
+  pshift_mark_offsets_pending(f$table,f$shifts[1],'reviewed mito')
+  testthat::local_mocked_bindings(is_mito_sample=function(df)TRUE,
+    mito_shift_tables=function(df)stop('explicit request must override automatic mito'),
+    shiftFootprintsByExperimentSafe=function(df,shifting_table,...){got<<-shifting_table;writeLines('new product',f$post[1]);NULL},
+    save_pshifted_length_distributions=function(df)NULL)
+  pshift_needed_subset(one,c(27,28),character(),BiocParallel::SerialParam(),80,FALSE)
+  expect_identical(got[[1]],pshift_canonical_offsets(f$shifts[[1]]))
+  expect_true(pshift_sample_valid(one))
+})
+
+test_that('mixed explicit and fresh detection use separate native calls without losing entries', {
+  f<-provenance_fixture();mock_provenance_paths(f);got<-list()
+  pshift_mark_offsets_pending(f$table,f$shifts[1],'reviewed')
+  unlink(f$post[2]) # legacy missing product must detect fresh
+  testthat::local_mocked_bindings(is_mito_sample=function(df)rep(FALSE,nrow(df)),
+    shiftFootprintsByExperimentSafe=function(df,shifting_table,...){
+      ids<-runIDs(df);got[[length(got)+1L]]<<-list(ids=ids,known=!is.null(shifting_table))
+      saveRDS(f$shifts[unname(f$raw[ids])],f$table)
+      writeLines('new native mixed product',f$post[ids]);NULL},
+    save_pshifted_length_distributions=function(df)NULL)
+  pshift_needed_subset(f$df,c(27,28),character(),BiocParallel::SerialParam(),80,FALSE)
+  expect_identical(got,list(list(ids='SRR001',known=TRUE),list(ids='SRR002',known=FALSE)))
+  expect_setequal(names(readRDS(f$table)),unname(f$raw))
+  expect_true(pshift_sample_valid(f$df[1,]));expect_true(pshift_sample_valid(f$df[2,]))
+})

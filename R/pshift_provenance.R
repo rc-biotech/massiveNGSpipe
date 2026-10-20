@@ -72,6 +72,50 @@ pshift_stage_offsets <- function(df, shifts, reason = "") {
   invisible(NULL)
 }
 
+# Cheap recipe/source guards: never infer biological suitability from a saved
+# table's existence. Missing legacy provenance permits historical resume only,
+# not reuse of offsets for a product that needs rebuilding.
+pshift_detection_recipe <- function(accepted_lengths, allowed_hard12_species,
+                                    max_no_adapter_removed_pct) {
+  list(version = "raw-bound-v1", accepted_lengths = sort(unique(as.integer(accepted_lengths))),
+       allowed_hard12_species = sort(unique(as.character(allowed_hard12_species))),
+       max_no_adapter_removed_pct = as.numeric(max_no_adapter_removed_pct))
+}
+
+pshift_recipe_valid <- function(df_one_row, recipe) {
+  paths <- pshift_offset_record_paths(ofst_filepath(df_one_row), pshifted_filepath(df_one_row))
+  if (!file.exists(paths$applied)) return(TRUE) # legacy resume, not certification
+  tryCatch({
+    record <- readRDS(paths$applied)
+    is.null(record$recipe) || identical(record$recipe, recipe)
+  }, error = function(e) FALSE)
+}
+
+# Explicit requests override the reuse switch, but must match the current raw
+# source and exact saved entry. Corruption/stale requests stop before any writer.
+pshift_reusable_offsets <- function(df_one_row, recipe, reuse = TRUE) {
+  raw <- ofst_filepath(df_one_row); shifted <- pshifted_filepath(df_one_row)
+  paths <- pshift_offset_record_paths(raw, shifted)
+  table_path <- file.path(dirname(shifted), "shifting_table.rds")
+  if (file.exists(paths$pending)) {
+    pending <- readRDS(paths$pending)
+    entry <- pshift_table_entry(raw, table_path)
+    if (!identical(pending$schema, 1L) || is.null(entry) ||
+        !identical(pending$raw, pshift_file_identity(raw)) ||
+        !identical(pending$offsets, entry))
+      stop("Pending P-site offsets/source differ from explicit request: ", raw)
+    return(entry)
+  }
+  if (!isTRUE(reuse) || !file.exists(paths$applied)) return(NULL)
+  tryCatch({
+    record <- readRDS(paths$applied)
+    entry <- pshift_table_entry(raw, table_path)
+    if (identical(record$schema, 1L) && !is.null(entry) &&
+        identical(record$raw, pshift_file_identity(raw)) &&
+        identical(record$recipe, recipe) && identical(record$offsets, entry)) entry else NULL
+  }, error = function(e) NULL)
+}
+
 pshift_offset_binding_valid <- function(df_one_row) {
   raw <- ofst_filepath(df_one_row); shifted <- pshifted_filepath(df_one_row)
   paths <- pshift_offset_record_paths(raw, shifted)
@@ -89,7 +133,7 @@ pshift_offset_binding_valid <- function(df_one_row) {
 
 # Called only after the native shifting writer succeeds. Pending requests are
 # cleared only for existing products whose saved offsets match the request.
-pshift_record_applied_offsets <- function(df) {
+pshift_record_applied_offsets <- function(df, recipe = NULL) {
   for (i in seq_len(nrow(df))) {
     one <- df[i, ]; raw <- ofst_filepath(one); shifted <- pshifted_filepath(one)
     paths <- pshift_offset_record_paths(raw, shifted)
@@ -105,8 +149,17 @@ pshift_record_applied_offsets <- function(df) {
       stop("Applied P-site offsets/source differ from explicit request: ", raw)
     if (!is.null(pending) && identical(pending$previous_shifted, pshift_file_identity(shifted)))
       stop("P-site product was not rewritten after explicit offset request: ", raw)
+    # Extra-length writers retain a same-source recipe; legacy records do not
+    # acquire a fresh-detection certificate merely by being read again.
+    bound_recipe <- recipe
+    if (is.null(bound_recipe) && file.exists(paths$applied)) {
+      old <- readRDS(paths$applied)
+      if (identical(old$raw, pshift_file_identity(raw))) bound_recipe <- old$recipe
+    }
     pshift_atomic_record(list(schema = 1L, raw = pshift_file_identity(raw),
-      shifted = pshift_file_identity(shifted), offsets = current, applied = Sys.time()), paths$applied)
+      shifted = pshift_file_identity(shifted), offsets = current, recipe = bound_recipe,
+      offset_source = if (!is.null(pending)) "explicit_request" else "native_pipeline",
+      applied = Sys.time()), paths$applied)
     if (!is.null(pending)) {
       if (!identical(pending, readRDS(paths$pending))) stop("P-site request changed during apply: ", raw)
       unlink(paths$pending)

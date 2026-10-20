@@ -1180,7 +1180,9 @@ pshift_sample_valid <- function(df_one_row) {
 #' are already a subset of existing keys. A retry that removed the
 #' changed entries breaks that condition, so this wrapper explicitly
 #' preserves unchanged siblings after shifting. Existing retry offsets
-#' are reused only when \code{reuse_shifts_if_existing} allows it;
+#' are reused only when raw identity and detection recipe are bound and
+#' \code{reuse_shifts_if_existing} allows it; explicit pending requests override
+#' that switch after source/table validation;
 #' other needed samples receive fresh detection.
 #'
 #' One real caveat, informational only: \code{shiftFootprintsByExperimentSafe()}'s
@@ -1195,8 +1197,8 @@ pshift_sample_valid <- function(df_one_row) {
 #' case where a sample's pshifted FILE is missing/stale but its
 #' shift-table ENTRY is still present and usable (e.g. the file was
 #' deleted by something else while the table itself wasn't touched):
-#' that entry is reused (skips re-detection, matching the pre-subsetting
-#' behavior) rather than always forcing a fresh auto-detect for
+#' that entry is reused only with matching raw-source/recipe provenance.
+#' Legacy entries without that proof receive fresh auto-detection for
 #' everything in the subset.
 #' @param df an ORFik experiment, already at the correct
 #' \code{uniqueMappers()} setting for this pass
@@ -1209,29 +1211,21 @@ pshift_sample_valid <- function(df_one_row) {
 #' @noRd
 pshift_needed_subset <- function(df, accepted_lengths, allowed_hard12_species, BPPARAM,
                                  max_no_adapter_removed_pct, reuse_shifts_if_existing) {
-  needs <- !vapply(seq_len(nrow(df)), function(i) pshift_sample_valid(df[i, ]), logical(1))
+  recipe <- pshift_detection_recipe(accepted_lengths, allowed_hard12_species, max_no_adapter_removed_pct)
+  needs <- !vapply(seq_len(nrow(df)), function(i)
+    pshift_sample_valid(df[i, ]) && pshift_recipe_valid(df[i, ], recipe), logical(1))
   if (!any(needs)) return(1)
   df_subset <- df[needs, ]
   shift_path <- if (any(!needs))
     file.path(dirname(pshifted_filepath(df[which(!needs)[1], ])), "shifting_table.rds") else NULL
   previous <- if (!is.null(shift_path) && file.exists(shift_path)) readRDS(shift_path) else NULL
 
-  shifting_table <- NULL
-  if (reuse_shifts_if_existing) {
-    full_table <- try(shifts_load_safe(df, TRUE), silent = TRUE)
-    if (!is(full_table, "try-error") && !is.null(full_table)) {
-      subset_paths <- ofst_filepath(df_subset)
-      candidate <- full_table[subset_paths]
-      # shifts_load_safe() pads any sample the table doesn't cover with
-      # a NULL/NA placeholder (so its own length check against nrow(df)
-      # still passes) -- that placeholder must fall through to fresh
-      # auto-detection inside shiftFootprintsByExperiment()'s own
-      # per-file `if (is.null(shifts))` check, never be passed through
-      # as if it were a real known shift.
-      has_real_entry <- !vapply(candidate, function(x) is.null(x) || (length(x) == 1 && is.na(x)), logical(1))
-      if (any(has_real_entry)) shifting_table <- candidate[has_real_entry]
-    }
-  }
+  subset_paths <- ofst_filepath(df_subset)
+  candidates <- lapply(seq_len(nrow(df_subset)), function(i)
+    pshift_reusable_offsets(df_subset[i, ], recipe, reuse_shifts_if_existing))
+  names(candidates) <- subset_paths
+  candidates <- candidates[!vapply(candidates, is.null, logical(1))]
+  shifting_table <- if (length(candidates)) candidates else NULL
 
   # Mitoribosome profiling: offsets measured on mitochondrial CDSs (R/pshift_mito.R), passed as known shifts.
   mito_auto <- is_mito_sample(df_subset)
@@ -1278,7 +1272,7 @@ pshift_needed_subset <- function(df, accepted_lengths, allowed_hard12_species, B
     # Removing changed-Run entries before a retry breaks that condition.
     if (!is.null(previous))
       pshift_preserve_sibling_offsets(shift_path, previous, ofst_filepath(df[!needs, ]))
-    pshift_record_applied_offsets(df_subset)
+    pshift_record_applied_offsets(df_subset, recipe = recipe)
     save_pshifted_length_distributions(df_subset)
   }
   res
