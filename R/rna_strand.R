@@ -104,8 +104,13 @@ rna_strand_detect <- function(bam, annotation, max_records = 1000000L,
     if (paired_seen) reads <- reads[bitwAnd(flags, 64L) != 0L]
     if (!"NH" %in% names(mcols(reads))) stop("RNA strand inference requires NH unique-mapping tags")
     reads <- reads[!is.na(mcols(reads)$NH) & mcols(reads)$NH == 1L]
-    if (any(!as.character(seqnames(reads)) %in% seqlevels(annotation$regions)))
-      reads <- ORFik::matchSeqStyle(reads, seqinfo(annotation$regions))
+    if (any(!as.character(seqnames(reads)) %in% seqlevels(annotation$regions))) {
+      # Harmonise naming style (1 vs chr1); reads on sequences absent from the annotation cannot overlap a
+      # region, so they are dropped. (ORFik::matchSeqStyle is not exported and refuses to drop used levels.)
+      try(suppressWarnings(GenomeInfoDb::seqlevelsStyle(reads) <- GenomeInfoDb::seqlevelsStyle(annotation$regions)[1]),
+          silent = TRUE)
+      reads <- reads[as.character(seqnames(reads)) %in% seqlevels(annotation$regions)]
+    }
     unique <- unique + length(reads)
     chunk <- rna_strand_classify(reads, annotation$regions, min_informative,
                                 stranded_fraction, unstranded_tolerance)

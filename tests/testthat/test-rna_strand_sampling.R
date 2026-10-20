@@ -81,3 +81,17 @@ test_that('An under-informed prefix scan falls back to a whole-BAM random sample
  informative <- prefix; informative$informative_reads <- 5000
  expect_identical(rna_strand_prefix_fallback(informative,bam,annotation,params),informative)
 })
+
+test_that('Reads on a chromosome missing from the annotation do not break strand detection', {
+ skip_if(Sys.which('samtools') == '', 'samtools required')
+ d <- tempfile();dir.create(d);on.exit(unlink(d,recursive=TRUE))
+ sam <- file.path(d,'s.sam');bam <- file.path(d,'s.bam')
+ header <- c('@HD\tVN:1.6\tSO:coordinate','@SQ\tSN:chr1\tLN:10000','@SQ\tSN:chr2\tLN:10000')
+ r1 <- paste0('a',seq_len(500L),'\t0\tchr1\t100\t60\t10M\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII\tNH:i:1')
+ r2 <- paste0('b',seq_len(2000L),'\t0\tchr2\t100\t60\t10M\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII\tNH:i:1')
+ writeLines(c(header,r1,r2),sam)
+ stopifnot(system2(Sys.which('samtools'),c('view','-b','-o',shQuote(bam),shQuote(sam)))==0L)
+ regions <- GenomicRanges::GRanges('chr2',IRanges::IRanges(90,120),strand='+')
+ res <- rna_strand_detect(bam,list(regions=regions,annotation_signature='fixture'))
+ expect_identical(res$status,'stranded'); expect_identical(res$strandMode,1L)
+})
