@@ -148,11 +148,15 @@ metadata_title_labels <- function(dt) {
 #' @param checked value for CHECKED, marks auto-curated rows
 #' @param comment text appended to COMMENT
 #' @param mito_runs runs that get FRACTION "mito" when FRACTION is empty (mitoribosome profiling)
+#' @param biosample_labels logical, fill empty CELL_LINE / TISSUE from BioSample attributes (author-declared)
+#' @param biosample_cache folder for cached BioSample records
+#' @param vocab optional vocabulary (vocabulary_load()) to canonicalise filled values
 #' @return list(rows = data.table, dropped = data.table(reason, Run, ...))
 #' @export
 stage_new_runs <- function(runs, config, libtype = "RFP", sheets = data.table(Run = character(), BioProject = character(),
                            BioSample = character()), organism_map = character(), keep_types = c("", libtype),
-                           checked = "auto", comment = "", mito_runs = character()) {
+                           checked = "auto", comment = "", mito_runs = character(), biosample_labels = TRUE,
+                           biosample_cache = file.path(config$project, "biosample_cache"), vocab = NULL) {
   runs <- as.data.table(runs)
   # one BioProject at a time: an SRA error for one study (empty error / throttling) must not stop the others
   fetch <- lapply(unique(runs$BioProject), function(b) tryCatch(
@@ -188,6 +192,8 @@ stage_new_runs <- function(runs, config, libtype = "RFP", sheets = data.table(Ru
   redep <- metadata_biosample_duplicates(md, sheets)
   dropped$biosample_in_other_bioproject <- redep
   md <- md[!(Run %in% redep$Run)]
+  if (biosample_labels && "BioSample" %in% names(md))
+    md <- metadata_biosample_labels(md, metadata_biosample_attributes(md$BioSample, biosample_cache), vocab)
   md <- metadata_title_labels(md)
   md <- metadata_make_unique(md)
   list(rows = md, dropped = unique(rbindlist(dropped, idcol = "reason", fill = TRUE)))
@@ -240,4 +246,83 @@ final_refresh_studies <- function(config, studies, backup_dir, expected_runs = N
   tmp <- paste0(config$complete_metadata, ".tmp"); fwrite(cand, tmp); file.rename(tmp, config$complete_metadata)
   message("- FINAL: ", nrow(oldc), " -> ", nrow(cand), " rows (", length(studies), " studies refreshed, ", nrow(st), " rows)")
   invisible(st)
+}
+
+#' NCBI BioSample attributes for a set of BioSample accessions (read-only, cached per accession)
+#' @param ids character, BioSample accessions (SAM...)
+#' @param cache_dir folder for per-accession rds files
+#' @param batch integer, accessions per efetch request
+#' @return data.table(BioSample, attribute, value); attribute is the harmonized name when NCBI gives one
+#' @export
+metadata_biosample_attributes <- function(ids, cache_dir = file.path(tempdir(), "biosample_cache"), batch = 100) {
+  ids <- unique(ids[!is.na(ids) & grepl("^SAM", ids)])
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+  cpath <- function(i) file.path(cache_dir, paste0(i, ".rds"))
+  todo <- ids[!file.exists(cpath(ids))]
+  for (k in seq(1, length(todo), by = batch)[seq_len(ceiling(length(todo) / batch))]) {
+    b <- todo[k:min(k + batch - 1, length(todo))]
+    # efetch id= takes numeric UIDs: "SAMEA7425700" would be read as UID 7425700 (another sample). Resolve the
+    # accessions with esearch [accn] first, then fetch the UIDs; records are matched back by their accession.
+    get <- function(url) { for (a in 1:5) { x <- tryCatch(xml2::read_xml(url), error = function(e) NULL); if (!is.null(x)) return(x); Sys.sleep(3 * a) }; NULL }
+    term <- utils::URLencode(paste(paste0(b, "[accn]"), collapse = " OR "), reserved = TRUE)
+    es <- get(paste0("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=biosample&retmax=", 2 * batch, "&term=", term))
+    uids <- if (is.null(es)) character() else xml2::xml_text(xml2::xml_find_all(es, "//IdList/Id"))
+    if (!length(uids)) { if (is.null(es)) warning("BioSample esearch failed for ", length(b), " accessions"); next }
+    doc <- get(paste0("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=biosample&retmode=xml&id=", paste(uids, collapse = ",")))
+    if (is.null(doc)) { warning("BioSample efetch failed for ", length(b), " accessions"); next }
+    for (bs in xml2::xml_find_all(doc, "//BioSample")) {
+      if (!xml2::xml_attr(bs, "accession") %in% b) next
+      at <- xml2::xml_find_all(bs, "./Attributes/Attribute")
+      nm <- xml2::xml_attr(at, "harmonized_name"); raw <- xml2::xml_attr(at, "attribute_name")
+      nm[is.na(nm)] <- raw[is.na(nm)]
+      saveRDS(data.table(BioSample = xml2::xml_attr(bs, "accession"), attribute = tolower(nm),
+                         value = trimws(xml2::xml_text(at))), cpath(xml2::xml_attr(bs, "accession")))
+    }
+    Sys.sleep(0.4)
+  }
+  have <- ids[file.exists(cpath(ids))]
+  if (!length(have)) return(data.table(BioSample = character(), attribute = character(), value = character()))
+  rbindlist(lapply(cpath(have), readRDS))
+}
+
+#' Fill empty CELL_LINE / TISSUE from BioSample attributes (author-declared), optionally canonicalised
+#'
+#' Only empty fields are filled ("cell_line"/"cell line" -> CELL_LINE, "tissue"/"organism_part" -> TISSUE); values
+#' like "not applicable" are ignored. With \code{vocab} (\code{vocabulary_load()}), a value that is a literal alias of
+#' one vocabulary term is replaced by that term. Filled rows get a COMMENT note: author-declared identity, not
+#' verified (misidentified lines such as HeLa derivatives need data checks).
+#' @param dt data.table with BioSample, CELL_LINE, TISSUE, COMMENT
+#' @param attrs output of metadata_biosample_attributes()
+#' @param vocab optional vocabulary table
+#' @return dt (copy)
+#' @export
+metadata_biosample_labels <- function(dt, attrs, vocab = NULL) {
+  dt <- copy(as.data.table(dt))
+  for (cl in c("CELL_LINE", "TISSUE", "COMMENT")) {
+    if (!cl %in% names(dt)) dt[, (cl) := ""]
+    set(dt, j = cl, value = { v <- as.character(dt[[cl]]); v[is.na(v)] <- ""; v })
+  }
+  if (!nrow(attrs)) return(dt)
+  junk <- "^(n/?a|na|none|not applicable|not collected|not provided|missing|unknown|-|\\.)$"
+  pick <- function(keys) {
+    a <- attrs[attribute %in% keys & !grepl(junk, value, ignore.case = TRUE) & nzchar(value)]
+    a[, .(value = value[1]), by = BioSample]
+  }
+  canon <- function(x, column) {
+    if (is.null(vocab)) return(x)
+    v <- vocab[Column == column & Category != "convertToTissue", .(n = uniqueN(Main), Main = Main[1]), by = .(key = tolower(alias))]
+    h <- v[match(tolower(x), key)]
+    ifelse(!is.na(h$n) & h$n == 1, h$Main, x)
+  }
+  note <- character(nrow(dt))
+  for (m in list(c("CELL_LINE", "cell_line", "cell line", "cellline"), c("TISSUE", "tissue", "organism_part", "tissue_type"))) {
+    p <- pick(m[-1]); i <- which(dt[[m[1]]] == "" & dt$BioSample %in% p$BioSample)
+    if (length(i)) {
+      set(dt, i, m[1], canon(p$value[match(dt$BioSample[i], p$BioSample)], m[1]))
+      note[i] <- paste0(note[i], m[1], " ")
+    }
+  }
+  i <- which(nzchar(note))
+  if (length(i)) set(dt, i, "COMMENT", trimws(paste0(dt$COMMENT[i], " ", trimws(note[i]), " from BioSample (author-declared, not verified)")))
+  dt[]
 }

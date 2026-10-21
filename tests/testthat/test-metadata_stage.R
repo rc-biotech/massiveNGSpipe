@@ -61,3 +61,15 @@ test_that("metadata_title_labels overrides a lossy CONDITION and ignores replica
                                 sample_title = c("fowl.testis.rep4.x", "fowl.testis.rep5.x"), CONDITION = "")
   expect_identical(metadata_title_labels(dt2)$CONDITION, c("", ""))
 })
+
+test_that("metadata_biosample_labels fills only empty fields, ignores junk and canonicalises", {
+  dt <- data.table::data.table(BioSample = c("SAM1", "SAM2", "SAM3"), CELL_LINE = c("", "HeLa", ""), TISSUE = "")
+  attrs <- data.table::data.table(BioSample = c("SAM1", "SAM1", "SAM2", "SAM3"), attribute = c("cell_line", "tissue", "cell_line", "cell_line"),
+                                  value = c("HEK-293", "kidney", "HepG2", "not applicable"))
+  vocab <- data.table::data.table(Category = "Cell Lines", Column = "CELL_LINE", Main = "HEK293", alias = c("HEK293", "HEK-293"))
+  u <- metadata_biosample_labels(dt, attrs, vocab)
+  expect_identical(u$CELL_LINE, c("HEK293", "HeLa", ""))
+  expect_identical(u$TISSUE, c("kidney", "", ""))
+  expect_match(u$COMMENT[1], "author-declared")
+  expect_identical(u$COMMENT[2:3], c("", ""))
+})
