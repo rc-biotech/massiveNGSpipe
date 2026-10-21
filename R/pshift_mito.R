@@ -114,6 +114,13 @@ mito_shift_tables <- function(df, fallback_lengths = 28:34, fallback_offset = -1
   }
   out_dir <- dirname(pshifted_filepath(df[rows[1], ]))
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-  data.table::fwrite(data.table::rbindlist(log, fill = TRUE), file.path(out_dir, "mito_shifts.csv"))
+  # keep the decisions of runs that were not reshifted this time (subset reruns), replace those that were
+  new_log <- data.table::rbindlist(log, fill = TRUE)
+  f <- file.path(out_dir, "mito_shifts.csv")
+  if (file.exists(f)) {
+    old <- data.table::fread(f, colClasses = c(Run = "character"))
+    new_log <- data.table::rbindlist(list(old[!(Run %in% new_log$Run)], new_log), fill = TRUE)
+  }
+  data.table::fwrite(new_log[order(Run, len)], f)
   tables
 }

@@ -33,3 +33,19 @@ test_that("mito_frame_table finds the frame of 5' ends on a mitochondrial CDS bo
   # reads outside the CDS body / other lengths are ignored
   expect_identical(nrow(mito_frame_table(reads, cds, lengths = 28)), 0L)
 })
+
+test_that("mito_shift_tables keeps the log of runs not reshifted in this call", {
+  d <- withr::local_tempdir()
+  f <- file.path(d, "mito_shifts.csv")
+  data.table::fwrite(data.table::data.table(Run = c("A", "B"), len = 30L, offset = -12L, method = "mt_cds_frame"), f)
+  local_mocked_bindings(
+    is_mito_sample = function(df) c(FALSE, TRUE), mito_cds = function(df) GenomicRanges::GRangesList(),
+    ofst_filepath = function(df) "x.ofst", pshifted_filepath = function(df) file.path(d, "x_pshifted.ofst"),
+    mito_frame_table = function(...) data.table::data.table(len = integer(), reads = numeric(), best_frame = integer(), frame_frac = numeric()))
+  local_mocked_bindings(fimport = function(...) GenomicRanges::GRanges(), runIDs = function(df) "B", .package = "ORFik")
+  mito_shift_tables(data.frame(fraction = c("cyto", "mito")))
+  out <- data.table::fread(f)
+  expect_identical(sort(unique(out$Run)), c("A", "B"))
+  expect_true(all(out[Run == "B"]$method == "fallback_default"))
+  expect_identical(out[Run == "A"]$method, "mt_cds_frame")
+})
