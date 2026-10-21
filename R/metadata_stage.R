@@ -192,6 +192,7 @@ stage_new_runs <- function(runs, config, libtype = "RFP", sheets = data.table(Ru
   redep <- metadata_biosample_duplicates(md, sheets)
   dropped$biosample_in_other_bioproject <- redep
   md <- md[!(Run %in% redep$Run)]
+  md <- metadata_cell_line_tokens(md, vocab)
   if (biosample_labels && "BioSample" %in% names(md))
     md <- metadata_biosample_labels(md, metadata_biosample_attributes(md$BioSample, biosample_cache), vocab)
   md <- metadata_title_labels(md)
@@ -246,6 +247,57 @@ final_refresh_studies <- function(config, studies, backup_dir, expected_runs = N
   tmp <- paste0(config$complete_metadata, ".tmp"); fwrite(cand, tmp); file.rename(tmp, config$complete_metadata)
   message("- FINAL: ", nrow(oldc), " -> ", nrow(cand), " rows (", length(studies), " studies refreshed, ", nrow(st), " rows)")
   invisible(st)
+}
+
+#' Cell lines of other species that must not label samples of a given species (annotation misfires)
+#' @noRd
+foreign_cell_lines <- function() list(
+  "Homo sapiens" = c("S2", "Kc167", "Sf9", "Sf21", "High Five", "CHO", "BHK-21", "BHK", "NIH3T3", "NIH/3T3", "3T3",
+                     "MEF", "C2C12", "Neuro2a", "N2a", "RAW264.7", "RAW 264.7", "E14", "J1", "V6.5", "mESC"))
+
+#' Repair cell line names that the automatic annotation truncated or took from the wrong species
+#'
+#' pipeline_metadata_annotate() matches known cell line names as substrings of the sample texts: "RUES2" gives
+#' "S2" (a Drosophila line), "MDA-MB-231" gives "MDA". For each row with a CELL_LINE, the text fields are searched
+#' for the name as a whole token (tokens may contain letters, digits, "-", "/" and "."); when it only occurs inside a
+#' longer token, that token becomes the CELL_LINE (canonicalised with \code{vocab} when it is an alias). Names of
+#' cell lines from other species (foreign_cell_lines()) are cleared. Rows changed get a COMMENT note.
+#' @param dt data.table with ScientificName, CELL_LINE, COMMENT and text columns
+#' @param vocab optional vocabulary (vocabulary_load())
+#' @param text_cols text columns searched
+#' @return dt (copy)
+#' @export
+metadata_cell_line_tokens <- function(dt, vocab = NULL, text_cols = c("sample_title", "sample_source", "SampleName", "LibraryName")) {
+  dt <- copy(as.data.table(dt))
+  for (cl in c("CELL_LINE", "COMMENT")) {
+    if (!cl %in% names(dt)) dt[, (cl) := ""]
+    set(dt, j = cl, value = { v <- as.character(dt[[cl]]); v[is.na(v)] <- ""; v })
+  }
+  text_cols <- intersect(text_cols, names(dt))
+  esc <- function(x) gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", x)
+  canon <- function(x) {
+    if (is.null(vocab)) return(x)
+    v <- vocab[Column == "CELL_LINE" & Category != "convertToTissue", .(n = uniqueN(Main), Main = Main[1]), by = .(key = tolower(alias))]
+    h <- v[match(tolower(x), key)]
+    ifelse(!is.na(h$n) & h$n == 1, h$Main, x)
+  }
+  foreign <- foreign_cell_lines()
+  for (i in which(dt$CELL_LINE != "")) {
+    x <- dt$CELL_LINE[i]; sp <- as.character(dt$ScientificName[i])
+    if (sp %in% names(foreign) && tolower(x) %in% tolower(foreign[[sp]])) {
+      set(dt, i, "CELL_LINE", ""); set(dt, i, "COMMENT", trimws(paste(dt$COMMENT[i], "auto CELL_LINE", x, "cleared (other species)")))
+      next
+    }
+    txt <- paste(vapply(text_cols, function(cl) { v <- as.character(dt[[cl]][i]); if (is.na(v)) "" else v }, ""), collapse = " | ")
+    tok <- regmatches(txt, gregexpr("[A-Za-z0-9./-]+", txt))[[1]]
+    if (!length(tok) || any(tolower(tok) == tolower(x))) next
+    longer <- unique(tok[grepl(esc(tolower(x)), tolower(tok))])
+    if (length(longer) == 1) {
+      set(dt, i, "CELL_LINE", canon(sub("[.-]+$", "", longer)))
+      set(dt, i, "COMMENT", trimws(paste(dt$COMMENT[i], "auto CELL_LINE", x, "extended to full token")))
+    }
+  }
+  dt[]
 }
 
 #' NCBI BioSample attributes for a set of BioSample accessions (read-only, cached per accession)

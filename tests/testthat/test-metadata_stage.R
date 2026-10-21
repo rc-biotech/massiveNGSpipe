@@ -81,3 +81,17 @@ test_that("metadata_biosample_attributes reads the cache without network when al
   expect_identical(a$value, "leaf")
   expect_identical(nrow(metadata_biosample_attributes(character(), d)), 0L)
 })
+
+test_that("metadata_cell_line_tokens extends truncated names and clears foreign lines", {
+  dt <- data.table::data.table(ScientificName = "Homo sapiens", CELL_LINE = c("S2", "MDA", "U2OS", "S2", "HeLa"),
+                               sample_title = c("AK_Riboseq_hESC_Rep1", "MDA-MB-231 WT, DMSO", "U2OS WT", "S2_1_1.fq.gz", "HeLa-S3 cells"),
+                               sample_source = c("RUES2", "Breast", "Osteosarcoma", "", ""))
+  u <- metadata_cell_line_tokens(dt)
+  # S2 on a human sample is cleared before any token logic (Drosophila line), RUES2 then comes from BioSample/text later
+  expect_identical(u$CELL_LINE, c("", "MDA-MB-231", "U2OS", "", "HeLa-S3"))
+  expect_match(u$COMMENT[2], "extended")
+  expect_match(u$COMMENT[1], "other species")
+  # non-human species keep S2
+  expect_identical(metadata_cell_line_tokens(data.table::data.table(ScientificName = "Drosophila melanogaster",
+                   CELL_LINE = "S2", sample_title = "S2 cells"))$CELL_LINE, "S2")
+})
