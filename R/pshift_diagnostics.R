@@ -264,3 +264,50 @@ classify_bad_shift_cause <- function(bam_dir, config = NULL) {
   update_qc_diagnostics(path, primary_cause = cause)
   cause
 }
+
+#' Per-length frame preference with gene and site concentration (diagnostic)
+#'
+#' A strong frame preference at some read length can come from one locus (PRJNA430238, 2026-10-21: the apparent
+#' 25-27 nt phase was a single Phf21a 5' end, inflated by counting each read once per isoform). For each length this
+#' reports the CDS-body reads, how many genes contribute, the share of the top gene and of the top single position,
+#' and the best-frame fraction with and without the top gene. Pass one CDS per gene (e.g. longest) so reads are not
+#' counted once per isoform. Diagnostic only: never use it to drop data automatically.
+#' @param reads GRanges (ofst import; read multiplicity in mcols score, else 1 per read)
+#' @param cds GRangesList, one CDS per gene
+#' @param lengths integer, read lengths to report
+#' @param end "five" (5' ends) or "three" (3' ends)
+#' @param flank integer, positions excluded at the CDS start and end
+#' @return data.table(len, reads, genes, top_gene, top_gene_frac, top_site_frac, best_frame, frame_frac,
+#'  frame_frac_without_top, concentrated)
+#' @export
+frame_concentration_table <- function(reads, cds, lengths = 20:40, end = c("five", "three"), flank = 30L) {
+  end <- match.arg(end)
+  empty <- data.table(len = integer(), reads = numeric(), genes = integer(), top_gene = character(), top_gene_frac = numeric(),
+                      top_site_frac = numeric(), best_frame = integer(), frame_frac = numeric(),
+                      frame_frac_without_top = numeric(), concentrated = logical())
+  if (!length(reads) || !length(cds)) return(empty)
+  w <- S4Vectors::mcols(reads)$score; if (is.null(w)) w <- rep(1, length(reads))
+  len <- ORFik::readWidths(reads); k <- len %in% lengths
+  reads <- reads[k]; w <- w[k]; len <- len[k]
+  if (!length(reads)) return(empty)
+  p1 <- GenomicRanges::resize(GenomicRanges::granges(reads), 1L, fix = if (end == "five") "start" else "end")
+  m <- GenomicFeatures::mapToTranscripts(p1, cds)
+  if (!length(m)) return(empty)
+  xi <- S4Vectors::mcols(m)$xHits; tx <- as.character(GenomicRanges::seqnames(m))
+  cw <- ORFik::widthPerGroup(cds, TRUE)[tx]
+  d <- data.table(len = len[xi], w = w[xi], tx = tx, p = GenomicRanges::start(m), cw = cw)[p > flank & p < cw - flank]
+  if (!nrow(d)) return(empty)
+  d[, frame := (p - 1L) %% 3L]
+  bestfrac <- function(fr, ww) { s <- tapply(ww, fr, sum); if (!length(s)) NA_real_ else max(s) / sum(s) }
+  out <- d[, {
+    g <- .SD[, .(w = sum(w)), by = tx][order(-w)]
+    site <- .SD[, .(w = sum(w)), by = .(tx, p)]
+    s <- tapply(w, frame, sum)
+    rest <- tx != g$tx[1]
+    .(reads = sum(w), genes = nrow(g), top_gene = g$tx[1], top_gene_frac = g$w[1] / sum(w),
+      top_site_frac = max(site$w) / sum(w), best_frame = as.integer(names(s)[which.max(s)]),
+      frame_frac = max(s) / sum(s), frame_frac_without_top = if (any(rest)) bestfrac(frame[rest], w[rest]) else NA_real_)
+  }, by = len][order(len)]
+  out[, concentrated := top_gene_frac > 0.3 | top_site_frac > 0.2]
+  out[]
+}
