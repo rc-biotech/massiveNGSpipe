@@ -153,8 +153,15 @@ stage_new_runs <- function(runs, config, libtype = "RFP", sheets = data.table(Ru
                            BioSample = character()), organism_map = character(), keep_types = c("", libtype),
                            checked = "auto", comment = "", mito_runs = character()) {
   runs <- as.data.table(runs)
-  md <- pipeline_metadata(unique(runs$BioProject), config, BPPARAM = BiocParallel::SerialParam())
-  dropped <- list(not_in_sra = data.table(Run = setdiff(runs$Run, md$Run)))
+  # one BioProject at a time: an SRA error for one study (empty error / throttling) must not stop the others
+  fetch <- lapply(unique(runs$BioProject), function(b) tryCatch(
+    pipeline_metadata(b, config, BPPARAM = BiocParallel::SerialParam()),
+    error = function(e) { message("- metadata failed for ", b, ": ", conditionMessage(e)); b }))
+  failed <- unlist(Filter(is.character, fetch))
+  md <- rbindlist(Filter(is.data.frame, fetch), fill = TRUE)
+  if (!nrow(md)) stop("SRA metadata failed for all ", length(fetch), " BioProjects")
+  dropped <- list(metadata_failed = runs[BioProject %in% failed, .(Run, BioProject)],
+                  not_in_sra = data.table(Run = setdiff(runs[!(BioProject %in% failed)]$Run, md$Run)))
   md <- md[Run %in% runs$Run][!duplicated(Run)]
   md <- pipeline_metadata_annotate(md)[!duplicated(Run)]
   bad_type <- !(as.character(md$LIBRARYTYPE) %in% keep_types | is.na(md$LIBRARYTYPE))
