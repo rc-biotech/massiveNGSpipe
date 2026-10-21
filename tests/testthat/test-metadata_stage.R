@@ -73,3 +73,11 @@ test_that("metadata_biosample_labels fills only empty fields, ignores junk and c
   expect_match(u$COMMENT[1], "author-declared")
   expect_identical(u$COMMENT[2:3], c("", ""))
 })
+
+test_that("metadata_biosample_attributes reads the cache without network when all records are cached", {
+  d <- withr::local_tempdir()
+  saveRDS(data.table::data.table(BioSample = "SAMX1", attribute = "tissue", value = "leaf"), file.path(d, "SAMX1.rds"))
+  a <- metadata_biosample_attributes("SAMX1", d)
+  expect_identical(a$value, "leaf")
+  expect_identical(nrow(metadata_biosample_attributes(character(), d)), 0L)
+})

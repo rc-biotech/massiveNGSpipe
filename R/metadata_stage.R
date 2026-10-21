@@ -259,7 +259,7 @@ metadata_biosample_attributes <- function(ids, cache_dir = file.path(tempdir(), 
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
   cpath <- function(i) file.path(cache_dir, paste0(i, ".rds"))
   todo <- ids[!file.exists(cpath(ids))]
-  for (k in seq(1, length(todo), by = batch)[seq_len(ceiling(length(todo) / batch))]) {
+  for (k in if (length(todo)) seq(1, length(todo), by = batch) else integer()) {
     b <- todo[k:min(k + batch - 1, length(todo))]
     # efetch id= takes numeric UIDs: "SAMEA7425700" would be read as UID 7425700 (another sample). Resolve the
     # accessions with esearch [accn] first, then fetch the UIDs; records are matched back by their accession.
