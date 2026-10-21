@@ -29,6 +29,10 @@ test_that("metadata_title_assay flags disome / SSU / RNA / IP titles", {
   expect_identical(metadata_title_assay(c("Disome 60mers, WT, rep1", "MG1655 cells, disome fraction", "40S TCP-seq",
                                           "input RNA rep1", "MC4100 lacZ, IP", "WT_Ribo_rep1", NA, "ribosome footprints chip-free")),
                    c("disome", "disome", "SSU", "RNA", "IP", "", "", ""))
+  # footprint libraries whose titles mention input/total are not RNA
+  expect_identical(metadata_title_assay(c("Ribosome profiling of input(total translatome) for NAC-IP replicate 1",
+                                          "Bacterial cells, Total translatome, WT, rep1", "total RNA input")),
+                   c("", "", "RNA"))
 })
 
 test_that("metadata_title_labels moves replicate numbers and keeps the varying title part as CONDITION", {

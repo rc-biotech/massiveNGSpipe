@@ -91,7 +91,8 @@ metadata_title_assay <- function(titles) {
   out <- rep("", length(t))
   out[grepl("\\b(di|tri)-?somes?\\b|60 ?mers?|disome", t)] <- "disome"
   out[out == "" & grepl("\\b40s\\b|\\bssu\\b|small subunit|tcp-?seq|scanning", t)] <- "SSU"
-  out[out == "" & grepl("rna-?seq|\\bmrna\\b|\\binput\\b|total rna|\\btotal\\b|poly-?a\\b", t)] <- "RNA"
+  ribo <- grepl("translatome|ribosome profil|ribo-?seq|footprint|\\brpfs?\\b", t)
+  out[out == "" & !ribo & grepl("rna-?seq|\\bmrna\\b|\\binput\\b|total rna|poly-?a\\b", t)] <- "RNA"
   out[out == "" & grepl("(^|[^a-z-])(ip|rip|chip)([^a-z-]|$)|immunoprecip|pull-?down|\\btrap\\b", t)] <- "IP"
   out
 }
@@ -168,8 +169,9 @@ stage_new_runs <- function(runs, config, libtype = "RFP", sheets = data.table(Ru
   dropped$annotated_other_type <- md[bad_type, .(Run, BioProject, annotated = LIBRARYTYPE, sample_title)]
   md <- md[!bad_type]
   ta <- metadata_title_assay(md$sample_title)
-  dropped$title_says_other_assay <- md[ta != "" & ta != libtype, .(Run, BioProject, annotated = ta, sample_title)]
-  md <- md[ta == "" | ta == libtype]
+  other <- ta != "" & ta != libtype
+  dropped$title_says_other_assay <- md[other, .(Run, BioProject, sample_title)][, annotated := ta[other]]
+  md <- md[!other]
   md[, ScientificName := organism_name_cleanup(ScientificName)]
   if (!"COMMENT" %in% names(md)) md[, COMMENT := ""]
   md[, COMMENT := as.character(COMMENT)][is.na(COMMENT), COMMENT := ""]
