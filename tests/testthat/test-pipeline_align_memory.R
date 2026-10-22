@@ -57,10 +57,12 @@ test_that("waiting-for-RAM marker: round-trips, and a second mark doesn't reset 
   mark_waiting_for_ram(config, "exp1", "SRR001")
   expect_false(is.na(waiting_for_ram_minutes(config, "exp1", "SRR001")))
 
-  first <- readRDS(waiting_for_ram_path(config, "exp1", "SRR001"))
+  first <- readRDS(waiting_for_ram_path(config, "exp1", "SRR001"))$first
   Sys.sleep(1.1)
-  mark_waiting_for_ram(config, "exp1", "SRR001") # should be a no-op, timestamp unchanged
-  expect_identical(readRDS(waiting_for_ram_path(config, "exp1", "SRR001")), first)
+  mark_waiting_for_ram(config, "exp1", "SRR001") # continuous re-check: first-defer time unchanged, last updated
+  m <- readRDS(waiting_for_ram_path(config, "exp1", "SRR001"))
+  expect_identical(m$first, first)
+  expect_true(m$last > first)
 
   clear_waiting_for_ram(config, "exp1", "SRR001")
   expect_true(is.na(waiting_for_ram_minutes(config, "exp1", "SRR001")))
@@ -69,4 +71,36 @@ test_that("waiting-for-RAM marker: round-trips, and a second mark doesn't reset 
 test_that("waiting_for_ram_minutes is NA for a sample never marked", {
   config <- fake_config()
   expect_true(is.na(waiting_for_ram_minutes(config, "exp1", "SRR999")))
+})
+
+test_that("waiting-for-RAM: only continuous waiting counts; a long gap restarts the clock", {
+  config <- fake_config(); config$ram_wait_gap_minutes <- 30
+  t0 <- as.POSIXct("2026-10-22 02:00:00", tz = "UTC")
+  mark_waiting_for_ram(config, "e", "R1", now = t0)
+  mark_waiting_for_ram(config, "e", "R1", now = t0 + 20 * 60)          # re-checked within the gap
+  expect_equal(waiting_for_ram_minutes(config, "e", "R1", now = t0 + 25 * 60), 25)
+  # not re-checked for hours (stage loop busy elsewhere): the wait counts as restarted, not as 10 h
+  expect_equal(waiting_for_ram_minutes(config, "e", "R1", now = t0 + 10 * 3600), 0)
+  mark_waiting_for_ram(config, "e", "R1", now = t0 + 10 * 3600)
+  expect_equal(readRDS(waiting_for_ram_path(config, "e", "R1"))$first, t0 + 10 * 3600)
+  # legacy marker (single POSIXct) is read as first = last
+  saveRDS(t0, waiting_for_ram_path(config, "e", "R2"))
+  expect_equal(waiting_for_ram_minutes(config, "e", "R2", now = t0 + 5 * 60), 5)
+})
+
+test_that("bam_sort_ram_decision keeps the reserve free and prefers MemAvailable", {
+  u <- list(Memory_Total_GB = 500, Memory_Usage_GB = 400, Memory_Available_GB = 150)
+  expect_identical(bam_sort_ram_decision(52e9, usage = u)$decision, "proceed")                  # 150 free
+  expect_identical(bam_sort_ram_decision(80e9, reserve_gb = 80, usage = u)$decision, "defer")   # 150 - 80 = 70 < 80
+  expect_identical(bam_sort_ram_decision(52e9, reserve_gb = 80, usage = u)$decision, "proceed")
+  expect_identical(bam_sort_ram_decision(400e9, reserve_gb = 80, usage = u)$decision, "crash")  # > 500*0.9 - 80
+})
+
+test_that("ram_reserve_gb: config, then shared policy file, then 0", {
+  expect_equal(ram_reserve_gb(list(ram_reserve_gb = 12)), 12)
+  pol <- tempfile(fileext = ".json"); writeLines('{"reserve_gb": 80}', pol)
+  withr::local_envvar(RB_POLICY = pol)
+  expect_equal(ram_reserve_gb(list()), 80)
+  withr::local_envvar(RB_POLICY = tempfile())
+  expect_equal(ram_reserve_gb(list()), 0)
 })

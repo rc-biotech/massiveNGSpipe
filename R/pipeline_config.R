@@ -83,6 +83,11 @@
 #' sample can stay in that deferred state across repeated
 #' pipeline_align_one_organism() passes before it's treated as truly stuck
 #' and raised as a real error instead of deferred again.
+#'  Only continuous waiting counts (2026-10-22): a sample not re-checked for longer than
+#'  \code{config$ram_wait_gap_minutes} (default 30) starts a new wait. Related optional fields (set on the config
+#'  list): \code{config$ram_reserve_gb} (memory an alignment must leave available; default the shared budget's
+#'  reserve_gb from open_workspace/agent_mail/resources/policy.json, else 0) and \code{config$ram_recheck_seconds}
+#'  (default 300; deferred samples are re-checked once before a study is left for the next round).
 #' @param compress_raw_data logical, default FALSE. If TRUE, will compress raw fastq files.
 #' @param stop_downloading_new_data_at_drive_usage integer, default 92,
 #' percentage value where the drive will stop downloading new data. Set to 101 to

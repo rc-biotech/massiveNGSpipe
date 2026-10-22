@@ -402,7 +402,11 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
                       inline_adapter) {
         cat("Total number of files are:\n")
         cat(length(pairs)); cat("\n")
-        for (pair_index in seq_along(pairs)) {
+        # Two passes: samples deferred for RAM in the first pass are re-checked once after the others finished (after
+        # config$ram_recheck_seconds), so a sample that fits soon is not parked for a whole stage round (2026-10-22).
+        todo <- seq_along(pairs)
+        for (ram_pass in 1:2) {
+        for (pair_index in todo) {
           R1_R2 <- pairs[[pair_index]]
           cat("Single end mode\n")
           cat("Run ", pair_index, " / ", length(pairs), "\n")
@@ -432,7 +436,7 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
           # may free up by the time a later run_pipeline() pass revisits
           # the not-yet-done sample.
           ram_needed <- estimate_bam_sort_ram(file1)
-          ram_decision <- bam_sort_ram_decision(ram_needed)
+          ram_decision <- bam_sort_ram_decision(ram_needed, reserve_gb = ram_reserve_gb(config))
           if (ram_decision$decision == "crash") {
             stop(sprintf(
               "Sample %s needs an estimated %.1fGB for BAM sorting, exceeding this machine's safe usable total (%.1fGB) -- cannot be aligned here without a configuration change.",
@@ -489,7 +493,7 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
             }, error = function(e) {
               exact <- estimate_bam_sort_ram_from_error(conditionMessage(e))
               if (is.na(exact)) stop(e) # not a memory error -- propagate unchanged
-              decision2 <- bam_sort_ram_decision(exact)
+              decision2 <- bam_sort_ram_decision(exact, reserve_gb = ram_reserve_gb(config))
               if (decision2$decision == "crash") {
                 stop(sprintf(
                   "Sample %s needs %.1fGB for BAM sorting (STAR's own exact figure), exceeding this machine's safe usable total (%.1fGB) -- cannot be aligned here without a configuration change.",
@@ -539,6 +543,12 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
           }
           #TODO: Now _1 and _2 will be kept, but fixed in cleanup, do I want it like that ?
           set_sample_flag(config, "aligned", experiment, run)
+        }
+        todo <- which(!(runs$Run %in% samples_done(config, "aligned", experiment)))
+        if (!length(todo) || ram_pass == 2) break
+        wait_s <- if (is.null(config$ram_recheck_seconds)) 300 else config$ram_recheck_seconds
+        message("- ", length(todo), " sample(s) deferred for RAM; re-checking once in ", wait_s, " s")
+        Sys.sleep(wait_s)
         }
         # Samples deferred for RAM (ram_decision "defer" -> next) are not failures: skip the final checks (which
         # would stop with "missing bam files", PRJNA923630 SRR25954676, 2026-10-20); the caller then leaves the

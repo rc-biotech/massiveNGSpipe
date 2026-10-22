@@ -49,6 +49,8 @@ estimate_bam_sort_ram_from_error <- function(err_message) {
 #' would handle it, defer -- something else using memory right now may
 #' free up by the time this sample is revisited. Otherwise proceed.
 #' @param needed_bytes numeric
+#' @param reserve_gb numeric, memory (GB) that must stay available to the rest of the server, see ram_reserve_gb()
+#' @param usage list from get_system_usage() (argument for testing)
 #' @param total_safety_fraction numeric, default 0.9 -- total memory
 #' capped at this fraction before comparing, so a decision never relies
 #' on using nearly 100% of system RAM for one sample's sort buffer (that
@@ -57,10 +59,12 @@ estimate_bam_sort_ram_from_error <- function(err_message) {
 #' @return list(decision = one of "proceed"/"defer"/"crash", needed_gb,
 #' total_gb, free_gb)
 #' @noRd
-bam_sort_ram_decision <- function(needed_bytes, total_safety_fraction = 0.9) {
-  usage <- get_system_usage()
-  total_gb <- usage$Memory_Total_GB * total_safety_fraction
-  free_gb <- usage$Memory_Total_GB - usage$Memory_Usage_GB
+bam_sort_ram_decision <- function(needed_bytes, total_safety_fraction = 0.9, reserve_gb = 0,
+                                  usage = get_system_usage()) {
+  total_gb <- usage$Memory_Total_GB * total_safety_fraction - reserve_gb
+  avail <- if (!is.null(usage$Memory_Available_GB)) usage$Memory_Available_GB else usage$Memory_Total_GB - usage$Memory_Usage_GB
+  # never let an alignment take the host below the reserve (shared budget, 2026-10-22 out-of-memory incident)
+  free_gb <- avail - reserve_gb
   needed_gb <- needed_bytes / 1e9
   decision <- if (needed_gb > total_gb) "crash"
              else if (needed_gb > free_gb) "defer"
@@ -83,11 +87,41 @@ waiting_for_ram_path <- function(config, experiment, run)
 #' point is tracking how long this sample has genuinely been waiting,
 #' not how recently it was last checked.
 #' @noRd
-mark_waiting_for_ram <- function(config, experiment, run) {
+mark_waiting_for_ram <- function(config, experiment, run, now = Sys.time()) {
   path <- waiting_for_ram_path(config, experiment, run)
   dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
-  if (!file.exists(path)) saveRDS(Sys.time(), path)
+  gap <- if (is.null(config$ram_wait_gap_minutes)) 30 else config$ram_wait_gap_minutes
+  m <- read_waiting_for_ram(path)
+  # Only CONTINUOUS waiting counts: if the sample was not re-checked for longer than the gap (the stage loop moved on
+  # to other studies), the wait starts over. A first-defer timestamp from hours ago made a sample fail immediately on
+  # its next revisit with max_ram_wait_minutes = 10 (PRJNA344393, 2026-10-22).
+  if (is.null(m) || as.numeric(difftime(now, m$last, units = "mins")) > gap) m <- list(first = now, last = now)
+  else m$last <- now
+  saveRDS(m, path)
   invisible(NULL)
+}
+
+#' Read a waiting-for-RAM marker (list(first, last); legacy markers are a single POSIXct)
+#' @noRd
+read_waiting_for_ram <- function(path) {
+  if (!file.exists(path)) return(NULL)
+  x <- tryCatch(readRDS(path), error = function(e) NULL)
+  if (inherits(x, "POSIXct")) return(list(first = x, last = x))
+  if (is.list(x) && !is.null(x$first) && !is.null(x$last)) return(x)
+  NULL
+}
+
+#' Memory (GB) an alignment must leave available to the rest of the server
+#'
+#' config$ram_reserve_gb if set; else reserve_gb of the shared resource budget policy
+#' (Sys.getenv("RB_POLICY"), default ~/shared_workspace/open_workspace/agent_mail/resources/policy.json); else 0.
+#' @noRd
+ram_reserve_gb <- function(config) {
+  if (!is.null(config$ram_reserve_gb)) return(as.numeric(config$ram_reserve_gb))
+  p <- path.expand(Sys.getenv("RB_POLICY", "~/shared_workspace/open_workspace/agent_mail/resources/policy.json"))
+  if (!file.exists(p)) return(0)
+  r <- tryCatch(jsonlite::fromJSON(p)$reserve_gb, error = function(e) NULL)
+  if (is.numeric(r) && length(r) == 1) r else 0
 }
 
 #' Clear one sample's "waiting for RAM" mark, if any
@@ -100,8 +134,11 @@ clear_waiting_for_ram <- function(config, experiment, run) {
 #' How long (minutes) one sample has been marked waiting for RAM
 #' @return numeric minutes, or NA_real_ if it isn't currently marked
 #' @noRd
-waiting_for_ram_minutes <- function(config, experiment, run) {
-  path <- waiting_for_ram_path(config, experiment, run)
-  if (!file.exists(path)) return(NA_real_)
-  as.numeric(difftime(Sys.time(), readRDS(path), units = "mins"))
+waiting_for_ram_minutes <- function(config, experiment, run, now = Sys.time()) {
+  m <- read_waiting_for_ram(waiting_for_ram_path(config, experiment, run))
+  if (is.null(m)) return(NA_real_)
+  gap <- if (is.null(config$ram_wait_gap_minutes)) 30 else config$ram_wait_gap_minutes
+  # a wait interrupted for longer than the gap starts over (see mark_waiting_for_ram())
+  if (as.numeric(difftime(now, m$last, units = "mins")) > gap) return(0)
+  as.numeric(difftime(now, m$first, units = "mins"))
 }
