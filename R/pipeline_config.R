@@ -75,7 +75,8 @@
 #' output BAM, roughly the same order of magnitude as the input; the flat
 #' margin absorbs estimation error and leaves headroom for anything else
 #' using the same drive). Ignored when ssd_scratch_dir is NULL.
-#' @param max_ram_wait_minutes numeric, default 10. See
+#' @param max_ram_wait_minutes numeric, default 120 (10 before 2026-10-23: with the shared-budget reserve, waits of
+#'  20+ minutes for ~115 GB free are normal on the shared server, and 10 failed PRJNA627881). See
 #' R/pipeline_align_memory.R: when a sample's estimated STAR BAM-sort RAM
 #' need exceeds CURRENTLY free memory but not the machine's total (so it's
 #' deferred to the next sample rather than crashed), this is how long --
@@ -191,7 +192,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             ssd_scratch_dir = if (dir.exists(path.expand("~/livemount/ssd/tmp/")))
                               "~/livemount/ssd/tmp/" else NULL,
                             ssd_min_free_gb = 50,
-                            max_ram_wait_minutes = 10,
+                            max_ram_wait_minutes = 120,
                             delete_raw_files = mode == "online",
                             delete_trimmed_files = mode == "online",
                             delete_collapsed_files = mode == "online",
