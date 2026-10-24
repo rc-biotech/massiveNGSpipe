@@ -115,7 +115,10 @@ metadata_title_labels <- function(dt) {
   rep_re <- "(?i)[ _.-]*(?:rep(?:licate)?|r|bio|br)?[ _.-]*(\\d{1,2})$"
   dt[, .grp := paste(study_accession, ScientificName)]
   for (g in unique(dt$.grp)) {
-    i <- which(dt$.grp == g); t <- trimws(dt$sample_title[i])
+    i <- which(dt$.grp == g)
+    # SRA decoration ("Platform sequencing: GSM123: <title> <Organism> RNA-Seq") would make every title unique
+    t <- trimws(sub("^.*?sequencing: *GSM[0-9]+: *", "", dt$sample_title[i], perl = TRUE))
+    t <- trimws(gsub(paste0("\\Q", dt$ScientificName[i[1]], "\\E|(?i)\\b(RNA-?Seq|OTHER)\\s*$"), " ", t, perl = TRUE))
     if (length(i) < 2 || any(t == "")) next
     rep <- ifelse(grepl(rep_re, t, perl = TRUE), sub(paste0(".*?", rep_re), "\\1", t, perl = TRUE), "")
     base <- trimws(sub(rep_re, "", t, perl = TRUE))
@@ -127,7 +130,7 @@ metadata_title_labels <- function(dt) {
     cond <- dt$CONDITION[i]
     # use the title part when CONDITION is empty, or when one CONDITION value covers samples whose titles differ
     # (lossy annotation, e.g. "mock" and "WT" both annotated WT)
-    lossy <- any(tapply(rest, cond, function(x) length(unique(x))) > 1)
+    lossy <- any(cond != "") && any(tapply(rest[cond != ""], cond[cond != ""], function(x) length(unique(x))) > 1)
     if (length(unique(rest)) > 1 && all(nzchar(rest)) && (all(cond == "") || lossy)) set(dt, i, "CONDITION", rest)
     fill <- dt$REPLICATE[i] == "" & nzchar(rep)
     if (any(fill)) set(dt, i[fill], "REPLICATE", rep[fill])
@@ -197,7 +200,8 @@ stage_new_runs <- function(runs, config, libtype = "RFP", sheets = data.table(Ru
     md <- metadata_biosample_labels(md, metadata_biosample_attributes(md$BioSample, biosample_cache), vocab)
   # gene perturbations (KO/KD/OE/mutant/degron + controls) before the title fallback, so KO samples next to an
   # annotated WT control get CONDITION + GENE instead of staying blank
-  md <- metadata_fill_perturbations(md)$dt
+  sym <- metadata_symbol_sets(md$ScientificName)
+  md <- metadata_fill_perturbations(md, sym)$dt
   md <- metadata_title_labels(md)
   md <- metadata_make_unique(md)
   list(rows = md, dropped = unique(rbindlist(dropped, idcol = "reason", fill = TRUE)))

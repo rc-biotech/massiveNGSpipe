@@ -22,3 +22,17 @@ test_that("metadata_fill_perturbations only fills empty fields and repairs old K
   expect_equal(r$dt$GENE, c("METTL3", "METTL3", "", "RPL22", "ski2_dom34KO"))   # double-gene value kept
   expect_true(all(r$changes$old[r$changes$column == "CONDITION"] == ""))
 })
+
+test_that("metadata_title_labels ignores SRA title decoration and keeps a partly annotated study", {
+  dt <- data.table(study_accession = "S", ScientificName = "Mus musculus",
+                   sample_title = c("Illumina HiSeq 2500 sequencing: GSM1: sham_1 Mus musculus RNA-Seq",
+                                    "Illumina HiSeq 2500 sequencing: GSM2: sham_2 Mus musculus RNA-Seq",
+                                    "Illumina HiSeq 2500 sequencing: GSM3: SNI_1 Mus musculus RNA-Seq",
+                                    "Illumina HiSeq 2500 sequencing: GSM4: SNI_2 Mus musculus RNA-Seq"),
+                   CONDITION = "", REPLICATE = "")
+  r <- metadata_title_labels(dt)
+  expect_equal(r$CONDITION, c("sham", "sham", "sni", "sni"))
+  expect_equal(r$REPLICATE, c("1", "2", "1", "2"))
+  dt$CONDITION <- c("WT", "WT", "", "")
+  expect_equal(metadata_title_labels(dt)$CONDITION, c("WT", "WT", "", ""))      # no lossy overwrite from the blank group
+})

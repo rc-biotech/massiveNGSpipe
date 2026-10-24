@@ -87,7 +87,7 @@ metadata_perturbation_labels <- function(titles, organisms = rep("", length(titl
   crispri <- grepl("(?i)crispri|dcas9[-_ ]?krab", t, perl = TRUE)
   # si/sh prefix: without a symbol set the target must look like a symbol (capital first letter or a digit), not a word
   si_words <- grepl("(?i)(?<![a-z])(sh(ock|ort|ift|am|oot|eet|ell|ape|ear|aker)|si(ngle|mple|ze|lent|gnal|gma|te|des|lico|milar|ster|x))", t, perl = TRUE)
-  apply_rule("(?<![A-Za-z0-9])(?:si|sh)[-_]?([A-Z][A-Za-z0-9.-]{1,14}|[a-z][a-z]*[0-9][A-Za-z0-9.-]*)(?![A-Za-z0-9])", "KD", "si_sh_prefix", TRUE, only = !si_words)
+  apply_rule("(?<![A-Za-z0-9])(?:si|sh|Si|Sh)[-_]?([A-Z][A-Za-z0-9.-]{1,14}|[a-z][a-z]*[0-9][A-Za-z0-9.-]*)(?![A-Za-z0-9])", "KD", "si_sh_prefix", TRUE, only = !si_words)
   apply_rule("(?<![A-Za-z0-9])(?:si|sh)[-_]?([a-z][A-Za-z0-9.-]{1,14})(?![A-Za-z0-9])", "KD", "si_sh_prefix", FALSE, only = !si_words)
   apply_rule("(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9.-]{1,14})[-_ ]?(?:(?i:siRNA|shRNA|RNAi|knock-?down|KD)(?![A-Za-z])|MO(?![A-Za-z]))", "KD", "gene_kd_suffix", FALSE)
   apply_rule("(?:(?i:siRNA|shRNA|RNAi|dsRNA|knock-?down|KD)|MO)[-_ ](?i:against[-_ ]|of[-_ ]|targeting[-_ ])?([A-Za-z][A-Za-z0-9.-]{1,14})(?![A-Za-z0-9])", "KD", "kd_prefix", FALSE)
