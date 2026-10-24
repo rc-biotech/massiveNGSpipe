@@ -195,6 +195,9 @@ stage_new_runs <- function(runs, config, libtype = "RFP", sheets = data.table(Ru
   md <- metadata_cell_line_tokens(md, vocab)
   if (biosample_labels && "BioSample" %in% names(md))
     md <- metadata_biosample_labels(md, metadata_biosample_attributes(md$BioSample, biosample_cache), vocab)
+  # gene perturbations (KO/KD/OE/mutant/degron + controls) before the title fallback, so KO samples next to an
+  # annotated WT control get CONDITION + GENE instead of staying blank
+  md <- metadata_fill_perturbations(md)$dt
   md <- metadata_title_labels(md)
   md <- metadata_make_unique(md)
   list(rows = md, dropped = unique(rbindlist(dropped, idcol = "reason", fill = TRUE)))
