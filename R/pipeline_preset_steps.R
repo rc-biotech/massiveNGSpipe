@@ -1,22 +1,27 @@
 # Pipeline 1: Download
-pipe_fetch <- function(pipelines, config) {
+# TRUE (with a message) when new downloads should wait: drive usage at/above the cap or too many downloaded studies not yet
+# trimmed. run_pipeline() calls pipe_fetch() again later, so a pause only defers the remaining studies.
+fetch_paused <- function(pipelines, config) {
   drive_cap <- config$stop_downloading_new_data_at_drive_usage
-  disc_is_full <- as.numeric(gsub("%", "", get_system_usage()$Drive_Usage_Percent)) >= drive_cap
-  if (disc_is_full) {
+  if (as.numeric(gsub("%", "", get_system_usage()$Drive_Usage_Percent)) >= drive_cap) {
     message("Disc is nearly full, will pause downloading data for a while..")
-    return(invisible(NULL))
+    return(TRUE)
   }
-
-  unprocessed_downloads <- unprocessed_downloads_count(pipelines, config)
-  if (unprocessed_downloads > config$max_unprocessed_downloads) {
+  if (unprocessed_downloads_count(pipelines, config) > config$max_unprocessed_downloads) {
     message("Max unprocessed downloads reached, will pause downloading data for a while..")
-    return(invisible(NULL))
+    return(TRUE)
   }
+  FALSE
+}
 
+pipe_fetch <- function(pipelines, config) {
   for (pipeline in pipelines) {
     exp <- pipeline$accession
     if (file.exists(report_failed_pipe_path(config, exp))) next
     if (stop_requested(config)) break
+    # Re-checked before every study: checking only once per pipe_fetch() call let one call download all remaining
+    # studies past both caps (valen01 2026-10-24: 85 unprocessed downloads > cap 30, drive filling)
+    if (fetch_paused(pipelines, config)) break
     try <- try(
       pipeline_download(pipeline, config, pipelines)
     )
