@@ -233,9 +233,13 @@ unprocessed_downloads_count <- function(pipelines, config) {
   invisible(capture.output(suppressMessages({
     progress <- progress_report(pipelines, config, show_status_per_exp = FALSE,
                                 show_done = FALSE, return_progress_vector = TRUE,
-                                system_usage_stats = FALSE)
+                                named_progress_vector = TRUE, system_usage_stats = FALSE)
   })))
-  sum(progress == flag_step)
+  # Studies with an error record stay at "fetch" until someone clears it; counting them would hold a slot of the cap
+  # forever (enough failed trims would stop all downloads)
+  acc <- exp_accessions(pipelines)[names(progress)]
+  failed <- vapply(seq_along(progress), function(i) exp_or_study_failed(config, names(progress)[i], acc[i]), logical(1))
+  sum(progress == flag_step & !failed)
 }
 
 #' Total sample count per experiment, from the live pipelines object

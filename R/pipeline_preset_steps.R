@@ -1,3 +1,17 @@
+# Error records are keyed by the study accession (fetch, trim, exp/ofst) or by the per-organism experiment name (align,
+# pshift, convert, counts). Per-organism stages also honour the study-level record, so a failed download/trim of a study
+# is not aligned or shifted on partial data (2026-10-24: a fetch error keyed "PRJNA1092679" did not stop the align stage
+# of "PRJNA1092679-escherichia_coli").
+exp_accessions <- function(pipelines) {
+  unlist(lapply(pipelines, function(p) {
+    e <- vapply(p$organisms, function(o) unname(o$conf["exp"]), character(1))
+    stats::setNames(rep(p$accession, length(e)), e)
+  }))
+}
+exp_or_study_failed <- function(config, exp, accession) {
+  any(file.exists(report_failed_pipe_path(config, unique(c(exp, accession)))))
+}
+
 # Pipeline 1: Download
 # TRUE (with a message) when new downloads should wait: drive usage at/above the cap or too many downloaded studies not yet
 # trimmed. run_pipeline() calls pipe_fetch() again later, so a pause only defers the remaining studies.
@@ -95,7 +109,7 @@ pipe_align_clean <- function(pipelines, config) {
     organism <- units$organism[i]
     conf <- pipeline$organisms[[organism]]$conf
     exp <- conf["exp"]
-    if (file.exists(report_failed_pipe_path(config, exp))) next
+    if (exp_or_study_failed(config, exp, pipeline$accession)) next
     if (stop_requested(config)) break
 
     keep_loaded_after <- i < nrow(units) && units$organism[i + 1] == organism
@@ -147,12 +161,13 @@ pipe_exp_ofst <- function(pipelines, config) {
 # Pipeline: pshifts -> validated pshifts
 pipe_pshift_and_validate <- function(pipelines, config) {
   exp <- get_experiment_names(pipelines)
+  acc_of <- exp_accessions(pipelines)
   done_exp <- unlist(lapply(exp, function(e)
     step_is_next_not_done(config, "pshifted", e) |
       step_is_next_not_done(config, "valid_pshift", e)))
 
   for (experiments in exp[done_exp]) {
-    if (file.exists(report_failed_pipe_path(config, experiments[1]))) next
+    if (exp_or_study_failed(config, experiments[1], acc_of[experiments[1]])) next
     if (stop_requested(config)) break
 
     try <- try({
@@ -176,11 +191,12 @@ pipe_pshift_and_validate <- function(pipelines, config) {
 # Pipeline 4: Merge libraries: per study -> all merged per organism
 pipe_convert <- function(pipelines, config) {
   exp <- get_experiment_names(pipelines)
+  acc_of <- exp_accessions(pipelines)
   done_exp <- unlist(lapply(exp, function(e)
     step_is_next_not_done(config, "covrle", e) || step_is_next_not_done(config, "bigwig", e)))
 
   for (experiments in exp[done_exp]) {
-    if (file.exists(report_failed_pipe_path(config, experiments[1]))) next
+    if (exp_or_study_failed(config, experiments[1], acc_of[experiments[1]])) next
     if (stop_requested(config)) break
     try <- try({
       df_list <- lapply(experiments, function(e) read.experiment(e, validate = F))
@@ -193,10 +209,11 @@ pipe_convert <- function(pipelines, config) {
 
 pipe_counts <- function(pipelines, config) {
   exp <- get_experiment_names(pipelines)
+  acc_of <- exp_accessions(pipelines)
   done_exp <- unlist(lapply(exp, function(e) step_is_next_not_done(config, "pcounts", e)))
 
   for (experiments in exp[done_exp]) {
-    if (file.exists(report_failed_pipe_path(config, experiments[1]))) next
+    if (exp_or_study_failed(config, experiments[1], acc_of[experiments[1]])) next
     if (stop_requested(config)) break
     try <- try({
       df_list <- lapply(experiments, function(e) read.experiment(e, validate = F,
