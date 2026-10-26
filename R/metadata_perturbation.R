@@ -56,7 +56,9 @@ metadata_perturbation_labels <- function(titles, organisms = rep("", length(titl
       g <- cl[[k]]; if (!length(g)) next
       v <- valid(g, rep(todo[k], length(g)), strict)
       if (any(v)) { o <- organisms[todo[k]]
-        fix <- function(gg) if (o %in% names(symbols) && tolower(gg) %in% symbols[[o]]) gg else norm(gg)
+        canon <- function(gg) { if (!o %in% names(symbols) || is.null(names(symbols[[o]]))) return(gg)
+          j <- match(tolower(gg), symbols[[o]]); if (is.na(j)) gg else names(symbols[[o]])[j] }
+        fix <- function(gg) canon(if (o %in% names(symbols) && tolower(gg) %in% symbols[[o]]) gg else norm(gg))
         gs <- vapply(g[v], fix, character(1)); gs <- head(gs[!duplicated(tolower(gs))], 3)
         # several genes hit by the same perturbation (YBX1 & YBX3 knockout, Nanog MO + SoxB1 MO) are kept together
         cc <- if (length(gs) > 1 && cond == "KO") c("", "DKO", "TKO")[length(gs)] else cond
@@ -140,8 +142,9 @@ metadata_symbol_sets <- function(organisms, ref_dir = "~/livemount/Bio_data/refe
     f <- file.path(ref_dir, gsub(" ", "_", tolower(o)), "gene_symbol_tx_table.fst")
     if (!file.exists(f)) next
     x <- fst::read_fst(f, columns = intersect(c("external_gene_name", "ensembl_gene_id"), fst::metadata_fst(f)$columnNames))
-    s <- unique(tolower(c(x$external_gene_name, x$ensembl_gene_id)))
-    res[[o]] <- s[!is.na(s) & nzchar(s)]
+    canon <- unique(c(x$external_gene_name, x$ensembl_gene_id)); canon <- canon[!is.na(canon) & nzchar(canon)]
+    canon <- canon[!duplicated(tolower(canon))]
+    res[[o]] <- stats::setNames(tolower(canon), canon)   # values lower case (matching), names official spelling
   }
   res
 }
