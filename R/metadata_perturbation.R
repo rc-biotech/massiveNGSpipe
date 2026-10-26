@@ -109,12 +109,12 @@ metadata_perturbation_labels <- function(titles, organisms = rep("", length(titl
     v <- valid(g, rep(k, length(g)), TRUE); if (sum(v) >= 2)
       data.table::set(out, k, c("CONDITION", "GENE", "rule"), list("DKO", paste(g[v][1:2], collapse = "_"), "multi_deletion")) }
   # yeast deletion alleles (whi3::URA3, dhh1::KanMX) and conditional knockouts (Alb-Cre; Trspfl/fl)
-  yd <- "(?<![A-Za-z0-9-])([A-Za-z][A-Za-z0-9.]{1,14})::(?i:URA3|LEU2|HIS3|TRP1|KAN|KanMX|kanMX[0-9]?|NAT|natMX[0-9]?|HPH|hphMX[0-9]?|NEO|LYS2|ADE2|MET15|BLE|ZEO|HisMX[0-9]?|cat)"
+  yd <- "(?<![A-Za-z0-9-])([A-Za-z][A-Za-z0-9.]{1,14})(?:\u0394|\u2206|(?i:delta))?::(?i:URA3|LEU2|HIS3|TRP1|KAN|KanMX|kanMX[0-9]?|NAT|natMX[0-9]?|HPH|hphMX[0-9]?|NEO|LYS2|ADE2|MET15|BLE|ZEO|HisMX[0-9]?|cat)"
   todo <- which(out$CONDITION == ""); yall <- cands(yd)
   for (k in todo) { g <- unique(yall[[k]]); if (length(g) < 2) next
     v <- valid(g, rep(k, length(g)), TRUE); if (sum(v) >= 2) { gs <- head(g[v], 3)
       data.table::set(out, k, c("CONDITION", "GENE", "rule"), list(c("", "DKO", "TKO")[length(gs)], paste(gs, collapse = "_"), "multi_deletion")) } }
-  apply_rule("(?<![A-Za-z0-9-])([A-Za-z][A-Za-z0-9.]{1,14})::(?i:URA3|LEU2|HIS3|TRP1|KAN|KanMX|kanMX[0-9]?|NAT|natMX[0-9]?|HPH|hphMX[0-9]?|NEO|LYS2|ADE2|MET15|BLE|ZEO)", "KO", "yeast_deletion", TRUE)
+  apply_rule("(?<![A-Za-z0-9-])([A-Za-z][A-Za-z0-9.]{1,14})(?:\u0394|\u2206|(?i:delta))?::(?i:URA3|LEU2|HIS3|TRP1|KAN|KanMX|kanMX[0-9]?|NAT|natMX[0-9]?|HPH|hphMX[0-9]?|NEO|LYS2|ADE2|MET15|BLE|ZEO)", "KO", "yeast_deletion", TRUE)
   # Cre + floxed allele, but not RiboTag (Rpl22-HA floxed exon) or explicitly labelled controls
   floxed <- grepl("(?i)cre", t, perl = TRUE) & !grepl("(?i)ribotag|rpl22[-_ ]?ha|\\(control\\)", t, perl = TRUE)
   apply_rule("(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9.]{1,14}) ?(?:fl/fl|f/f|flox/flox|\\(fl/fl\\))", "KO", "conditional_ko", TRUE, only = floxed)
