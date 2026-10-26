@@ -154,11 +154,19 @@ waiting_for_ram_minutes <- function(config, experiment, run, now = Sys.time()) {
 #' @noRd
 bam_sort_plan <- function(needed_bytes, config, usage = get_system_usage(),
                           external_available = "bam.sort" %in% names(formals(ORFik::STAR.align.single))) {
+  cap <- config$bam_sort_memory_gb
+  if (!is.null(cap) && (length(cap) != 1L || !is.numeric(cap) || is.na(cap) ||
+                        !is.finite(cap) || cap <= 0))
+    stop("config$bam_sort_memory_gb must be one finite positive number")
+  over_cap <- !is.null(cap) && needed_bytes > cap * 1e9
+  if (over_cap && (!external_available || isFALSE(config$external_bam_sort)))
+    stop("BAM-sort estimate exceeds config$bam_sort_memory_gb; enable external_bam_sort and use an ORFik with bam.sort support")
   reserve <- ram_reserve_gb(config)
   star <- bam_sort_ram_decision(needed_bytes, reserve_gb = reserve, usage = usage)
-  if (star$decision == "proceed" || !external_available || isFALSE(config$external_bam_sort))
+  if ((!over_cap && star$decision == "proceed") || !external_available || isFALSE(config$external_bam_sort))
     return(list(sorter = "STAR", limit_bytes = needed_bytes, decision = star))
   budget <- (if (is.null(config$external_bam_sort_gb)) 16 else config$external_bam_sort_gb) * 1e9
+  if (!is.null(cap)) budget <- min(budget, cap * 1e9)
   ext <- bam_sort_ram_decision(budget, reserve_gb = reserve, usage = usage)
   list(sorter = "Rsamtools", limit_bytes = budget, decision = ext)
 }

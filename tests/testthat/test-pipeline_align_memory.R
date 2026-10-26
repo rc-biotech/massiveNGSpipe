@@ -120,3 +120,28 @@ test_that("bam_sort_plan: STAR sort when it fits, Rsamtools sort when STAR's wou
   expect_identical(bam_sort_plan(400e9, list(ram_reserve_gb = 80, external_bam_sort = FALSE), usage = u,
                                  external_available = TRUE)$sorter, "STAR")
 })
+
+test_that("per-job sort cap applies even on a large otherwise idle host", {
+  u <- list(Memory_Total_GB = 500, Memory_Usage_GB = 50, Memory_Available_GB = 450)
+  cfg <- list(ram_reserve_gb = 80, bam_sort_memory_gb = 8, external_bam_sort_gb = 6)
+  p <- bam_sort_plan(90e9, cfg, usage = u, external_available = TRUE)
+  expect_identical(p$sorter, "Rsamtools")
+  expect_equal(p$limit_bytes, 6e9)
+  expect_identical(p$decision$decision, "proceed")
+  expect_identical(bam_sort_plan(7e9, cfg, usage = u, external_available = TRUE)$sorter, "STAR")
+  expect_equal(bam_sort_plan(90e9, list(bam_sort_memory_gb = 4), usage = u,
+                             external_available = TRUE)$limit_bytes, 4e9)
+  # No cap preserves the former host-capacity decision.
+  expect_identical(bam_sort_plan(90e9, list(), usage = u, external_available = TRUE)$sorter, "STAR")
+})
+
+test_that("sort caps cannot silently disappear with an incompatible or disabled external sorter", {
+  u <- list(Memory_Total_GB = 500, Memory_Usage_GB = 50)
+  cfg <- list(bam_sort_memory_gb = 8)
+  expect_error(bam_sort_plan(90e9, cfg, usage = u, external_available = FALSE), "exceeds config")
+  cfg$external_bam_sort <- FALSE
+  expect_error(bam_sort_plan(90e9, cfg, usage = u, external_available = TRUE), "exceeds config")
+  for (bad in list(0, -1, NA_real_, Inf, c(4, 8), "8"))
+    expect_error(bam_sort_plan(90e9, list(bam_sort_memory_gb = bad), usage = u,
+                               external_available = TRUE), "finite positive")
+})

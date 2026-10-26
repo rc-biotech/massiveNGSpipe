@@ -500,7 +500,8 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
             }, error = function(e) {
               exact <- estimate_bam_sort_ram_from_error(conditionMessage(e))
               if (is.na(exact) || sort_plan$sorter != "STAR") stop(e) # not a STAR sort memory error -- propagate unchanged
-              decision2 <- bam_sort_ram_decision(exact, reserve_gb = ram_reserve_gb(config))
+              retry_plan <- bam_sort_plan(exact, config)
+              decision2 <- retry_plan$decision
               if (decision2$decision == "crash") {
                 stop(sprintf(
                   "Sample %s needs %.1fGB for BAM sorting (STAR's own exact figure), exceeding this machine's safe usable total (%.1fGB) -- cannot be aligned here without a configuration change.",
@@ -519,7 +520,7 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
               # "proceed": free memory changed since the proactive check
               # (e.g. something else just finished) -- retry once more
               # with STAR's own exact value instead of the rough estimate.
-              align_attempt(file1, file2, output_dir, exact)
+              align_attempt(file1, file2, output_dir, retry_plan$limit_bytes, sorter = retry_plan$sorter)
               "done"
             })
             if (identical(retry_result, "deferred")) next
