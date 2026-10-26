@@ -435,8 +435,14 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
           # same loop instead -- something else using memory right now
           # may free up by the time a later run_pipeline() pass revisits
           # the not-yet-done sample.
+          # If STAR's in-memory sort does not fit, STAR writes an unsorted BAM and ORFik sorts it with
+          # Rsamtools::sortBam within config$external_bam_sort_gb (bam_sort_plan(), 2026-10-26).
           ram_needed <- estimate_bam_sort_ram(file1)
-          ram_decision <- bam_sort_ram_decision(ram_needed, reserve_gb = ram_reserve_gb(config))
+          sort_plan <- bam_sort_plan(ram_needed, config)
+          ram_decision <- sort_plan$decision
+          if (sort_plan$sorter == "Rsamtools" && ram_decision$decision == "proceed")
+            message(sprintf("Run %s: STAR BAM sort would need ~%.1f GB; sorting with Rsamtools::sortBam within %.1f GB instead",
+                            run, ram_needed / 1e9, sort_plan$limit_bytes / 1e9))
           if (ram_decision$decision == "crash") {
             stop(sprintf(
               "Sample %s needs an estimated %.1fGB for BAM sorting, exceeding this machine's safe usable total (%.1fGB) -- cannot be aligned here without a configuration change.",
@@ -454,8 +460,9 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
           }
           clear_waiting_for_ram(config, experiment, run)
 
-          align_attempt <- function(f1, f2, out_dir, ram_limit) {
-            ORFik::STAR.align.single(f1, f2, output.dir = out_dir, index.dir = index,
+          align_attempt <- function(f1, f2, out_dir, ram_limit, sorter = sort_plan$sorter) {
+            sort_arg <- if (sorter == "STAR") list() else list(bam.sort = sorter)
+            do.call(ORFik::STAR.align.single, c(list(f1, f2, output.dir = out_dir, index.dir = index,
                                      steps = run_steps,
                                      # NULL = fresh start (tr then ge): ORFik's
                                      # script runs ONLY the step named by
@@ -465,12 +472,12 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
                                      keep.index.in.memory = keep.index.in.memory,
                                      keep.unaligned.genome = keep.unaligned.genome,
                                      star.path = star.path, fastp = fastp.path,
-                                     limit.bam.sort.ram = ram_limit)
+                                     limit.bam.sort.ram = ram_limit), sort_arg))
           }
 
           scratch <- resolve_align_scratch(file1, output_dir, run, config)
           align_ok <- tryCatch({
-            align_attempt(scratch$file1, file2, scratch$output.dir, ram_needed)
+            align_attempt(scratch$file1, file2, scratch$output.dir, sort_plan$limit_bytes)
             TRUE
           }, error = function(e) {
             if (!scratch$used_ssd) stop(e) # a real alignment failure, not an SSD problem -- propagate
@@ -488,11 +495,11 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
             # low for THIS specific file. If so, re-decide using STAR's
             # own exact reported figure instead of guessing again.
             retry_result <- tryCatch({
-              align_attempt(file1, file2, output_dir, ram_needed)
+              align_attempt(file1, file2, output_dir, sort_plan$limit_bytes)
               "done"
             }, error = function(e) {
               exact <- estimate_bam_sort_ram_from_error(conditionMessage(e))
-              if (is.na(exact)) stop(e) # not a memory error -- propagate unchanged
+              if (is.na(exact) || sort_plan$sorter != "STAR") stop(e) # not a STAR sort memory error -- propagate unchanged
               decision2 <- bam_sort_ram_decision(exact, reserve_gb = ram_reserve_gb(config))
               if (decision2$decision == "crash") {
                 stop(sprintf(

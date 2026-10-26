@@ -104,3 +104,19 @@ test_that("ram_reserve_gb: config, then shared policy file, then 0", {
   withr::local_envvar(RB_POLICY = tempfile())
   expect_equal(ram_reserve_gb(list()), 0)
 })
+
+test_that("bam_sort_plan: STAR sort when it fits, Rsamtools sort when STAR's would defer or crash", {
+  u <- list(Memory_Total_GB = 500, Memory_Available_GB = 150)
+  cfg <- list(ram_reserve_gb = 80)
+  p <- bam_sort_plan(52e9, cfg, usage = u, external_available = TRUE)
+  expect_identical(p$sorter, "STAR"); expect_identical(p$limit_bytes, 52e9); expect_identical(p$decision$decision, "proceed")
+  p <- bam_sort_plan(323e9, cfg, usage = u, external_available = TRUE)      # STAR: defer (323 > 150 - 80 free)
+  expect_identical(p$sorter, "Rsamtools"); expect_identical(p$limit_bytes, 16e9); expect_identical(p$decision$decision, "proceed")
+  p <- bam_sort_plan(400e9, cfg, usage = u, external_available = TRUE)      # STAR: crash
+  expect_identical(p$sorter, "Rsamtools"); expect_identical(p$decision$decision, "proceed")
+  p <- bam_sort_plan(400e9, list(ram_reserve_gb = 80, external_bam_sort_gb = 100), usage = u, external_available = TRUE)
+  expect_identical(p$decision$decision, "defer")                            # 100 > 150 - 80
+  expect_identical(bam_sort_plan(400e9, cfg, usage = u, external_available = FALSE)$decision$decision, "crash")
+  expect_identical(bam_sort_plan(400e9, list(ram_reserve_gb = 80, external_bam_sort = FALSE), usage = u,
+                                 external_available = TRUE)$sorter, "STAR")
+})

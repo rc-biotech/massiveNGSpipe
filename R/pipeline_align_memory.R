@@ -142,3 +142,23 @@ waiting_for_ram_minutes <- function(config, experiment, run, now = Sys.time()) {
   if (as.numeric(difftime(now, m$last, units = "mins")) > gap) return(0)
   as.numeric(difftime(now, m$first, units = "mins"))
 }
+
+#' Choose who sorts the genome BAM for one sample
+#'
+#' STAR's own sort holds the whole BAM in memory (estimate_bam_sort_ram()). When that does not fit now
+#' ("defer") or never ("crash", e.g. SRR8899075 PRJNA532893 needed ~323 GB, 2026-10-26), STAR writes an
+#' unsorted BAM and ORFik sorts it with Rsamtools::sortBam (htslib, multithreaded, spills to disk) within
+#' \code{config$external_bam_sort_gb} (default 16 GB). Benchmark 3.8 GB BAM, 8 threads, 1 GB/thread:
+#' samtools sort 134 s, Rsamtools::sortBam 135 s. Needs an ORFik whose STAR.align.single() has \code{bam.sort}.
+#' @return list(sorter = "STAR" | "Rsamtools", limit_bytes, decision = the decision to act on)
+#' @noRd
+bam_sort_plan <- function(needed_bytes, config, usage = get_system_usage(),
+                          external_available = "bam.sort" %in% names(formals(ORFik::STAR.align.single))) {
+  reserve <- ram_reserve_gb(config)
+  star <- bam_sort_ram_decision(needed_bytes, reserve_gb = reserve, usage = usage)
+  if (star$decision == "proceed" || !external_available || isFALSE(config$external_bam_sort))
+    return(list(sorter = "STAR", limit_bytes = needed_bytes, decision = star))
+  budget <- (if (is.null(config$external_bam_sort_gb)) 16 else config$external_bam_sort_gb) * 1e9
+  ext <- bam_sort_ram_decision(budget, reserve_gb = reserve, usage = usage)
+  list(sorter = "Rsamtools", limit_bytes = budget, decision = ext)
+}
