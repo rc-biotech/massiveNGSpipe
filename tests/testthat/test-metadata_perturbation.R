@@ -36,3 +36,18 @@ test_that("metadata_title_labels ignores SRA title decoration and keeps a partly
   dt$CONDITION <- c("WT", "WT", "", "")
   expect_equal(metadata_title_labels(dt)$CONDITION, c("WT", "WT", "", ""))      # no lossy overwrite from the blank group
 })
+
+test_that("BioSample genotype forms: yeast deletions, conditional KO, several genes, RiboTag excluded", {
+  sym <- list(`Homo sapiens` = c("ybx1", "ybx3", "tgfbr2", "eif2a"), `Danio rerio` = c("nanog", "soxb1"),
+              `Mus musculus` = c("rpl22", "rnmt", "trsp", "f3", "rpl10"), `Caenorhabditis elegans` = c("unc-54"),
+              `Saccharomyces cerevisiae` = c("nop2", "dot6", "tod6", "stb3", "whi3", "his3", "gir2"))
+  tt <- c("cell line ; YBX1 knockout & YBX3 knockout", "Nanog MO, SoxB1 MO", "Rpl22flox/flox;CamKCre+ (Control)",
+          "Rnmt fl/fl CD4cre +", "MATa nop2::klNOP2 yhrcdelta14::PNOP2-NOP2::kanMX6", "MATa dot6::LEU2 tod6::URA3 stb3::kanMX6",
+          "BY4743, whi3::URA3/whi3::URA3", "MATa his3Δ1 leu2Δ0", "isogenic Ba/F3_R98S mutant form of human RPL10",
+          "RNAi against unc-54 (BJA40)", "Alb-Cre; Trspfl/fl", "Trspfl/fl")
+  org <- c("Homo sapiens", "Danio rerio", "Mus musculus", "Mus musculus", rep("Saccharomyces cerevisiae", 4), "Mus musculus",
+           "Caenorhabditis elegans", "Mus musculus", "Mus musculus")
+  r <- metadata_perturbation_labels(tt, org, sym)
+  expect_equal(r$CONDITION, c("DKO", "KD", "", "KO", "", "TKO", "KO", "", "", "KD", "KO", ""))
+  expect_equal(r$GENE[c(1, 2, 4, 6, 7, 10, 11)], c("YBX1_YBX3", "Nanog_SoxB1", "Rnmt", "dot6_tod6_stb3", "whi3", "unc-54", "Trsp"))
+})

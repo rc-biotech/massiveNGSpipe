@@ -33,7 +33,9 @@ metadata_perturbation_labels <- function(titles, organisms = rep("", length(titl
                 "mock", "rep", "replicate", "sample", "cell", "cells", "wt", "total", "input", "rpf", "chx", "and", "with",
                 "the", "of", "no", "day", "min", "cas9", "vector", "ev", "double", "cre", "flox", "ip", "ko", "kd", "oe",
                 "rna", "mrna", "seq", "ribo", "set", "max", "per", "ice", "cat", "can", "act", "gal4", "aavs1", "renilla",
-                "mcherry", "yfp", "rfp", "egfp", "puro", "dox")
+                "mcherry", "yfp", "rfp", "egfp", "puro", "dox",
+                # yeast auxotrophy markers / strain background (his3delta1 leu2delta0 ...)
+                "his3", "leu2", "ura3", "lys2", "met15", "met17", "trp1", "ade2", "can1", "his4", "ade3")
   norm <- function(g) sub("[-_.][0-9]{1,2}$", "", g)
   valid <- function(g, i, strict) {
     ok <- !is.na(g) & nzchar(g) & grepl("^[A-Za-z][A-Za-z0-9.-]{0,14}$", g) & !tolower(g) %in% not_gene
@@ -53,8 +55,12 @@ metadata_perturbation_labels <- function(titles, organisms = rep("", length(titl
     for (k in seq_along(todo)) {
       g <- cl[[k]]; if (!length(g)) next
       v <- valid(g, rep(todo[k], length(g)), strict)
-      if (any(v)) { gg <- g[which(v)[1]]
-        data.table::set(out, todo[k], c("CONDITION", "GENE", "rule"), list(cond, mk(norm(gg)), rule)) }
+      if (any(v)) { o <- organisms[todo[k]]
+        fix <- function(gg) if (o %in% names(symbols) && tolower(gg) %in% symbols[[o]]) gg else norm(gg)
+        gs <- vapply(g[v], fix, character(1)); gs <- head(gs[!duplicated(tolower(gs))], 3)
+        # several genes hit by the same perturbation (YBX1 & YBX3 knockout, Nanog MO + SoxB1 MO) are kept together
+        cc <- if (length(gs) > 1 && cond == "KO") c("", "DKO", "TKO")[length(gs)] else cond
+        data.table::set(out, todo[k], c("CONDITION", "GENE", "rule"), list(cc, mk(paste(gs, collapse = "_")), rule)) }
     }
   }
   # 1. controls
@@ -66,7 +72,7 @@ metadata_perturbation_labels <- function(titles, organisms = rep("", length(titl
   ev <- out$CONDITION == "" & grepl("(?i)empty[-_ ]?vector|(?<![a-z0-9])ev(?![a-z0-9])", t, perl = TRUE)
   data.table::set(out, which(ev), c("CONDITION", "rule"), list("EV", "empty_vector"))
   # 2. point mutants (gene + mutation captured together, validated on the gene part)
-  pm <- "(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9]{1,9}[-_ ][ACDEFGHIKLMNPQRSTVWY][0-9]{1,4}(?:[ACDEFGHIKLMNPQRSTVWY]|X|del|\\*))(?![A-Za-z0-9])"
+  pm <- "(?<![A-Za-z0-9/])([A-Za-z][A-Za-z0-9]{1,9}[-_ ][ACDEFGHIKLMNPQRSTVWY][0-9]{1,4}(?:[ACDEFGHIKLMNPQRSTVWY]|X|del|\\*))(?![A-Za-z0-9])"
   todo <- which(out$CONDITION == ""); pm_all <- cands(pm)
   for (k in todo) { m <- pm_all[[k]]; if (!length(m)) next
     gene <- sub("[-_ ].*$", "", m); mut <- sub("^[^-_ ]*[-_ ]", "", m)
@@ -100,6 +106,16 @@ metadata_perturbation_labels <- function(titles, organisms = rep("", length(titl
   for (k in todo) { g <- unique(norm(c(kn[[k]], kd[[k]]))); if (length(g) < 2) next
     v <- valid(g, rep(k, length(g)), TRUE); if (sum(v) >= 2)
       data.table::set(out, k, c("CONDITION", "GENE", "rule"), list("DKO", paste(g[v][1:2], collapse = "_"), "multi_deletion")) }
+  # yeast deletion alleles (whi3::URA3, dhh1::KanMX) and conditional knockouts (Alb-Cre; Trspfl/fl)
+  yd <- "(?<![A-Za-z0-9-])([A-Za-z][A-Za-z0-9.]{1,14})::(?i:URA3|LEU2|HIS3|TRP1|KAN|KanMX|kanMX[0-9]?|NAT|natMX[0-9]?|HPH|hphMX[0-9]?|NEO|LYS2|ADE2|MET15|BLE|ZEO|HisMX[0-9]?|cat)"
+  todo <- which(out$CONDITION == ""); yall <- cands(yd)
+  for (k in todo) { g <- unique(yall[[k]]); if (length(g) < 2) next
+    v <- valid(g, rep(k, length(g)), TRUE); if (sum(v) >= 2) { gs <- head(g[v], 3)
+      data.table::set(out, k, c("CONDITION", "GENE", "rule"), list(c("", "DKO", "TKO")[length(gs)], paste(gs, collapse = "_"), "multi_deletion")) } }
+  apply_rule("(?<![A-Za-z0-9-])([A-Za-z][A-Za-z0-9.]{1,14})::(?i:URA3|LEU2|HIS3|TRP1|KAN|KanMX|kanMX[0-9]?|NAT|natMX[0-9]?|HPH|hphMX[0-9]?|NEO|LYS2|ADE2|MET15|BLE|ZEO)", "KO", "yeast_deletion", TRUE)
+  # Cre + floxed allele, but not RiboTag (Rpl22-HA floxed exon) or explicitly labelled controls
+  floxed <- grepl("(?i)cre", t, perl = TRUE) & !grepl("(?i)ribotag|rpl22[-_ ]?ha|\\(control\\)", t, perl = TRUE)
+  apply_rule("(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9.]{1,14}) ?(?:fl/fl|f/f|flox/flox|\\(fl/fl\\))", "KO", "conditional_ko", TRUE, only = floxed)
   apply_rule(ko_null, "KO", "gene_null", TRUE)
   apply_rule(ko_delta, "KO", "delta_prefix", TRUE)
   apply_rule("(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9.]{1,14})[-_]?(?i:KO|knock-?out|null)(?![A-Za-z])", "KO", "gene_ko_attached", TRUE)
@@ -141,7 +157,7 @@ metadata_fill_perturbations <- function(dt, symbols = metadata_symbol_sets(dt$Sc
   dt <- data.table::copy(data.table::as.data.table(dt))
   for (cl in c("CONDITION", "GENE")) data.table::set(dt, j = cl, value = { v <- as.character(dt[[cl]]); v[is.na(v)] <- ""; v })
   p <- metadata_perturbation_labels(dt$sample_title, as.character(dt$ScientificName), symbols)
-  vocab <- c("WT", "KO", "KD", "OE", "DKO", "MUTANT", "KI", "EV", "CONTROL", "DEGRON")
+  vocab <- c("WT", "KO", "KD", "OE", "DKO", "TKO", "MUTANT", "KI", "EV", "CONTROL", "DEGRON", "RESCUED")
   cond_u <- toupper(dt$CONDITION)
   has_gene_in_cond <- mapply(function(cnd, g) nzchar(g) && grepl(tolower(g), tolower(cnd), fixed = TRUE), dt$CONDITION, p$GENE)
   fill_c <- which(dt$CONDITION == "" & p$CONDITION != "")
