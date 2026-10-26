@@ -101,7 +101,7 @@ metadata_perturbation_labels <- function(titles, organisms = rep("", length(titl
   apply_rule("(?:(?i:siRNA|shRNA|RNAi|dsRNA|knock-?down|KD)|MO)[-_ ](?i:against[-_ ]|of[-_ ]|targeting[-_ ])?([A-Za-z][A-Za-z0-9.-]{1,14})(?![A-Za-z0-9])", "KD", "kd_prefix", FALSE)
   apply_rule("(?<![A-Za-z0-9])sg[-_]?([A-Za-z][A-Za-z0-9.-]{1,14})(?![A-Za-z0-9])", "KD", "crispri_sg", TRUE, only = crispri)
   # 6. knockout
-  ko_null <- "(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9._]{1,14})(?:-/-|\u0394|\u2206)"
+  ko_null <- "(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9._]{1,14}) ?(?:-/-|\u0394|\u2206)"
   ko_delta <- "(?:\u0394|\u2206|(?<![A-Za-z])(?i:delta)[-_ ]?)([A-Za-z][A-Za-z0-9._]{1,14})(?![A-Za-z0-9])"
   # several deleted genes in one title (cth1-delta cth2-delta) -> DKO
   todo <- which(out$CONDITION == ""); kn <- cands(ko_null); kd <- cands(ko_delta)
@@ -119,6 +119,8 @@ metadata_perturbation_labels <- function(titles, organisms = rep("", length(titl
   floxed <- grepl("(?i)cre", t, perl = TRUE) & !grepl("(?i)ribotag|rpl22[-_ ]?ha|\\(control\\)", t, perl = TRUE)
   apply_rule("(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9.]{1,14}) ?(?:fl/fl|f/f|flox/flox|\\(fl/fl\\))", "KO", "conditional_ko", TRUE, only = floxed)
   apply_rule(ko_null, "KO", "gene_null", TRUE)
+  # heterozygous (Mael+/-, Gene +/-)
+  apply_rule("(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9._]{1,14}) ?\\+/-", "het", "heterozygous", TRUE)
   apply_rule(ko_delta, "KO", "delta_prefix", TRUE)
   apply_rule("(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9.]{1,14})[-_]?(?i:KO|knock-?out|null)(?![A-Za-z])", "KO", "gene_ko_attached", TRUE)
   apply_rule("(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9.]{1,14}) (?i:KO|knock-?out|null|deletion)(?![A-Za-z])", "KO", "gene_ko_suffix", FALSE)
@@ -160,7 +162,7 @@ metadata_fill_perturbations <- function(dt, symbols = metadata_symbol_sets(dt$Sc
   dt <- data.table::copy(data.table::as.data.table(dt))
   for (cl in c("CONDITION", "GENE")) data.table::set(dt, j = cl, value = { v <- as.character(dt[[cl]]); v[is.na(v)] <- ""; v })
   p <- metadata_perturbation_labels(dt$sample_title, as.character(dt$ScientificName), symbols)
-  vocab <- c("WT", "KO", "KD", "OE", "DKO", "TKO", "MUTANT", "KI", "EV", "CONTROL", "DEGRON", "RESCUED")
+  vocab <- c("WT", "KO", "KD", "OE", "DKO", "TKO", "HET", "MUTANT", "KI", "EV", "CONTROL", "DEGRON", "RESCUED")
   cond_u <- toupper(dt$CONDITION)
   has_gene_in_cond <- mapply(function(cnd, g) nzchar(g) && grepl(tolower(g), tolower(cnd), fixed = TRUE), dt$CONDITION, p$GENE)
   fill_c <- which(dt$CONDITION == "" & p$CONDITION != "")
