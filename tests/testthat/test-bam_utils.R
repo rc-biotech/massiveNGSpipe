@@ -95,7 +95,7 @@ test_that("save_expanded_alignment_metrics() skips PAIRED samples with a message
   expect_identical(dt$Run, "SRR001")
 })
 
-test_that("save_expanded_alignment_metrics() skips samples missing a bam or collapsed fasta", {
+test_that("save_expanded_alignment_metrics() uses the BAM-name fallback for samples without a collapsed fasta", {
   bam_dir <- tempfile("bam_"); dir.create(bam_dir)
   collapsed_dir <- tempfile("collapsed_"); dir.create(collapsed_dir)
   out_dir <- tempfile("qc_")
@@ -107,15 +107,37 @@ test_that("save_expanded_alignment_metrics() skips samples missing a bam or coll
   file.create(file.path(bam_dir, "SRR002.bam"))
 
   testthat::local_mocked_bindings(
-    get_expanded_alignment_metrics = function(fasta_file, bam_file) fake_metrics_row()
+    get_expanded_alignment_metrics = function(fasta_file, bam_file) fake_metrics_row(),
+    get_expanded_alignment_metrics_bam = function(bam_file, fastp_json = NULL, yieldSize = 5e6) fake_metrics_row()
   )
 
   expect_message(
     save_expanded_alignment_metrics(bam_dir, collapsed_dir, study_org, out_dir = out_dir),
-    "Missing bam or collapsed fasta for 1 sample"
+    "No collapsed fasta for 1 sample"
   )
   dt <- data.table::fread(file.path(out_dir, "expanded_alignment_metrics.csv"))
-  expect_identical(dt$Run, "SRR001")
+  expect_identical(dt$Run, c("SRR001", "SRR002"))
+  expect_identical(dt$method, c("collapsed_fasta", "bam_names_fastp"))
+})
+
+test_that("get_expanded_alignment_metrics_bam() sums read multiplicities from collapsed read names and NH", {
+  d <- tempfile("bamx_"); dir.create(d)
+  sam <- file.path(d, "x.sam")
+  writeLines(c("@HD\tVN:1.4\tSO:coordinate", "@SQ\tSN:chr1\tLN:1000",
+               "seq1_x5\t0\tchr1\t10\t255\t10M\t*\t0\t0\tACGTACGTAC\t*\tNH:i:1\tHI:i:1",
+               "seq2_x3\t0\tchr1\t20\t3\t10M\t*\t0\t0\tACGTACGTAC\t*\tNH:i:2\tHI:i:1",
+               "seq2_x3\t256\tchr1\t30\t3\t10M\t*\t0\t0\tACGTACGTAC\t*\tNH:i:2\tHI:i:2",
+               "seq3_x1\t16\tchr1\t40\t255\t10M\t*\t0\t0\tACGTACGTAC\t*\tNH:i:1\tHI:i:1"), sam)
+  bam <- Rsamtools::asBam(sam, file.path(d, "x"), overwrite = TRUE, indexDestination = FALSE)
+  json <- file.path(d, "report.json")
+  writeLines('{"summary": {"after_filtering": {"total_reads": 20}}}', json)
+  r <- get_expanded_alignment_metrics_bam(bam, json, yieldSize = 2)   # chunks of 2 records
+  expect_equal(r$total_input_seqs, 20)
+  expect_equal(r$total_aligned_reads, 9); expect_equal(r$total_aligned_reads_collapsed, 3)
+  expect_equal(r$total_alignments, 12); expect_equal(r$total_alignments_collapsed, 4)
+  expect_equal(r$unique_aligned_reads, 6); expect_equal(r$unique_aligned_reads_collapsed, 2)
+  expect_equal(r$multimapping_aligned_reads, 3); expect_equal(r$multimapping_aligned_reads_collapsed, 1)
+  expect_true(is.na(r$total_input_seqs_collapsed))
 })
 
 test_that("save_expanded_alignment_metrics() falls back to a plain .fasta when .fasta.gz doesn't exist", {

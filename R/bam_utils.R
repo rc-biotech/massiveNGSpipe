@@ -313,20 +313,31 @@ save_expanded_alignment_metrics <- function(bam_dir, collapsed_dir, study_org,
       if (length(resolved) != 1) NA_character_ else resolved
     }, character(1))
     have_both <- file.exists(bam_files) & !is.na(fasta_files) & file.exists(fasta_files)
-    if (!any(have_both)) {
-      message("-- No matching bam/collapsed-fasta pairs found, skipping expanded alignment metrics")
+    # Without the collapsed fasta (deleted for online studies) the BAM read names and the fastp report give the same
+    # numbers (get_expanded_alignment_metrics_bam(); only total_input_seqs_collapsed is NA)
+    bam_only <- file.exists(bam_files) & !have_both
+    if (!any(have_both | bam_only)) {
+      message("-- No matching bam files found, skipping expanded alignment metrics")
       return(invisible(NULL))
     }
-    if (!all(have_both)) {
-      message("-- Missing bam or collapsed fasta for ", sum(!have_both),
-             " sample(s), computing expanded alignment metrics for the rest")
+    dt_list <- list()
+    if (any(have_both)) {
+      dt_list <- BiocParallel::bpmapply(get_expanded_alignment_metrics,
+                                        fasta_files[have_both], bam_files[have_both],
+                                        SIMPLIFY = FALSE, BPPARAM = BPPARAM)
+      names(dt_list) <- single_runs$Run[have_both]
+      dt_list <- lapply(dt_list, function(x) cbind(x, method = "collapsed_fasta"))
     }
-
-    dt_list <- BiocParallel::bpmapply(get_expanded_alignment_metrics,
-                                      fasta_files[have_both], bam_files[have_both],
-                                      SIMPLIFY = FALSE, BPPARAM = BPPARAM)
-    names(dt_list) <- single_runs$Run[have_both]
-    dt <- data.table::rbindlist(dt_list, idcol = "Run")
+    if (any(bam_only)) {
+      message("-- No collapsed fasta for ", sum(bam_only),
+              " sample(s): expanded metrics from BAM read names + fastp report")
+      jsons <- file.path(dirname(bam_dir), "trim", paste0("report_", single_runs$Run[bam_only], ".json"))
+      l2 <- BiocParallel::bpmapply(function(b, j) cbind(get_expanded_alignment_metrics_bam(b, j), method = "bam_names_fastp"),
+                                   bam_files[bam_only], jsons, SIMPLIFY = FALSE, BPPARAM = BPPARAM)
+      names(l2) <- single_runs$Run[bam_only]
+      dt_list <- c(dt_list, l2)
+    }
+    dt <- data.table::rbindlist(dt_list, idcol = "Run", fill = TRUE)
 
     dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
     data.table::fwrite(dt, file.path(out_dir, "expanded_alignment_metrics.csv"))
@@ -496,4 +507,48 @@ detect_strand_mode <- function(R1, R2,
   max <- which.max(counts)
   names(max) <- round(counts[1] / counts[2], 2)
   return(max)
+}
+
+#' Expanded (uncollapsed) alignment metrics from the BAM alone
+#'
+#' Same columns as \code{get_expanded_alignment_metrics()}, for libraries whose collapsed fasta was deleted (online
+#' studies). Read multiplicities come from the collapsed read names in the BAM ("seq123_x45"), the number of alignments
+#' per read from the NH tag (STAR writes every alignment, so NH equals the number of records per read), and the
+#' input reads (reads after trimming, i.e. the sum of the collapsed multiplicities) from the fastp report
+#' (summary$after_filtering$total_reads). Unaligned collapsed sequences are not in the BAM, so
+#' \code{total_input_seqs_collapsed} is NA. Streams the BAM in chunks (memory independent of depth).
+#' @param bam_file path to a collapsed-read BAM
+#' @param fastp_json path to the fastp report of that run (NULL: input columns NA)
+#' @param yieldSize records per chunk
+#' @return one-row data.table with the columns of get_expanded_alignment_metrics()
+#' @export
+get_expanded_alignment_metrics_bam <- function(bam_file, fastp_json = NULL, yieldSize = 5e6) {
+  bf <- Rsamtools::BamFile(bam_file, yieldSize = yieldSize); open(bf); on.exit(close(bf))
+  p <- Rsamtools::ScanBamParam(what = "qname", tag = c("NH", "HI"))
+  s <- c(aligned = 0, aligned_c = 0, alignments = 0, alignments_c = 0, uniq = 0, uniq_c = 0, multi = 0, multi_c = 0)
+  repeat {
+    b <- Rsamtools::scanBam(bf, param = p)[[1]]
+    if (!length(b$qname)) break
+    x <- as.numeric(sub(".*_x", "", b$qname)); if (anyNA(x)) stop("read names without _x<count>: ", bam_file)
+    nh <- b$tag$NH; hi <- b$tag$HI; if (is.null(hi)) hi <- rep(1L, length(nh))
+    first <- hi == 1L
+    s <- s + c(sum(x[first]), sum(first), sum(x), length(x), sum(x[nh == 1L]), sum(nh == 1L),
+               sum(x[first & nh > 1L]), sum(first & nh > 1L))
+  }
+  input <- NA_real_
+  if (!is.null(fastp_json) && file.exists(fastp_json))
+    input <- as.numeric(jsonlite::fromJSON(fastp_json)$summary$after_filtering$total_reads)
+  dt_summary <- data.table(total_input_seqs = input, total_input_seqs_collapsed = NA_real_,
+                           total_aligned_reads = s[["aligned"]], total_aligned_reads_collapsed = s[["aligned_c"]],
+                           total_alignments = s[["alignments"]], total_alignments_collapsed = s[["alignments_c"]],
+                           unique_aligned_reads = s[["uniq"]], unique_aligned_reads_collapsed = s[["uniq_c"]],
+                           multimapping_aligned_reads = s[["multi"]], multimapping_aligned_reads_collapsed = s[["multi_c"]])
+  dt_summary_per_million <- round(dt_summary / 1e6, 2)
+  colnames(dt_summary_per_million) <- paste0(colnames(dt_summary_per_million), "(million reads)")
+  rel <- data.table(total_aligned_reads = dt_summary$total_aligned_reads / dt_summary$total_input_seqs,
+                    unique_alignments = dt_summary$unique_aligned_reads / dt_summary$total_input_seqs,
+                    multimapping_aligned_reads = dt_summary$multimapping_aligned_reads / dt_summary$total_input_seqs)
+  rel_pct <- 100 * round(rel, 2); colnames(rel_pct) <- paste0(colnames(rel_pct), "%")
+  colnames(rel) <- paste0(colnames(rel), "_ratio")
+  cbind(dt_summary, dt_summary_per_million, rel, rel_pct)
 }
