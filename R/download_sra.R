@@ -211,6 +211,20 @@ sra_to_fastq <- function(accession, outdir, compress = TRUE,
     file.remove(rm_files[file.exists(rm_files)])
     stop("Fasterq dump failed!")
   }
+  # Some SINGLE archives contain a zero-length technical mate. With
+  # --split-files, fasterq-dump writes RUN_1.fastq although there is only
+  # one biological read. Normalize it before checking/copying scratch output.
+  if (!PAIRED_END) {
+    numbered <- paste0(temp_path, '_1.fastq')
+    second <- paste0(temp_path, '_2.fastq')
+    unnumbered <- paste0(temp_path, '.fastq')
+    if (!file.exists(unnumbered) && file.exists(numbered)) {
+      if (file.exists(second) && file.info(second)$size > 0)
+        stop('SINGLE archive produced a non-empty second FASTQ; inspect library layout')
+      if (file.exists(second)) file.remove(second)
+      if (!file.rename(numbered, unnumbered)) stop('Could not normalize single-end FASTQ name')
+    }
+  }
   if (using_temp_dir) {
     message("- Copying file back to main drive..")
     stopifnot(all(file.exists(out_file_temp)))
