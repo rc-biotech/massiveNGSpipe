@@ -37,7 +37,7 @@ static void *xmalloc(size_t n) { void *p = malloc(n); if (!p) die("out of memory
 /* ---------------- options ---------------- */
 typedef struct {
   const char *in, *collapsed, *json, *fastq_out, *adapter;
-  int front, tail, tail_after_adapter, dimer_max, minlen, qual_phred, unqual_pct, n_limit, polyg, polyg_minlen;
+  int front, tail, tail_after_adapter, dimer_max, qf, minlen, qual_phred, unqual_pct, n_limit, polyg, polyg_minlen;
   long long max_reads;
   int workers;
   char cmd[8192];
@@ -315,14 +315,20 @@ static void *worker(void *arg) {
       if (polyg_on && rl > 0) rl = trim_polyg(rs, rl, O.polyg_minlen);
       int cut = 0;
       if (use_adapter && rl > 0) { int nl = trim_adapter(rs, rl, O.adapter, alen); if (nl >= 0) { w->ad_reads++; w->ad_bases += rl - nl; w_adapter_seen(w, rs + nl, rl - nl); rl = nl; cut = 1; } }
-      if (O.tail_after_adapter > 0) rl = rl > O.tail_after_adapter ? rl - O.tail_after_adapter : 0;
       if (cut && rl <= O.dimer_max) { w->dimer++; continue; }
       if (rl <= 0) { w->shortr++; continue; }
-      int lowq = 0, nn = 0;
-      for (int i = 0; i < rl; i++) { lowq += rq[i] < qmin; nn += rs[i] == 'N'; }
-      if (lowq > O.unqual_pct * rl / 100.0) { w->lowq++; continue; }
-      if (nn > O.n_limit) { w->nn++; continue; }
+      if (O.qf) {                                   /* fastp quality filter (off with -Q, as in the pipeline's main pass) */
+        int lowq = 0, nn = 0;
+        for (int i = 0; i < rl; i++) { lowq += rq[i] < qmin; nn += rs[i] == 'N'; }
+        if (lowq > O.unqual_pct * rl / 100.0) { w->lowq++; continue; }
+        if (nn > O.n_limit) { w->nn++; continue; }
+      }
       if (rl < O.minlen) { w->shortr++; continue; }
+      if (O.tail_after_adapter > 0) {               /* second fastp stage of fastp_post_adapter_tail(): tail cut, length. That stage
+                                                       reads stdin, so fastp cannot detect the instrument and polyG trimming is off */
+        rl = rl > O.tail_after_adapter ? rl - O.tail_after_adapter : 0;
+        if (rl <= 0 || rl < O.minlen) { w->shortr++; continue; }
+      }
       stats_add(&w->after, rs, rq, rl);
       if (O.fastq_out) { int hl = s - h; memcpy(out + olen, h, hl); olen += hl; memcpy(out + olen, rs, rl); olen += rl; memcpy(out + olen, "\n+\n", 3); olen += 3; memcpy(out + olen, rq, rl); olen += rl; out[olen++] = '\n'; }
       else {
@@ -360,7 +366,7 @@ static void *collector(void *x) {            /* one per shard: owns TS[k] */
 /* ---------------- main ---------------- */
 int main(int argc, char **argv) {
   opts_t o = {0}; o.adapter = "disable"; o.minlen = 15; o.qual_phred = 15; o.unqual_pct = 40; o.n_limit = 5; o.polyg = -1; o.polyg_minlen = 10;
-  o.max_reads = -1; o.dimer_max = 2; o.workers = 4;
+  o.max_reads = -1; o.dimer_max = 2; o.workers = 4; o.qf = 1;
   size_t cl = 0; for (int i = 0; i < argc; i++) cl += snprintf(o.cmd + cl, sizeof o.cmd - cl, "%s%s", i ? " " : "", argv[i]);
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
@@ -374,6 +380,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "-r")) o.max_reads = atoll(argv[++i]);
     else if (!strcmp(a, "--dimer-max-len")) o.dimer_max = atoi(argv[++i]);
     else if (!strcmp(a, "-w")) o.workers = atoi(argv[++i]);
+    else if (!strcmp(a, "-Q")) o.qf = 0;
     else die("unknown argument");
   }
   if (!o.in || (!o.collapsed && !o.fastq_out)) die("usage: trimcollapse -i in.fastq[.gz] (-o collapsed.fasta.gz | --fastq-out trimmed.fastq) [-j report.json] [-a ADAPTER|disable] [-f N] [-t N] [--tail-after-adapter N] [-l MIN] [-r N] [-w workers]");
@@ -436,16 +443,19 @@ int main(int argc, char **argv) {
     fprintf(f, "{\n\t\"summary\": {\n\t\t\"fastp_version\": \"massiveNGSpipe-trimcollapse %s (fastp-compatible)\",\n\t\t\"sequencing\": \"single end (%llu cycles)\",\n",
             VERSION, (unsigned long long)before.maxlen);
     json_summary(f, "before_filtering", &before, 0); json_summary(f, "after_filtering", &after, 1);
-    fprintf(f, "\t},\n\t\"filtering_result\": {\n\t\t\"passed_filter_reads\": %llu,\n\t\t\"low_quality_reads\": %llu,\n\t\t\"too_many_N_reads\": %llu,\n"
-               "\t\t\"adapter_dimer_reads\": %llu,\n\t\t\"too_short_reads\": %llu,\n\t\t\"too_long_reads\": 0\n\t},\n",
-            (unsigned long long)after.reads, (unsigned long long)f_lowq, (unsigned long long)f_n, (unsigned long long)f_dimer, (unsigned long long)f_short);
+    fprintf(f, "\t},\n\t\"filtering_result\": {\n\t\t\"passed_filter_reads\": %llu,\n\t\t\"low_quality_reads\": %llu,\n\t\t\"too_many_N_reads\": %llu,\n",
+            (unsigned long long)after.reads, (unsigned long long)f_lowq, (unsigned long long)f_n);
+    if (use_adapter) fprintf(f, "\t\t\"adapter_dimer_reads\": %llu,\n", (unsigned long long)f_dimer);   /* fastp omits it without adapter trimming */
+    fprintf(f, "\t\t\"too_short_reads\": %llu,\n\t\t\"too_long_reads\": 0\n\t},\n", (unsigned long long)f_short);
     fprintf(f, "\t\"duplication\": {\n\t\t\"rate\": %g\n\t},\n", (o.collapsed && after.reads) ? 1.0 - (double)tn / after.reads : 0.0);
+    if (use_adapter) {                    /* fastp writes adapter_cutting only when adapter trimming is on */
     fprintf(f, "\t\"adapter_cutting\": {\n\t\t\"adapter_trimmed_reads\": %llu,\n\t\t\"adapter_trimmed_bases\": %llu,\n", (unsigned long long)ad_reads, (unsigned long long)ad_bases);
     if (use_adapter) fprintf(f, "\t\t\"read1_adapter_sequence\": \"%s\",\n", o.adapter);
     qsort(AC, acn, sizeof(acount), cmp_ac); uint64_t other = 0;
     fprintf(f, "\t\t\"read1_adapter_counts\": {\n");
     for (size_t i = 0; i < acn; i++) { if (i < 10) fprintf(f, "\t\t\t\"%s\": %llu,\n", AC[i].s, (unsigned long long)AC[i].n); else other += AC[i].n; }
     fprintf(f, "\t\t\t\"others\": %llu\n\t\t}\n\t},\n", (unsigned long long)other);
+    }
     json_read_block(f, "read1_before_filtering", &before, 0); json_read_block(f, "read1_after_filtering", &after, 0);
     fprintf(f, "\t\"command\": \"");
     for (char *c = o.cmd; *c; c++) { if (*c == '"' || *c == '\\') fputc('\\', f); fputc(*c, f); }

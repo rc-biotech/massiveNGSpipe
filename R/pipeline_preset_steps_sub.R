@@ -115,10 +115,13 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
         if (nrow(runs) > 0) {
           run_experiment_subprocess(
             func = function(all_files, runs, mode, target_dir, trimmed_dir, source_dir, config, experiment) {
+              # fast single-pass trim + collapse for single-end data (pipeline_config(fast_trim), R/trimcollapse.R)
+              options(massiveNGSpipe.fast_trim = !isFALSE(config$fast_trim))
               lapply(seq_len(nrow(runs)), function(i) {
                 study_sample <- runs[i]
                 run <- study_sample$Run
                 message(run)
+                fast_trim_state$collapsed <- NULL
                 filenames <- all_files[[i]]
                 assert_base_space_fastq(filenames[!is.na(filenames)], run)
                 single_end <- is.na(filenames[2])
@@ -148,6 +151,11 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
                 # Store the actual barcode_dt row (not just TRUE) so it
                 # can be reconstructed below even across a resumed run.
                 set_sample_flag(config, "trim", experiment, run, value = barcode_dt)
+                # The fast path also collapsed the run: finish it like pipeline_collapse() would (orientation, marker)
+                if (!is.null(fast_trim_state$collapsed)) {
+                  orient_collapsed_fasta(fast_trim_state$collapsed, run, trimmed_dir)
+                  set_sample_flag(config, "collapsed", experiment, run)
+                }
                 barcode_dt
               })
             },

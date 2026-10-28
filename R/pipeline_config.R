@@ -37,6 +37,10 @@
 #' must be named equal to names of the 'flag_step' argument.
 #' @param mode = \code{c("online", "local")[1]}. "online" will assume project IDs for
 #' online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.
+#' @param fast_trim logical, default TRUE. Trim and collapse single-end reads in one pass with the fastp
+#' 1.3.7-compatible C program (R/trimcollapse.R): same reads, collapsed file and report as fastp + ORFik
+#' collapse, ~12x faster and without the trimmed fastq. Paired-end data and fastp's "auto" adapter detection
+#' keep using fastp. FALSE uses fastp + ORFik::collapse.fastq for everything.
 #' @param demultiplex logical, default FALSE. TRUE adds a first stage that demultiplexes pooled lanes
 #' (\code{<raw_data>/<pool>/multiplexed/controlfile.csv}, see \code{?demultiplex}) and delivers each pooled
 #' run that is in the curated metadata to its experiment, ready for alignment. Runs that are not pooled are
@@ -194,6 +198,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             mode = c("online", "local")[1],
                             contam = FALSE,
                             demultiplex = FALSE,
+                            fast_trim = TRUE,
                             ssd_scratch_dir = if (dir.exists(path.expand("~/livemount/ssd/tmp/")))
                               "~/livemount/ssd/tmp/" else NULL,
                             ssd_min_free_gb = 50,
@@ -282,7 +287,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               backup_metadata = backup_metadata,
               temp_metadata = temp_metadata,
               blacklist = blacklist,
-              google_url = google_url, mode = mode, demultiplex = demultiplex,
+              google_url = google_url, mode = mode, demultiplex = demultiplex, fast_trim = fast_trim,
               delete_raw_files = delete_raw_files,
               delete_trimmed_files = delete_trimmed_files,
               delete_collapsed_files = delete_collapsed_files,

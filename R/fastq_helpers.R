@@ -726,6 +726,17 @@ run_barcode_detection_and_trim <- function(study_sample, source_dir, target_dir,
     }
   }
 
+  anchored_pre <- anchored_front_settings(trimmed_dir, study_sample$Run,
+    paired = !is.null(file2) && length(file2) > 0L && !is.na(file2))
+  if (is.null(anchored_pre) && fast_trim_enabled(file, file2, adapter_for_real_pass)) {
+    # One pass: trim exactly as the fastp branches below and collapse (R/trimcollapse.R); writes
+    # trim/report_<id>.json and trim/SINGLE/collapsed_trimmed_<id>.fasta.gz, no trimmed fastq.
+    post_tail <- barcode_dt$barcode3p_size > 0 && adapter_for_real_pass != "disable"
+    trimcollapse_run(file, target_dir, adapter_for_real_pass, trim.front = barcode_dt$barcode5p_size,
+                     trim.tail = if (post_tail) 0 else barcode_dt$barcode3p_size,
+                     tail_after_adapter = if (post_tail) barcode_dt$barcode3p_size else 0)
+    return(barcode_dt)
+  }
   if (barcode_dt$barcode3p_size > 0 && adapter_for_real_pass != "disable") {
     fastp_post_adapter_tail(file, file2, output.dir = target_dir,
       adapter = adapter_for_real_pass, trim.front = barcode_dt$barcode5p_size,
@@ -837,6 +848,10 @@ resolve_adapter_for_trim <- function(file, process_dir,
 detect_adapter_and_trim <- function(file, process_dir, file2 = NULL,
       adapter = try(fastqc_adapters_info(file, adapter_manual_dir = file.path(process_dir, "trim")))) {
   resolved <- resolve_adapter_for_trim(file, process_dir, adapter)
+  if (!resolved$polyN_adapter && fast_trim_enabled(file, file2, resolved$adapter)) {
+    trimcollapse_run(file, process_dir, resolved$adapter)
+    return(resolved$adapter)
+  }
 
   ORFik::STAR.align.single(
     resolved$tempfile, file2,
@@ -904,6 +919,11 @@ fastp_detect_sample <- function(file, out_dir, adapter, reads_to_process,
   json_file <- file.path(out_dir, paste0("report_", ibn, ".json"))
   html_file <- file.path(out_dir, paste0("report_", ibn, ".html"))
 
+  if (fast_trim_enabled(file, NULL, adapter)) {   # same sample, report and names, without fastp (R/trimcollapse.R)
+    trimcollapse_run(file, out_dir, adapter, min.length = 20, quality_filtering = TRUE, reads_to_process = reads_to_process,
+                     fastq_out = out_file, json = json_file, threads = 4L)
+    return(out_file)
+  }
   args <- fastp_detect_sample_args(file, out_file, json_file, html_file, adapter, reads_to_process)
   # path.expand(): install.fastp() can return a literal "~/bin/fastp" --
   # system2() (unlike system()) does not go through a shell, so it never

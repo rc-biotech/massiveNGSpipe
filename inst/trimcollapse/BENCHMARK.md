@@ -33,14 +33,27 @@ reader thread (ISA-L igzip inflate, zlib fallback; multi-member gzip; record-ali
 locks) -> sort by count -> pigz output (zlib fallback). Output and report do not depend on the worker count.
 Single-end / read 1 only (paired-end collapse uses read 1 in the pipeline too; the PE fastp report keeps fastp for now).
 
-## Integration plan (not on master yet)
-1. R wrapper `trim_collapse_fast()` (compile on first use like the demultiplexer; -DHAVE_ISAL when libisal is present).
-2. In pipeline_trim(): optional `config$fast_trim` (default FALSE at first): barcode-detection pass = trimcollapse
-   `-r 1000000 --fastq-out` (same JSON + trimmed sample, so barcode detection code is unchanged); full pass writes
-   `trim/report_<Run>.json` and `trim/SINGLE/collapsed_trimmed_<Run>.fasta.gz` directly and sets both the trim and
-   collapsed sample markers (no trimmed fastq, no R collapse).
-3. Adapter detection: replace fastqc (25 s/sample) by counting the same candidate adapters in the first reads inside
-   the tool (< 1 s), validated against fastqc_adapters_info() on the processed studies.
-4. Validation before default-on: rerun a set of finished studies (SE Ribo-seq, with/without barcodes and UMIs, several
-   instruments) and require identical collapsed files and report summaries.
-5. Same ISA-L reader in the demultiplexer (currently pigz-bound: ~0.65 M reads/s per file).
+## Integration (done, 2026-10-28)
+- `pipeline_config(fast_trim = TRUE)` (default): single-end runs with an explicit adapter (or "disable") are trimmed and
+  collapsed in one pass by `trimcollapse_run()` (R/trimcollapse.R); outputs keep the pipeline's names and places:
+  `trim/report_<Run>.json`, `trim/SINGLE/collapsed_trimmed_<Run>.fasta.gz`; the per-sample `collapsed` marker is set
+  and `orient_collapsed_fasta()` applied, so pipeline_collapse() skips these runs. No trimmed fastq is written.
+- Covered paths: plain adapter trimming (detect_adapter_and_trim), barcode/UMI trimming with front/tail cuts and the
+  post-adapter tail case (fastp_post_adapter_tail semantics, incl. its stdin stage having polyG off), the 1 M-read
+  barcode-detection sample (quality filter on), adapter disabled. Fallback to fastp: paired-end, fasta input, fastp
+  "auto" adapter detection, polyN special case, anchored-front trimming, missing input.
+- The binary compiles on first use; ISA-L when libisal is installed, else zlib (still ~6x).
+
+## Validation
+- `tests/testthat/test-trimcollapse.R`: names/locations, ORFik::trimming.table on the report, enable rules, exact
+  agreement with fastp 1.3.7 for main pass, post-adapter tail and detection sample (synthetic reads incl. polyG,
+  no-adapter and adapter-like-start reads).
+- Test matrix (2 M reads x 3 libraries: NextSeq untrimmed, NovaSeq provider-trimmed, UMI+barcode library): main pass,
+  front/tail cuts, adapter disabled, detection pass: identical reads, filtering, summaries, adapter counts, curves;
+  post-adapter tail identical to fastp_post_adapter_tail(); plain / gz / multi-member gz / zlib build identical;
+  truncated gzip rejected.
+- `inst/trimcollapse/validate_pipeline_trim.R`: runs the real pipe_trim_collapse() with fast_trim FALSE and TRUE on the
+  given fastq files and compares collapsed reads, reports, adapter_barcode_table, markers and flags. Rerun it on a new
+  server: `Rscript inst/trimcollapse/validate_pipeline_trim.R <massiveNGSpipe dir> sample1.fastq.gz sample2.fastq.gz`.
+- Next speedups: replace fastqc adapter detection (25 s/sample) by counting the candidate adapters inside the tool;
+  ISA-L reader for the demultiplexer.
