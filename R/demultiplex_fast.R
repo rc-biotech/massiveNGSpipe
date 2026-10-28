@@ -76,7 +76,7 @@ demultiplex <- function(path, controlfile = file.path(path, "controlfile.csv"),
     args <- c("demux", "-i", shQuote(file.path(path, f$file)), "-b", shQuote(bc_file), "-o", shQuote(tmp_dir), "-t", paste0(f$tag, ".part"),
               "-a", f$adapter, "-u5", f$umi_5p, "-u3", f$umi_3p, "-m", min_insert,
               "-bm", barcode_mismatches, "-am", adapter_mismatches)
-    status <- system2(shQuote(bin), args, stdout = log, stderr = log)
+    status <- system2(bin, args, stdout = log, stderr = log)
     if (status != 0) stop("demultiplexer failed for ", f$file, " (see ", log, ")")
     # publish this file's outputs only when it completed: rename part files, then the stats file last
     for (s in bc$sample_tag) file.rename(file.path(tmp_dir, paste0(s, ".", f$tag, ".part.seq")),
@@ -111,7 +111,7 @@ demultiplex <- function(path, controlfile = file.path(path, "controlfile.csv"),
     x <- targets[[fs]]
     out <- file.path(out_dir, "SINGLE", paste0("collapsed_trimmed_", fs, ".fasta.gz"))
     inputs <- file.path(tmp_dir, paste0(x$sample, "__", x$tag, ".seq"))
-    status <- system2(shQuote(bin), c("collapse", "-o", shQuote(out), "-m", min_insert, shQuote(inputs)), stdout = FALSE, stderr = FALSE)
+    status <- system2(bin, c("collapse", "-o", shQuote(out), "-m", min_insert, shQuote(inputs)), stdout = FALSE, stderr = FALSE)
     if (status != 0) stop("collapse failed for ", fs)
     demultiplex_write_report(file.path(out_dir, paste0("report_", fs, ".json")), x, ctrl[final_sample == fs]$adapter[1])
     fs
