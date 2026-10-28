@@ -140,11 +140,15 @@ download_sra_ascp <- function(run_accession, outdir,
 
 download_sra_ebi <- function(accession, outdir, compress) {
   message("Using ebi fallback")
-  res <- try(ORFik::download.SRA(accession, outdir, rename = FALSE))
+  # One accession has at most two mates; avoid inheriting a study-level
+  # MulticoreParam inside this already-isolated subprocess.
+  res <- try(ORFik::download.SRA(accession, outdir, rename = FALSE,
+                               BPPARAM = BiocParallel::SerialParam()))
   if (is(res, "try-error")) {
     message("Using fastq-dump fallback")
     res <- ORFik::download.SRA(accession, outdir, use.ebi.ftp = FALSE,
-                               rename = FALSE, compress = compress)
+                               rename = FALSE, compress = compress,
+                               BPPARAM = BiocParallel::SerialParam())
   } else {
     if (!compress) {
       lapply(res, function(fastq) R.utils::gunzip(fastq, overwrite = TRUE))
@@ -201,7 +205,9 @@ sra_to_fastq <- function(accession, outdir, compress = TRUE,
   out_file_temp <- paste0(temp_path, if(PAIRED_END) c("_1", "_2"), ".fastq")
 
   if (ret != 0) {
-    rm_files <- c(out_file_temp, temp_path)
+    # Keep the cached archive when extraction used the output drive.
+    # Only a private scratch copy belongs to this failed extraction.
+    rm_files <- c(out_file_temp, if (using_temp_dir) temp_path)
     file.remove(rm_files[file.exists(rm_files)])
     stop("Fasterq dump failed!")
   }

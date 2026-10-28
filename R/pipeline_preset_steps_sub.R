@@ -44,10 +44,15 @@ pipeline_download <- function(pipeline, config, pipelines = list(pipeline)) {
         if (nrow(info) > 0) {
           run_experiment_subprocess(
             func = function(info, outdir, compress, config, experiment) {
-              download_sra(
+              download_args <- list(
                 info, outdir, compress = compress,
                 after_run = function(run) set_sample_flag(config, "fetch", experiment, run)
               )
+              # An opt-in immutable toolkit can be validated without replacing
+              # the binary used by another live pipeline session.
+              toolkit <- config[["sratoolkit_path", exact = TRUE]]
+              if (!is.null(toolkit)) download_args$sratoolkit_path <- toolkit
+              do.call(download_sra, download_args)
             },
             args = list(info = info, outdir = conf["fastq"],
                         compress = config$compress_raw_data, config = config, experiment = experiment),
