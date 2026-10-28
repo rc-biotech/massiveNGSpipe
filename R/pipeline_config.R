@@ -37,6 +37,10 @@
 #' must be named equal to names of the 'flag_step' argument.
 #' @param mode = \code{c("online", "local")[1]}. "online" will assume project IDs for
 #' online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.
+#' @param demultiplex logical, default FALSE. TRUE adds a first stage that demultiplexes pooled lanes
+#' (\code{<raw_data>/<pool>/multiplexed/controlfile.csv}, see \code{?demultiplex}) and delivers each pooled
+#' run that is in the curated metadata to its experiment, ready for alignment. Runs that are not pooled are
+#' processed as usual, so this can stay on for mixed projects.
 #' @param delete_raw_files logical, default: mode == "online". If online do delete
 #' raw fastq files after trim step is done, for local samples do not delete.
 #' Set only to TRUE for mode local, if you have backups!
@@ -183,12 +187,13 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             blacklist = file.path(project_dir, "BLACKLIST.csv"),
                             google_url = default_sheets(project_dir),
                             preset = "Ribo-seq",
-                            flags = pipeline_flags(project_dir, mode, preset, contam),
+                            flags = pipeline_flags(project_dir, mode, preset, contam, demultiplex = demultiplex),
                             flag_steps = flag_grouping(flags),
                             pipeline_steps = lapply(names(flag_steps),
                                                     function(x) get(x, mode = "function")),
                             mode = c("online", "local")[1],
                             contam = FALSE,
+                            demultiplex = FALSE,
                             ssd_scratch_dir = if (dir.exists(path.expand("~/livemount/ssd/tmp/")))
                               "~/livemount/ssd/tmp/" else NULL,
                             ssd_min_free_gb = 50,
@@ -277,7 +282,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               backup_metadata = backup_metadata,
               temp_metadata = temp_metadata,
               blacklist = blacklist,
-              google_url = google_url, mode = mode,
+              google_url = google_url, mode = mode, demultiplex = demultiplex,
               delete_raw_files = delete_raw_files,
               delete_trimmed_files = delete_trimmed_files,
               delete_collapsed_files = delete_collapsed_files,

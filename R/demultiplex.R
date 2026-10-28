@@ -29,9 +29,10 @@ excel_Wiktoria_to_csv <- function(path = "~/livemount/Bio_data/raw_data/vaccine_
 }
 
 
-#' Demultiplex illumina lane fastq files to sample fastq
+#' Demultiplex illumina lane fastq files to sample fastq (R implementation)
 #'
-#' Using a csv controlfile
+#' Slow reference implementation kept for comparison and for \code{save raw split fastq}; use
+#' \code{\link{demultiplex}} (compiled engine) for real data. Using a csv controlfile
 #' @param path path to directory of multiplexed files, subfolder of raw_data dir
 #' as . Files must be lane names like: /raw_data/study/multiplexed/L1_R1_001.fastq.gz.
 #' Demultiplexed files will go to directory dirname(path)
@@ -57,8 +58,8 @@ excel_Wiktoria_to_csv <- function(path = "~/livemount/Bio_data/raw_data/vaccine_
 #' @examples
 #' # multiplexed is subfolder of raw_data study dir
 #' path <- "~/livemount/Bio_data/raw_data/vaccine_mod_bnt_1225-homo_sapiens_x_sars_cov2/multiplexed/"
-#' #devtools::load_all(); demultiplex(path)
-demultiplex <- function(path, path_out = sub("multiplexed/", "trim/SINGLE", sub("/raw_data/", "/processed_data/", path)),
+#' #devtools::load_all(); demultiplex_r(path)
+demultiplex_r <- function(path, path_out = sub("multiplexed/", "trim/SINGLE", sub("/raw_data/", "/processed_data/", path)),
                         controlfile = file.path(path, "controlfile.csv"),
                         files = list.files(path, "R1_001\\.(fastq$|fastq.gz$)"),
                         umi_5p_size = 4, umi_3p_size = 5, minimum_bio_fragment_size = 19,
@@ -153,7 +154,9 @@ demultiplex <- function(path, path_out = sub("multiplexed/", "trim/SINGLE", sub(
     # re-collapse collapsed chunks
     message("- All chunks done, recollapsing")
 
-    files_to_recollapse <- file.path(out_dir, paste0(names(reads_collapsed), suffix))
+    # all samples of this lane (not only those seen in the last chunk)
+    files_to_recollapse <- file.path(path_out, paste0(ctrl$sample, suffix))
+    files_to_recollapse <- files_to_recollapse[file.exists(files_to_recollapse)]
     bplapply(files_to_recollapse, recollapse_fastq, BPPARAM = bpparam)
 
 
@@ -170,7 +173,7 @@ demultiplex <- function(path, path_out = sub("multiplexed/", "trim/SINGLE", sub(
   message("Writing final output csv to location: \n", final_csv_path)
   fwrite(controlfile, final_csv_path)
   # TODO: Move files to respective directories
-  pool_across_lanes <- final_sample %in% colnames(controlfile)
+  pool_across_lanes <- "final_sample" %in% colnames(controlfile)
   if (pool_across_lanes) {
     message("Merge raw fastq seperated by LANE by pool (final_sample column)")
     merge_lane_samples_per_pool_sample(raw_fastq_dir, controlfile, suffix_fastq)
@@ -356,20 +359,6 @@ writeout.fastas <- function(reads, out_dir, append = FALSE,
          reads, names(reads))
 }
 
-
-#' Given ..., demultiplex to fastq
-#' @param path path to directory of
-#' @param csv path to csv file of
-#' @return invisible(NULL), files saved to disc
-demultiplex_from_bin <- function(path, csv, demultiplex_tool_bin = "~/bin/demultiplexer") {
-  # TODO: copy over:
-  #
-  call <- paste(demultiplex_tool_bin, "-i", path, "-c", csv)
-  ret <- system(call)
-
-  if (ret != 0) stop("Demultiplexing failed")
-  return(invisible(NULL))
-}
 
 merge_lane_samples_per_pool_sample <- function(raw_fastq_dir, controlfile, suffix) {
   raw_split_by_lane_dir <- file.path(raw_fastq_dir, "split_by_lane")

@@ -7,8 +7,10 @@
 #' like the fetch step (as data is already presumed to exist locally etc)
 #' @param contam logical, FALSE, do contamint removal, using a seperat made
 #' STAR index during genome preparation step.
+#' @param demultiplex logical, FALSE. Add the first stage "demultiplexed" for pooled lanes
+#' (see \code{?demultiplex}, R/pipeline_demultiplex.R).
 #' @return a character vector with names being the grouping in functions
-libtype_flags <- function(preset, mode = "online", contam = FALSE) {
+libtype_flags <- function(preset, mode = "online", contam = FALSE, demultiplex = FALSE) {
   valid_presets <- c("Ribo-seq", "RNA-seq", "disome", "SSU","empty")
 
   download_flags <- if (mode == "online") {
@@ -16,6 +18,7 @@ libtype_flags <- function(preset, mode = "online", contam = FALSE) {
   } else {
     c()
   }
+  if (demultiplex) download_flags <- c(download_flags, demultiplex = "demultiplexed")
   trim_flags <- c(trim_collapse = "trim", trim_collapse = "collapsed")
   align_flags <- c(align_clean = "aligned", align_clean = "cleanbam")
   if (contam) align_flags <- c(align_clean = "contam", align_flags)
@@ -94,7 +97,8 @@ pipeline_flags <- function(project_dir, mode = c("online", "local")[1],
                            preset,
                            contam = FALSE,
                            create_dirs = TRUE,
-                           flag_names = libtype_flags(preset, mode, contam)
+                           demultiplex = FALSE,
+                           flag_names = libtype_flags(preset, mode, contam, demultiplex)
                            ) {
   if (preset == "empty") return(character())
   stopifnot(is(flag_names, "character"))
