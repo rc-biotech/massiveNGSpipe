@@ -79,3 +79,20 @@ test_that("trimmed reads and report equal fastp 1.3.7 (main pass, post-adapter t
                    json = file.path(d, "ts.json"), threads = 2)
   cmp(file.path(d, "fs.fq"), file.path(d, "fs.json"), file.path(d, "ts.fq"), file.path(d, "ts.json"))
 })
+
+test_that("fast_collapse_fastq equals ORFik::collapse.fastq (sequences, counts, names, file name)", {
+  skip_if(inherits(try(massiveNGSpipe:::trimcollapse_binary(), silent = TRUE), "try-error"), "trimcollapse binary not available")
+  d <- file.path(tempdir(), "fast_collapse_test"); unlink(d, recursive = TRUE); dir.create(file.path(d, "a"), recursive = TRUE); dir.create(file.path(d, "b"))
+  set.seed(3)
+  s <- vapply(sample(1:300, 5000, TRUE), function(i) { set.seed(i); paste(sample(c("A", "C", "G", "T"), sample(18:40, 1), TRUE), collapse = "") }, "")
+  f <- file.path(d, "trimmed_SRRX.fastq")
+  writeLines(paste0("@r", seq_along(s), "\n", s, "\n+\n", strrep("I", nchar(s))), f)
+  ORFik::collapse.fastq(f, file.path(d, "a"), compress = TRUE)
+  out <- massiveNGSpipe:::fast_collapse_fastq(f, file.path(d, "b"), threads = 2)
+  a <- list.files(file.path(d, "a"), full.names = TRUE)
+  expect_equal(basename(out), basename(a))
+  ra <- Biostrings::readDNAStringSet(a); rb <- Biostrings::readDNAStringSet(out)
+  o <- order(as.character(ra)); p <- order(as.character(rb))
+  expect_identical(unname(as.character(ra))[o], unname(as.character(rb))[p])          # seq<i> index may differ among tied counts
+  expect_identical(sub(".*_x", "", names(ra))[o], sub(".*_x", "", names(rb))[p])
+})

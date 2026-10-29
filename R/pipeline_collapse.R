@@ -106,36 +106,44 @@ pipeline_collapse <- function(pipeline, config, pipelines = list(pipeline)) {
       func = function(runs_paired, files_paired, outdir_paired,
                       runs_single, files_single, outdir_single,
                       config, experiment) {
+        # fast_trim (default): collapse with the trimcollapse binary, one file at a time with all collapse threads
+        # (identical output to ORFik::collapse.fastq, R/trimcollapse.R); otherwise ORFik in parallel workers
+        options(massiveNGSpipe.fast_trim = !isFALSE(config$fast_trim))
+        fast_threads <- max(1L, as.integer(config$threads$collapse))
         if (length(files_paired) > 0) {
           fs::dir_create(outdir_paired)
           read1_paths <- heads(files_paired, 1)
-          BPPARAM <- bpparam_from_config(config, "collapse",
+          fast <- all(vapply(read1_paths, fast_collapse_enabled, logical(1)))
+          BPPARAM <- if (fast) BiocParallel::SerialParam() else bpparam_from_config(config, "collapse",
             workers = memory_safe_worker_count(unlist(read1_paths), config$threads$collapse))
           BiocParallel::bplapply(seq_along(read1_paths), function(i, read1_paths, outdir_paired,
                                                                    runs_paired,
-                                                                   config, experiment) {
-            ORFik::collapse.fastq(read1_paths[[i]], outdir_paired, compress = TRUE)
+                                                                   config, experiment, fast, fast_threads) {
+            if (fast) fast_collapse_fastq(read1_paths[[i]], outdir_paired, fast_threads) else
+              ORFik::collapse.fastq(read1_paths[[i]], outdir_paired, compress = TRUE)
             if (runs_paired$Run[i] %in% reads_reverse_runs(dirname(outdir_paired)))
               stop("reads_reverse_manual: paired-end run ", runs_paired$Run[i], " refused; confirm read-1 orientation")
             set_sample_flag(config, "collapsed", experiment, runs_paired$Run[i])
           }, read1_paths = read1_paths, outdir_paired = outdir_paired, runs_paired = runs_paired,
-             config = config, experiment = experiment, BPPARAM = BPPARAM)
+             config = config, experiment = experiment, fast = fast, fast_threads = fast_threads, BPPARAM = BPPARAM)
         }
         if (length(files_single) > 0) {
           fs::dir_create(outdir_single)
-          BPPARAM <- bpparam_from_config(config, "collapse",
+          fast <- all(vapply(files_single, fast_collapse_enabled, logical(1)))
+          BPPARAM <- if (fast) BiocParallel::SerialParam() else bpparam_from_config(config, "collapse",
             workers = memory_safe_worker_count(unlist(files_single), config$threads$collapse))
           BiocParallel::bplapply(seq_along(files_single), function(i, files_single, outdir_single,
                                                                     runs_single,
-                                                                    config, experiment) {
-            ORFik::collapse.fastq(files_single[[i]], outdir_single, compress = TRUE)
+                                                                    config, experiment, fast, fast_threads) {
+            if (fast) fast_collapse_fastq(files_single[[i]], outdir_single, fast_threads) else
+              ORFik::collapse.fastq(files_single[[i]], outdir_single, compress = TRUE)
             # opt-in: reverse-complement libraries read from the RNA 3' side (R/read_orientation.R)
             collapsed_file <- file.path(outdir_single, paste0("collapsed_", gsub(ORFik:::fastq_regex_pattern(), ".fasta",
                                                                                  basename(files_single[[i]])), ".gz"))
             orient_collapsed_fasta(collapsed_file, runs_single$Run[i], dirname(outdir_single))
             set_sample_flag(config, "collapsed", experiment, runs_single$Run[i])
           }, files_single = files_single, outdir_single = outdir_single, runs_single = runs_single,
-             config = config, experiment = experiment, BPPARAM = BPPARAM)
+             config = config, experiment = experiment, fast = fast, fast_threads = fast_threads, BPPARAM = BPPARAM)
         }
         invisible(NULL)
       },

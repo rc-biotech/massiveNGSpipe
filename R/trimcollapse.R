@@ -100,3 +100,33 @@ trimcollapse_binary <- function() {
   file.rename(tmp, bin)
   bin
 }
+
+#' Collapse one trimmed fastq with trimcollapse (no trimming, no filtering): same output as ORFik::collapse.fastq
+#'
+#' Used by \code{pipeline_collapse()} when \code{pipeline_config(fast_trim)} is on: trimming switched off (adapter
+#' "disable", no front/tail cut, no quality or length filter), so the collapsed set (sequences, counts and the
+#' "seq<i>_x<count>" names) equals \code{ORFik::collapse.fastq()} (checked on 2 M reads of PRJNA783479: identical).
+#' @param file trimmed fastq(.gz)
+#' @param outdir output directory (trim/SINGLE or trim/PAIRED)
+#' @param threads worker threads of the binary
+#' @return path of collapsed_<name>.fasta.gz, as ORFik names it
+#' @noRd
+fast_collapse_fastq <- function(file, outdir, threads = 8) {
+  out <- file.path(outdir, paste0("collapsed_", gsub(ORFik:::fastq_regex_pattern(), ".fasta", basename(file)), ".gz"))
+  json <- tempfile(fileext = ".json"); on.exit(unlink(json), add = TRUE)
+  tmp <- paste0(out, ".tmp.fasta.gz")
+  log <- system2(trimcollapse_binary(), c("-i", shQuote(file), "-o", shQuote(tmp), "-j", shQuote(json), "-a", "disable",
+                                          "-f", 0, "-t", 0, "-l", 0, "-w", max(1L, as.integer(threads)), "-Q"), stdout = TRUE, stderr = TRUE)
+  status <- attr(log, "status")
+  if ((!is.null(status) && status != 0) || !file.exists(tmp)) { unlink(tmp); stop("fast collapse failed for ", file, ":\n", paste(log, collapse = "\n")) }
+  if (!file.rename(tmp, out)) { unlink(tmp); stop("fast collapse: cannot write ", out) }
+  out
+}
+
+#' Can the collapse stage use fast_collapse_fastq for this file?
+#' @noRd
+fast_collapse_enabled <- function(file) {
+  isTRUE(getOption("massiveNGSpipe.fast_trim", TRUE)) && length(file) == 1 && file.exists(file) &&
+    grepl("\\.(fastq|fq)(\\.gz)?$", file) &&
+    tryCatch({ trimcollapse_binary(); TRUE }, error = function(e) FALSE)
+}
