@@ -30,7 +30,9 @@ bad_pshifting_report <- function(df, max_no_adapter_removed_pct = 80) {
   out_dir <- file.path(QCfolder(df), "before_pshifting")
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
   barplot_path <- file.path(out_dir, "before_pshift_barplot")
-  try(QCreport(df, out_dir, complex.correlation.plots = FALSE, create.ofst = FALSE))
+  # Bounded like shiftPlots below: the full QCreport over every library of a large study ran one process to 42 GB
+  # (PRJNA783479, 157 libraries, 2026-10-29), killing the pipeline over a report.
+  try(QCreport(df[seq(min(nrow(df), 39)), ], out_dir, complex.correlation.plots = FALSE, create.ofst = FALSE))
   try(invisible(shiftPlots(df[seq(min(nrow(df), 39)),], output = barplot_path,
                        plot.ext = ".png")))
   saveRDS(TRUE, report_flag_path)
