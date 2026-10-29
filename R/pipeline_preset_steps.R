@@ -481,6 +481,9 @@ safe_se_cbind <- function(count_lists) {
 #'  c("harr", "ltm", "lactim") keeps initiation-drug libraries (also "chx_harr") out of the pooled elongation track.
 #'  Mixed studies then contribute per-sample P-shifted files; a merge_manifest.csv (included/excluded runs) is
 #'  written to the master directory.
+#'  A successful organism merge also writes merge_input_files.csv with the actual
+#'  input paths, mapper mode, size and UTC modification time. A study-level pool
+#'  appears as one input file and does not by itself enumerate its constituent runs.
 #' @return invisible(NULL)
 #' @export
 #' @examples
@@ -518,6 +521,12 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
     exp_name <- paste0(exp_name, suffix)
 
     out_dir <- file.path(out_dir_base, exp_name)
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+    # A previous inventory must not describe a merge that has just failed.
+    inventory_path <- file.path(out_dir, "merge_input_files.csv")
+    if (file.exists(inventory_path) && !file.remove(inventory_path))
+      stop("Cannot remove stale merge input inventory: ", inventory_path)
+    input_inventory <- list()
     sel <- NULL
     if (length(exclude_inhibitors)) {
       sel <- merge_org_select_samples(exps_species, config, libtype_to_merge, exclude_inhibitors)
@@ -528,9 +537,11 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
       message("--- Merging all mappers..")
       if (is.null(sel)) {
         paths <- filepath(df, "default", base_folders = libFolder(df, mode = "all"))
+        input_inventory[["all"]] <- merge_input_file_inventory(paths, "all")
         ORFik::mergeLibs(df, out_dir, "all", "default", FALSE, paths = paths, filter_chunk_rows = 5e8)
         make_additional_formats(df[1,], exp_name, out_dir)
       } else {
+        input_inventory[["all"]] <- merge_input_file_inventory(sel$paths_all, "all")
         ORFik::mergeLibs(sel$df, out_dir, "all", "default", FALSE, paths = sel$paths_all,
                          lib_names_full = paste0("input_", seq_len(nrow(sel$df))), filter_chunk_rows = 5e8)
         make_additional_formats(sel$df[1,], exp_name, out_dir)
@@ -549,17 +560,38 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
         stopifnot(all(grepl("unique", filepath(df_unique, "default"))))
         paths <- filepath(df_unique, "default",
                           base_folders = libFolder(df_unique, mode = "all"))
+        input_inventory[["unique"]] <- merge_input_file_inventory(paths, "unique")
         ORFik::mergeLibs(df_unique, out_dir_unique, "all", "default", FALSE,
                          paths = paths, filter_chunk_rows = 5e8)
       } else {
+        input_inventory[["unique"]] <- merge_input_file_inventory(sel$paths_unique, "unique")
         ORFik::mergeLibs(sel$df, out_dir_unique, "all", "default", FALSE, paths = sel$paths_unique,
                          lib_names_full = paste0("input_", seq_len(nrow(sel$df))), filter_chunk_rows = 5e8)
       }
       make_additional_formats_internal(df_unique_merged[1,])
       # fwrite(data.table(Run = runIDs(df)))
     }
+    if (length(input_inventory)) {
+      inventory <- rbindlist(input_inventory, use.names = TRUE)
+      now <- merge_input_file_inventory(inventory$path, inventory$mapper)
+      if (!identical(inventory, now)) stop("Merge inputs changed while merging ", exp_name,
+                                           "; input inventory was not written")
+      write_csv_atomic(inventory, inventory_path)
+    }
   }
   return(invisible(NULL))
+}
+
+#' Snapshot the actual input files of an organism merge
+#' @noRd
+merge_input_file_inventory <- function(paths, mapper) {
+  paths <- normalizePath(as.character(paths), winslash = "/", mustWork = TRUE)
+  info <- file.info(paths)
+  if (anyNA(info$size) || anyNA(info$mtime) || any(info$isdir))
+    stop("Cannot stat all organism merge input files")
+  data.table(mapper = rep_len(mapper, length(paths)), path = paths,
+             size_bytes = as.numeric(info$size),
+             modified_utc = format(info$mtime, "%Y-%m-%dT%H:%M:%OS6Z", tz = "UTC"))
 }
 
 #' Select organism-master inputs, leaving out samples by inhibitor
