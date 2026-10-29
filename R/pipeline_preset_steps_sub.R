@@ -347,11 +347,11 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
   steps <- c(steps, if(did_contamint_removal) {"co"} else NULL)
   steps <- paste(c(steps, "ge"), collapse = "-")
 
-  star.path <- STAR.install()
-  fastp.path <- install.fastp()
-
   conf <- pipeline$organisms[[organism]]$conf
   if (!step_is_next_not_done(config, "aligned", conf["exp"])) return(invisible(NULL))
+  # after the step check: these print "Using ... at location" and ran for every waiting study on every stage pass
+  star.path <- STAR.install()
+  fastp.path <- install.fastp()
   index <- pipeline$organisms[[organism]]$index
   runs_full <- study[ScientificName == organism]
   experiment <- conf["exp"]
