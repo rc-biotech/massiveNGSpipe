@@ -416,6 +416,10 @@ bpparam_from_config <- function(config, step, workers = config$threads[[step]]) 
     dir.create(parallel_conf$logdir, FALSE, TRUE)
   }
 
+  # One worker: run serially in this process. MulticoreParam(1) still forks a child that holds a copy-on-write image
+  # of the (large) pipeline process, which process-tree RSS caps count twice (PRJNA783479 P-shift, 2026-10-29).
+  if (step != "main" && workers <= 1)
+    return(BiocParallel::SerialParam(stop.on.error = !isFALSE(parallel_conf$stop.on.error)))
   return(bpparam_with_options(config, workers, func = config$thread_type,
                               parallel_conf = parallel_conf))
 }

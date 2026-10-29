@@ -110,3 +110,9 @@ test_that("pipeline_pshift() skips a sample whose pshifted output is already val
   expect_identical(result[[ofst_paths["SRR001"]]], old_a)
   expect_identical(result[[ofst_paths["SRR002"]]], fresh_b)
 })
+
+test_that('a one-worker step runs serially (no forked copy of the pipeline process)', {
+  cfg <- fake_config(preset = 'Ribo-seq')
+  cfg$threads$pshifted <- 1
+  expect_s4_class(bpparam_from_config(cfg, 'pshifted'), 'SerialParam')
+})

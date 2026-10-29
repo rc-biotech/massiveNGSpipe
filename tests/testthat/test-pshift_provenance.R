@@ -210,3 +210,12 @@ test_that('mixed explicit and fresh detection use separate native calls without 
   expect_setequal(names(readRDS(f$table)),unname(f$raw))
   expect_true(pshift_sample_valid(f$df[1,]));expect_true(pshift_sample_valid(f$df[2,]))
 })
+
+test_that('outputs of a crashed first pass (no saved shifting table) are not trusted', {
+  f<-provenance_fixture();mock_provenance_paths(f)
+  expect_true(pshift_sample_valid(f$df[1,]))                       # legacy output with a saved table entry
+  file.remove(f$table)                                             # crash before ORFik saved the table
+  expect_false(pshift_sample_valid(f$df[1,])); expect_false(pshift_sample_valid(f$df[2,]))
+  saveRDS(f$shifts[2],f$table)                                     # table without this library's entry
+  expect_false(pshift_sample_valid(f$df[1,])); expect_true(pshift_sample_valid(f$df[2,]))
+})

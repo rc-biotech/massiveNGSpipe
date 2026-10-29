@@ -120,7 +120,13 @@ pshift_offset_binding_valid <- function(df_one_row) {
   raw <- ofst_filepath(df_one_row); shifted <- pshifted_filepath(df_one_row)
   paths <- pshift_offset_record_paths(raw, shifted)
   if (file.exists(paths$pending)) return(FALSE)
-  if (!file.exists(paths$applied)) return(TRUE) # legacy: not retroactively certified
+  if (!file.exists(paths$applied)) {
+    # Legacy output without a provenance record: valid only when the study's saved shifting table has an entry for
+    # this library. ORFik writes the table after ALL libraries of a pass succeed, so the outputs of a crashed first
+    # pass (no table yet; PRJNA783479, 2026-10-29: 34 files) are reshifted instead of being trusted.
+    table_path <- file.path(dirname(shifted), "shifting_table.rds")
+    return(file.exists(table_path) && !is.null(pshift_table_entry(raw, table_path)))
+  }
   tryCatch({
     record <- readRDS(paths$applied)
     current <- pshift_table_entry(raw, file.path(dirname(shifted), "shifting_table.rds"))
