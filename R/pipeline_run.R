@@ -23,6 +23,8 @@
 #' @export
 run_pipeline <- function(pipelines, config, wait = 100) {
 
+  pipelines <- drop_studies_failed_in_sessions(pipelines, config)
+  if (!length(pipelines)) { message("run_pipeline: no studies left after skip_failed_sessions"); return(invisible(TRUE)) }
   config <- run_pipeline_set_up_session(pipelines, config)
 
   completed <- FALSE
@@ -248,4 +250,26 @@ all_pending_failed <- function(config, pending) {
   if (!length(pending) || is.null(config$error_dir) || !dir.exists(config$error_dir)) return(FALSE)
   failed <- sub("\\.rds$", "", list.files(config$error_dir, "\\.rds$"))
   all(pending %in% failed | sub("-.*", "", pending) %in% failed)
+}
+
+#' Leave out studies with error records in previous sessions (pipeline_config(skip_failed_sessions))
+#'
+#' Read before the new session is set up, so index 1 is the last finished session. A study is left out when any of
+#' its experiments (study-organism) has an error record in one of the selected sessions.
+#' @param pipelines list, output of pipeline_init_all
+#' @param config the mNGSp config object
+#' @return pipelines without the failed studies
+#' @noRd
+drop_studies_failed_in_sessions <- function(pipelines, config) {
+  idx <- config$skip_failed_sessions
+  idx <- idx[!is.na(idx) & idx > 0]
+  if (!length(idx) || !length(pipelines)) return(pipelines)
+  config$error_dir <- NULL
+  failed <- unique(unlist(lapply(idx, function(i) pipeline_errors(config, index = i)$exp)))
+  if (!length(failed)) return(pipelines)
+  exps <- lapply(pipelines, function(p) unname(vapply(p$organisms, function(o) unname(o$conf["exp"]), character(1))))
+  drop <- vapply(exps, function(e) any(e %in% failed), logical(1))
+  if (any(drop)) message("skip_failed_sessions (", paste(idx, collapse = ", "), "): skipping ", sum(drop), " studies with errors: ",
+                         paste(names(pipelines)[drop], collapse = ", "))
+  pipelines[!drop]
 }
