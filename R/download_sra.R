@@ -140,6 +140,8 @@ download_sra_ascp <- function(run_accession, outdir,
 
 download_sra_ebi <- function(accession, outdir, compress) {
   message("Using ebi fallback")
+  # R's default 60 s download timeout cut every large EBI file at ~1 GB (2026-10-29), so the slow fastq-dump ran instead
+  old_timeout <- options(timeout = max(getOption("timeout"), 24 * 3600)); on.exit(options(old_timeout), add = TRUE)
   res <- try(ORFik::download.SRA(accession, outdir, rename = FALSE))
   if (is(res, "try-error")) {
     message("Using fastq-dump fallback")
@@ -199,6 +201,11 @@ sra_to_fastq <- function(accession, outdir, compress = TRUE,
   )
 
   out_file_temp <- paste0(temp_path, if(PAIRED_END) c("_1", "_2"), ".fastq")
+  # a run labelled SINGLE can hold two reads per spot (--split-files then writes _1/_2): take what was written,
+  # validate_fastq_download() keeps read 1
+  if (ret == 0 && !all(file.exists(out_file_temp)) && all(file.exists(paste0(temp_path, c("_1", "_2"), ".fastq"))))
+    out_file_temp <- paste0(temp_path, c("_1", "_2"), ".fastq")
+  out_suffix <- substring(out_file_temp, nchar(temp_path) + 1)
 
   if (ret != 0) {
     rm_files <- c(out_file_temp, temp_path)
@@ -208,7 +215,7 @@ sra_to_fastq <- function(accession, outdir, compress = TRUE,
   if (using_temp_dir) {
     message("- Copying file back to main drive..")
     stopifnot(all(file.exists(out_file_temp)))
-    out_file <- paste0(sra_path, if(PAIRED_END) c("_1", "_2"), ".fastq")
+    out_file <- paste0(sra_path, out_suffix)
     if (!all(file.copy(out_file_temp, out_file, overwrite = TRUE)))
       stop("Copying fastq back to main drive failed (disk full?)")
     # work dir (with any lite file / fasterq.tmp.* leftovers) is removed by the claim release
@@ -216,7 +223,7 @@ sra_to_fastq <- function(accession, outdir, compress = TRUE,
 
   # Compress the output if needed
   if (compress) {
-    filenames <- paste0(sra_path, if(PAIRED_END) c("_1", "_2"), ".fastq")
+    filenames <- paste0(sra_path, out_suffix)
     for (filename in filenames) {
       ret <- system2("pigz", c("-f", "--best",
                                fs::path_join(c(outdir, filename))

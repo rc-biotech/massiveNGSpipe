@@ -221,3 +221,14 @@ test_that("estimate_fastq_tmp_gb: read_len override takes precedence over avgLen
   est <- estimate_fastq_tmp_gb(row, read_len = 50)
   expect_identical(est$read_length, 50L)
 })
+
+test_that("SINGLE-labelled run extracted as two reads per spot keeps read 1 (PRJNA1029246, 2026-10-29)", {
+  dir <- file.path(tempdir(), "two_reads_single"); unlink(dir, recursive = TRUE); dir.create(dir)
+  writeLines(c("@r1", "ACGT", "+", "IIII"), file.path(dir, "SRRX_1.fastq"))
+  writeLines(c("@r1", "TTTT", "+", "IIII"), file.path(dir, "SRRX_2.fastq"))
+  res <- massiveNGSpipe:::validate_fastq_download(c("SRRX_1.fastq", "SRRX_2.fastq"), "SRRX", PAIRED_END = FALSE, outdir = dir)
+  expect_equal(res, "SRRX.fastq")
+  expect_true(file.exists(file.path(dir, "SRRX.fastq")))
+  expect_false(file.exists(file.path(dir, "SRRX_2.fastq")))
+  expect_equal(readLines(file.path(dir, "SRRX.fastq"))[2], "ACGT")
+})
