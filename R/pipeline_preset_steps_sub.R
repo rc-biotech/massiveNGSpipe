@@ -116,7 +116,8 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
           run_experiment_subprocess(
             func = function(all_files, runs, mode, target_dir, trimmed_dir, source_dir, config, experiment) {
               # fast single-pass trim + collapse for single-end data (pipeline_config(fast_trim), R/trimcollapse.R)
-              options(massiveNGSpipe.fast_trim = !isFALSE(config$fast_trim))
+              options(massiveNGSpipe.fast_trim = !isFALSE(config$fast_trim),
+                      massiveNGSpipe.adapter_detection = if (is.null(config$adapter_detection)) "scan" else config$adapter_detection)
               lapply(seq_len(nrow(runs)), function(i) {
                 study_sample <- runs[i]
                 run <- study_sample$Run

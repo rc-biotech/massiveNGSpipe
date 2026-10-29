@@ -96,3 +96,20 @@ test_that("fast_collapse_fastq equals ORFik::collapse.fastq (sequences, counts, 
   expect_identical(unname(as.character(ra))[o], unname(as.character(rb))[p])          # seq<i> index may differ among tied counts
   expect_identical(sub(".*_x", "", names(ra))[o], sub(".*_x", "", names(rb))[p])
 })
+
+test_that("adapter_scan_reads picks the insert/adapter junction (known, poly-A tail, linker, barcodes, de novo, none)", {
+  d <- file.path(tempdir(), "adapter_scan"); unlink(d, recursive = TRUE); dir.create(d)
+  set.seed(5)
+  rnd <- function(n, k) vapply(seq_len(n), function(i) paste(sample(c("A", "C", "G", "T"), k, TRUE), collapse = ""), "")
+  wfq <- function(s, f) { writeLines(paste0("@r", seq_along(s), "\n", s, "\n+\n", strrep("I", nchar(s))), f); f }
+  n <- 3000; ins <- rnd(n, 30); univ <- "AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC"
+  scan <- function(s, nm) unname(massiveNGSpipe:::adapter_scan_reads(wfq(substr(s, 1, 75), file.path(d, nm))))
+  expect_equal(scan(paste0(ins, univ, strrep("G", 20)), "u.fq"), "AGATCGGAAGAG")                       # standard
+  expect_equal(scan(paste0(ins, strrep("A", 15), univ), "pa.fq"), "AAAAAAAAAA")                        # poly(A) tail
+  expect_equal(scan(paste0(ins, strrep("A", 14), "TGGTCA", univ), "pal.fq"), "AAAAAAAAAA")             # tail + linker
+  expect_equal(scan(paste0(ins, "TCTCCTTGCATAATCACCAACC", univ), "rl.fq"), "TCTCCTTGCATA")              # RiboLace linker
+  bc <- sample(c("ATCGT", "CTAGA", "CGTAA", "GATCA", "GCATA"), n, TRUE)
+  expect_equal(scan(paste0(ins, bc, univ), "bc.fq"), "AGATCGGAAGAG")                                   # 5 nt barcodes
+  expect_equal(scan(paste0(ins, "GTTCAGAGTTCTACAGTCCGACGATC"), "novo.fq"), "GTTCAGAGTTCT")             # not in the list
+  expect_equal(scan(rnd(n, 60), "none.fq"), "disable")                                                  # no adapter
+})

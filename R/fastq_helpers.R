@@ -110,11 +110,16 @@ read_fastq_adapter_output <- function(qc_report_path) {
 run_fastqc <- function(file, nreads, adapters_file) {
   stopifnot(file.exists(file))
   stopifnot(file.exists(adapters_file))
+  if (!nzchar(Sys.which("fastqc"))) stop("fastqc not found on PATH")
+  if (!nzchar(Sys.which("java"))) stop("java (needed by fastqc) not found on PATH")
 
   file_extension <- tools::file_ext(file)
   cat <- ifelse(file_extension == "gz", "zcat ", "cat ")
   temp_dir_unique <- tempfile()
-  dir.create(temp_dir_unique)
+  if (!dir.create(temp_dir_unique)) stop("fastqc: cannot create ", temp_dir_unique, " (tempdir not writable?)")
+  free_gb <- suppressWarnings(as.numeric(system2("df", c("-Pk", shQuote(temp_dir_unique)), stdout = TRUE)[2] |>
+                                           strsplit("[[:space:]]+") |> unlist() |> (\(x) x[4])()) / 1e6)
+  if (isTRUE(free_gb < 1)) stop("fastqc: less than 1 GB free in ", dirname(temp_dir_unique))
   nreads <- nreads*4 # 4 lines per read
 
   res <- system(paste0(
@@ -125,6 +130,7 @@ run_fastqc <- function(file, nreads, adapters_file) {
     " -o ", temp_dir_unique
   ))
   qc_report_path <- fs::path(temp_dir_unique, "stdin_fastqc", "fastqc_data.txt")
+  if (!file.exists(qc_report_path)) stop("fastqc produced no report (exit status ", res, ") for ", file)
   return(qc_report_path)
 }
 
@@ -812,7 +818,7 @@ move_trimmed_files <- function(study_sample, trimmed_dir, barcode_dir) {
 #' file is no longer needed).
 #' @noRd
 resolve_adapter_for_trim <- function(file, process_dir,
-      adapter = try(fastqc_adapters_info(file, adapter_manual_dir = file.path(process_dir, "trim")))) {
+      adapter = try(detect_adapter(file, adapter_manual_dir = file.path(process_dir, "trim")))) {
   tempfile <- file
   is_fastq <- !grepl("\\.fasta$|\\.fasta\\.gz$", file)
   polyN_adapter <- FALSE
@@ -827,8 +833,9 @@ resolve_adapter_for_trim <- function(file, process_dir,
     # live, PRJNA659894-plasmodium_falciparum/SRR12538978, 2026-10-07.
     polyN_adapter <- !is(adapter, "try-error") && identical(unname(adapter), "NNNNNNNNNN")
     if (is(adapter, "try-error")) {
-      message("This is a fasta file, fastqc adapter detection disabled")
-      adapter <- "disable"
+      # fastq, but FastQC failed (not installed, java missing, ...): scan the reads instead of disabling trimming
+      message("FastQC adapter detection failed (", trimws(conditionMessage(attr(adapter, "condition"))), "); scanning reads")
+      adapter <- adapter_scan_reads(file)
     } else if (polyN_adapter) {
       message("PolyN adapter found, removing polyN and setting adapter to 'disable'")
       seqs <- readDNAStringSet(file, "fastq", use.names = FALSE, with.qualities = TRUE)
@@ -846,7 +853,7 @@ resolve_adapter_for_trim <- function(file, process_dir,
 }
 
 detect_adapter_and_trim <- function(file, process_dir, file2 = NULL,
-      adapter = try(fastqc_adapters_info(file, adapter_manual_dir = file.path(process_dir, "trim")))) {
+      adapter = try(detect_adapter(file, adapter_manual_dir = file.path(process_dir, "trim")))) {
   resolved <- resolve_adapter_for_trim(file, process_dir, adapter)
   if (!resolved$polyN_adapter && fast_trim_enabled(file, file2, resolved$adapter)) {
     trimcollapse_run(file, process_dir, resolved$adapter)
@@ -1146,4 +1153,109 @@ find_adapter_start_pos <- function(reads, adapter, max.mismatch = 2, fixed = TRU
   print(table(lengths(hits)))
   cat("--- Done Detecting adapter start positions "); print(round(Sys.time() - adapter_time, 1))
   return(hits)
+}
+
+#' Adapter detection without FastQC: scan the first reads for the known adapter sequences
+#'
+#' Fallback for \code{resolve_adapter_for_trim()} when \code{fastqc_adapters_info()} fails on a fastq file (no
+#' fastqc/java on the machine, e.g. valen01 2026-10: every failed study had adapter "passed", reads untrimmed).
+#' Real adapters (all \code{adapter_list()} entries except polyA/polyT/polyN) are preferred when present in at least
+#' \code{min_frac} of reads; a poly-A / poly-T run is returned only when no real adapter is found and it occurs in at
+#' least \code{min_frac_poly} of reads (poly(A)-tailing protocols, e.g. PRJNA1206226); otherwise "disable".
+#' @param file fastq(.gz)
+#' @param n reads scanned from the start of the file
+#' @return adapter sequence (named by candidate) or "disable"
+#' @noRd
+adapter_scan_reads <- function(file, n = 2e5, min_frac = 0.05, min_frac_poly = 0.3) {
+  con <- if (grepl("\\.gz$", file)) gzfile(file, "r") else file(file, "r"); on.exit(close(con))
+  l <- readLines(con, n = 4 * n); s <- l[seq(2, length(l), by = 4)]
+  if (!length(s)) return("disable")
+  cand <- adapter_list()
+  hit <- lapply(cand$value, function(a) regexpr(a, s, fixed = TRUE))
+  frac <- vapply(hit, function(h) mean(h > 0), numeric(1)); names(frac) <- cand$name
+  mpos <- vapply(hit, function(h) if (any(h > 0)) stats::median(h[h > 0]) else Inf, numeric(1))
+  poly <- cand$name %in% c("polyA", "polyT", "polyN")
+  # several adapter pieces can sit in the same reads (RiboLace linker before the Illumina adapter, the Illumina adapter
+  # before its P7 part). Start from the most frequent real adapter and move to an upstream piece only when that piece
+  # precedes it in at least half of its reads (a 5 nt sample barcode + adapter, e.g. var2 = ATCGT + AGATCGG, does not).
+  real <- frac[!poly]; ri <- which(!poly)
+  top <- ri[which.max(real)]
+  if (frac[top] >= min_frac) {
+    with_top <- hit[[top]] > 0
+    up <- ri[ri != top & frac[ri] >= min_frac & mpos[ri] < mpos[top]]
+    share <- vapply(up, function(k) mean(hit[[k]][with_top] > 0 & hit[[k]][with_top] < hit[[top]][with_top]), numeric(1))
+    up <- up[share >= 0.5]
+    if (length(up)) top <- up[which.min(mpos[up])]
+  }
+  best <- match(names(frac)[top], names(real))
+  message("- Adapter scan (", length(s), " reads): ", paste(sprintf("%s %.1f%%", names(sort(frac, decreasing = TRUE))[1:3],
+                                                                    100 * sort(frac, decreasing = TRUE)[1:3]), collapse = ", "))
+  if (length(best) && real[best] >= min_frac) {
+    # poly(A)-tailing protocols: the tail sits directly before the adapter, so the tail is the cut point
+    ad <- cand$value[!poly][best]; w <- s[grepl(ad, s, fixed = TRUE)]
+    up <- substr(w, pmax(1, regexpr(ad, w, fixed = TRUE) - 20), regexpr(ad, w, fixed = TRUE) - 1)   # tail + short linker
+    homo <- c(polyA = "AAAAAAAA", polyT = "TTTTTTTT")
+    for (hn in names(homo))
+      if (mean(grepl(homo[[hn]], up, fixed = TRUE)) >= 0.5) {
+        message("- ", hn, " tail within 20 nt before ", names(real)[best], " in most reads: using ", hn)
+        return(setNames(cand$value[cand$name == hn], hn))
+      }
+    return(setNames(ad, names(real)[best]))
+  }
+  if (frac[["polyN"]] >= min_frac_poly) return(setNames(cand$value[cand$name == "polyN"], "polyN"))
+  novo <- adapter_denovo(s)
+  if (!is.null(novo)) return(novo)
+  pf <- frac[cand$name %in% c("polyA", "polyT")]; bp <- which.max(pf)
+  if (length(bp) && pf[bp] >= min_frac_poly) return(setNames(cand$value[cand$name == names(pf)[bp]], names(pf)[bp]))
+  "disable"
+}
+
+#' Adapter of a raw fastq: manual table, else read scan (default) or FastQC
+#'
+#' \code{options(massiveNGSpipe.adapter_detection)} = "scan" (default, \code{adapter_scan_reads()}: no Java, a few
+#' seconds, picks the upstream-most known adapter and recognises poly(A)-tailing protocols) or "fastqc"
+#' (\code{fastqc_adapters_info()}; falls back to the scan if FastQC fails). \code{<trim>/adapters_manual.csv} rows
+#' always win.
+#' @noRd
+detect_adapter <- function(file, adapter_manual_dir) {
+  if (file.exists(file.path(adapter_manual_dir, "adapters_manual.csv")))
+    return(fastqc_adapters_info(file, adapter_manual_dir = adapter_manual_dir))   # returns the manual row, no FastQC run
+  if (identical(getOption("massiveNGSpipe.adapter_detection", "scan"), "fastqc")) {
+    a <- try(fastqc_adapters_info(file, adapter_manual_dir = adapter_manual_dir), silent = TRUE)
+    if (!is(a, "try-error")) return(a)
+    message("FastQC adapter detection failed (", trimws(conditionMessage(attr(a, "condition"))), "); scanning reads")
+  }
+  adapter_scan_reads(file)
+}
+
+#' De novo adapter: the most frequent 12-mer in the 3' part of the reads, walked upstream to the insert junction
+#'
+#' Used by \code{adapter_scan_reads()} only when no known adapter / poly tail is present. A 12-mer present in at least
+#' \code{min_frac} of the sampled reads (positions >= \code{min_pos}, at least 3 different bases) is taken as adapter;
+#' while one 12-mer directly precedes it in at least half of those reads, the start moves 1 nt upstream (so the cut is
+#' at the start of the constant sequence, not inside it). Variable bases (inserts, barcodes, UMIs) stop the walk.
+#' @return named adapter ("de novo") or NULL
+#' @noRd
+adapter_denovo <- function(s, n = 20000, k = 12, min_pos = 18, min_frac = 0.2) {
+  s <- utils::head(s[nchar(s) >= min_pos + k], n)
+  if (length(s) < 100) return(NULL)
+  w <- nchar(s)
+  starts <- unlist(lapply(w, function(x) seq(min_pos, x - k + 1)))
+  idx <- rep(seq_along(s), w - k - min_pos + 2)
+  km <- substring(s[idx], starts, starts + k - 1)
+  per_read <- unique(data.table(r = idx, km = km))
+  tab <- per_read[, .N, by = km][order(-N)]
+  tab <- tab[vapply(strsplit(km, ""), function(x) length(unique(x)) >= 3, logical(1))]
+  if (!nrow(tab) || tab$N[1] / length(s) < min_frac) return(NULL)
+  ad <- tab$km[1]
+  for (step in 1:30) {                                   # walk upstream while one base precedes the adapter
+    hits <- regexpr(ad, s, fixed = TRUE); keep <- hits > 1
+    if (sum(keep) < 50) break
+    prev <- substr(s[keep], hits[keep] - 1, hits[keep] - 1)
+    tp <- sort(table(prev), decreasing = TRUE)
+    if (tp[1] / sum(keep) < 0.5) break
+    ad <- substr(paste0(names(tp)[1], ad), 1, k)
+  }
+  message("- De novo adapter (", round(100 * tab$N[1] / length(s)), "% of reads): ", ad)
+  setNames(ad, "de novo")
 }
