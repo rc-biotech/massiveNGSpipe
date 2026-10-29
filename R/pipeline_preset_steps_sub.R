@@ -128,6 +128,13 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
                 file <- filenames[1]
                 file2 <- if(!single_end) filenames[2]
                 barcode_dt <- data.table()
+                # Opt-in: trim + collapse only the chosen mate (mate_override_manual.csv, R/mate_override.R)
+                if (run %in% mate_override_runs(trimmed_dir)) {
+                  barcode_dt <- trim_with_mate_override(run, filenames, target_dir, trimmed_dir)
+                  set_sample_flag(config, "trim", experiment, run, value = barcode_dt)
+                  set_sample_flag(config, "collapsed", experiment, run)
+                  return(barcode_dt)
+                }
                 check_for_barcodes <- runs[i]$LIBRARYTYPE == "RFP"
                 # RNA inputs built with small-RNA kits may require explicit
                 # random-end crops. Honor reviewed manual barcode rows without
@@ -360,6 +367,8 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
   # calls.
   done_runs <- samples_done(config, "aligned", experiment)
   runs <- runs_full[!(Run %in% done_runs)]
+  # Runs trimmed from one chosen mate are single-end from here on (mate_override_manual.csv)
+  if (did_collapse) runs <- apply_mate_override_layout(runs, trimmed_dir)
   pairs <- if (nrow(runs) > 0) run_files_organizer(runs, input_dir) else list()
 
   first_pair_index <- which(lengths(pairs) == 2)[1]
@@ -873,6 +882,7 @@ pipeline_create_experiment <- function(pipeline, config) {
         study <- study[ScientificName == organism,]
         if (nrow(study) == 0)
           stop("No samples for organism wanted in study!")
+        study <- apply_mate_override_layout(study, fs::path(conf["bam"], "trim"))
 
 
         metadata_clean <- cleanup_metadata_for_exp(study)
