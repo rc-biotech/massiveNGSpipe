@@ -102,7 +102,7 @@ pipeline_collapse <- function(pipeline, config, pipelines = list(pipeline)) {
       all_files <- c(all_files, files_single)
     }
 
-    run_experiment_subprocess(
+    if (length(all_files) > 0) run_experiment_subprocess(
       func = function(runs_paired, files_paired, outdir_paired,
                       runs_single, files_single, outdir_single,
                       config, experiment) {
@@ -158,8 +158,9 @@ pipeline_collapse <- function(pipeline, config, pipelines = list(pipeline)) {
     )
 
     if (config$delete_trimmed_files) {
-      existing <- unlist(all_files, use.names = FALSE, recursive = TRUE)
-      existing <- existing[file.exists(existing)]
+      # as.character: all_files is NULL when the fast trim path already collapsed every run (file.exists(NULL) errors)
+      existing <- as.character(unlist(all_files, use.names = FALSE, recursive = TRUE))
+      existing <- existing[!is.na(existing) & file.exists(existing)]
       if (length(existing) > 0) file.remove(existing)
     }
     set_flag(config, "collapsed", experiment)

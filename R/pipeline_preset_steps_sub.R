@@ -1345,6 +1345,8 @@ pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_
                             allowed_hard12_species = c("Escherichia coli", "Sars cov2"),
                             BPPARAM = bpparam_from_config(config, "pshifted"),
                             extra_lengths = config$pshift_extra_lengths) {
+  old_opt <- options(massiveNGSpipe.pshift_per_library = isTRUE(config$pshift_per_library))
+  on.exit(options(old_opt), add = TRUE)
   for (df in df_list) {
     if (!step_is_next_not_done(config, "pshifted", name(df))) next
     res <- 1

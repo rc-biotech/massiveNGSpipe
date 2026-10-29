@@ -19,6 +19,12 @@ shiftFootprintsByExperimentSafe <- function(df, shifting_table, accepted_lengths
                     return(e)
                   })
 
+  if (inherits(res, "error") && isTRUE(getOption("massiveNGSpipe.pshift_per_library", FALSE))) {
+    # opt-in (pipeline_config(pshift_per_library = TRUE)): strict, then weak, per library instead of a study-wide weak pass
+    fft_strength <- fft_strengths[4]
+    res <- pshift_per_library(df, shifting_table, accepted_lengths, BPPARAM)
+    if (inherits(res, "error") && !(organism(df) %in% allowed_hard12_species)) return(res)  # failing runs listed; no study-wide report
+  }
   if(inherits(res, "error")) {
     fft_strength <- fft_strengths[2]
     res <- tryCatch(shiftFootprintsByExperiment(df, output_format = "ofst",
@@ -90,7 +96,7 @@ shifts_load_safe <- function(df, reuse_shifts_if_existing) {
 }
 
 fft_strength_files <- function(df) {
-  fft_strengths <- c("strong", "weak", "manual_12")
+  fft_strengths <- c("strong", "weak", "manual_12", "per_library")
   fft_files <- file.path(QCfolder(df), paste0(fft_strengths, "_periodicity.rds"))
   names(fft_files) <- fft_strengths
   return(fft_files)
@@ -232,4 +238,45 @@ periodicity_check_flag <- function(zero_frame, QCFolder,
   suppressWarnings(file.remove(status_flag_files[names(status_flag_files) != status]))
   update_qc_diagnostics(file.path(QCFolder, "qc_diagnostics.rds"), periodicity_status = status)
   return(status)
+}
+
+#' Per-library strict-then-weak P-site offset detection (opt-in fallback after a failed study-wide strict pass)
+#'
+#' Each library not already in \code{shifting_table} is detected alone with strict FFT and, only if that fails, weak
+#' FFT, so one weak library no longer moves every library of the study to the weak pass. The per-library status is
+#' written to \code{<QC>/pshift_per_library.csv}. When every library has offsets they are applied in one native
+#' pass; otherwise the study stops with the failing runs listed (exclude them with \code{experiment_remove_runs()}
+#' or stage offsets with \code{pshift_stage_offsets()}): libraries are never dropped silently.
+#' @return the result of the native shifting call, or an error condition
+#' @noRd
+pshift_per_library <- function(df, shifting_table, accepted_lengths, BPPARAM = BiocParallel::SerialParam()) {
+  message("P-shifting per library (strict, then weak per library): ", name(df))
+  files <- filepath(df, "ofst")
+  todo <- which(!(files %in% names(shifting_table)))
+  txdb <- loadTxdb(df); tx <- loadRegion(txdb, "mrna"); txNames <- filterTranscripts(txdb, 30L, 150L, NULL)
+  det <- BiocParallel::bplapply(files[todo], function(file) {
+    rfp <- fimport(file)
+    for (strict in c(TRUE, FALSE)) {
+      s <- tryCatch(detectRibosomeShifts(rfp, txdb, txNames = txNames, tx = tx, accepted.lengths = accepted_lengths,
+                                         strict.fft = strict), error = function(e) NULL)
+      if (!is.null(s) && nrow(s) > 0) return(list(status = if (strict) "strict" else "weak", shifts = s))
+    }
+    list(status = "failed", shifts = NULL)
+  }, BPPARAM = BPPARAM)
+  status <- vapply(det, function(x) x$status, character(1))
+  report <- data.table(Run = runIDs(df)[todo], file = files[todo], status = status)
+  dir.create(QCfolder(df), showWarnings = FALSE, recursive = TRUE)
+  report_file <- file.path(QCfolder(df), "pshift_per_library.csv")
+  fwrite(report, report_file)
+  message("- per library: ", paste(names(table(status)), table(status), collapse = ", "))
+  if (any(status == "failed"))
+    return(simpleError(paste0("P-shifting per library: no periodic read lengths for ", sum(status == "failed"),
+                              " libraries (", paste(report[status == "failed"]$Run, collapse = ", "),
+                              "); exclude them with experiment_remove_runs() or stage offsets with ",
+                              "pshift_stage_offsets(); per-library table: ", report_file)))
+  table_all <- if (is.null(shifting_table)) list() else as.list(shifting_table)
+  table_all[files[todo]] <- lapply(det, function(x) x$shifts)
+  tryCatch(shiftFootprintsByExperiment(df, output_format = "ofst", accepted.lengths = accepted_lengths,
+                                       shift.list = table_all[files], BPPARAM = BPPARAM),
+           error = function(e) { message(conditionMessage(e)); e })
 }

@@ -13,15 +13,21 @@ pipeline_config(
   blacklist = file.path(project_dir, "BLACKLIST.csv"),
   google_url = default_sheets(project_dir),
   preset = "Ribo-seq",
-  flags = pipeline_flags(project_dir, mode, preset, contam),
+  flags = pipeline_flags(project_dir, mode, preset, contam, demultiplex = demultiplex),
   flag_steps = flag_grouping(flags),
   pipeline_steps = lapply(names(flag_steps), function(x) get(x, mode = "function")),
   mode = c("online", "local")[1],
   contam = FALSE,
+  demultiplex = FALSE,
+  fast_trim = TRUE,
   ssd_scratch_dir = if (dir.exists(path.expand("~/livemount/ssd/tmp/")))
     "~/livemount/ssd/tmp/" else NULL,
   ssd_min_free_gb = 50,
   max_ram_wait_minutes = 120,
+  skip_failed_sessions = 0,
+  auto_footprint_mate = TRUE,
+  adapter_detection = c("scan", "fastqc")[1],
+  pshift_per_library = FALSE,
   delete_raw_files = mode == "online",
   delete_trimmed_files = mode == "online",
   delete_collapsed_files = mode == "online",
@@ -104,6 +110,16 @@ online repository (SRA, ENA, PRJ etc). Local means local folders as accessions.}
 \item{contam}{logical, FALSE, do contamint removal, using a seperat made
 STAR index during genome preparation step.}
 
+\item{demultiplex}{logical, default FALSE. TRUE adds a first stage that demultiplexes pooled lanes
+(\code{<raw_data>/<pool>/multiplexed/controlfile.csv}, see \code{?demultiplex}) and delivers each pooled
+run that is in the curated metadata to its experiment, ready for alignment. Runs that are not pooled are
+processed as usual, so this can stay on for mixed projects.}
+
+\item{fast_trim}{logical, default TRUE. Trim and collapse single-end reads in one pass with the fastp
+1.3.7-compatible C program (R/trimcollapse.R): same reads, collapsed file and report as fastp + ORFik
+collapse, ~12x faster and without the trimmed fastq. Paired-end data and fastp's "auto" adapter detection
+keep using fastp. FALSE uses fastp + ORFik::collapse.fastq for everything.}
+
 \item{ssd_scratch_dir}{character or NULL, default
 "~/livemount/ssd/tmp/" when that directory exists on this machine
 (auto-enabled on this server), else NULL (feature off, zero behavior
@@ -141,7 +157,31 @@ deferred to the next sample rather than crashed), this is how long --
 tracked from the true start of waiting, not reset on each check -- a
 sample can stay in that deferred state across repeated
 pipeline_align_one_organism() passes before it's treated as truly stuck
-and raised as a real error instead of deferred again.}
+and raised as a real error instead of deferred again.
+Only continuous waiting counts (2026-10-22): a sample not re-checked for longer than
+\code{config$ram_wait_gap_minutes} (default 30) starts a new wait. Related optional fields (set on the config
+list): \code{config$ram_reserve_gb} (memory an alignment must leave available; default the shared budget's
+reserve_gb from open_workspace/agent_mail/resources/policy.json, else 0) and \code{config$ram_recheck_seconds}
+(default 300; deferred samples are re-checked once before a study is left for the next round).}
+
+\item{skip_failed_sessions}{integer vector, default 0 (off). Studies with an error record in these previous
+sessions are left out of \code{run_pipeline()}: 1 = the last session, 2 = the second last, c(1, 2) = both (session
+index as in \code{\link{pipeline_errors}}, newest first), or a start time ("2026-10-25" / POSIXct) = every session
+started at or after it. Avoids re-failing known errors on restart; clear or fix them and set 0 to retry.}
+
+\item{auto_footprint_mate}{logical, default TRUE. For paired-end Ribo-seq, detect runs whose read 1 has no insert
+(one fixed prefix in most reads) and trim + collapse read 2 instead, reverse-complemented (R/mate_override.R).
+Runs with a usable read 1 are unchanged.}
+
+\item{adapter_detection}{character, default "scan": adapter detection from the first 200k raw reads without FastQC
+(known adapters, the upstream-most junction, poly(A)-tailing protocols, de novo 12-mer; 3-7x faster than FastQC and
+correct on linker designs where FastQC picks the downstream adapter). "fastqc" = the previous FastQC-based detection
+(falls back to the scan if FastQC fails). adapters_manual.csv rows always win.}
+
+\item{pshift_per_library}{logical, default FALSE. When the study-wide strict P-shift pass fails, detect offsets
+per library (strict, then weak only for that library) instead of a study-wide weak pass; a study with libraries
+that fail both stops and lists them (exclude them or stage offsets). Default FALSE keeps the study-wide passes:
+failures usually correlate within a study (e.g. a wrong adapter), so failing study-wide moves on faster.}
 
 \item{delete_raw_files}{logical, default: mode == "online". If online do delete
 raw fastq files after trim step is done, for local samples do not delete.

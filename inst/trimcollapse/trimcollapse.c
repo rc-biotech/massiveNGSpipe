@@ -298,9 +298,10 @@ static void *worker(void *arg) {
   while ((b = q_get(&QIN))) {
     /* output: [uint16 len][seq] for collapse, or fastq records when --fastq-out */
     char *out = NULL; size_t olen = 0; char *p = b->buf, *end = b->buf + b->len;
-    char **sb = NULL; size_t *sl = NULL;
+    char **sb = NULL; size_t *sl = NULL, *sc = NULL;
     if (O.fastq_out) out = xmalloc(b->len + 16);
-    else { sb = xmalloc(NSHARD * sizeof(char *)); sl = calloc(NSHARD, sizeof(size_t)); for (int k = 0; k < NSHARD; k++) sb[k] = xmalloc(b->len / NSHARD * 2 + 65536); }
+    else { sb = xmalloc(NSHARD * sizeof(char *)); sl = calloc(NSHARD, sizeof(size_t)); sc = xmalloc(NSHARD * sizeof(size_t));
+           for (int k = 0; k < NSHARD; k++) { sc[k] = b->len / NSHARD * 2 + 65536; sb[k] = xmalloc(sc[k]); } }
     while (p < end) {
       char *h = p; char *s = memchr(h, '\n', end - h) + 1; char *pl = memchr(s, '\n', end - s) + 1;
       char *q = memchr(pl, '\n', end - pl) + 1; char *nx = memchr(q, '\n', end - q) + 1;
@@ -332,13 +333,16 @@ static void *worker(void *arg) {
       stats_add(&w->after, rs, rq, rl);
       if (O.fastq_out) { int hl = s - h; memcpy(out + olen, h, hl); olen += hl; memcpy(out + olen, rs, rl); olen += rl; memcpy(out + olen, "\n+\n", 3); olen += 3; memcpy(out + olen, rq, rl); olen += rl; out[olen++] = '\n'; }
       else {
-        uint64_t hh = hash_bytes(rs, rl); int k = hh % NSHARD; uint16_t l16 = rl; char *d = sb[k] + sl[k];
+        uint64_t hh = hash_bytes(rs, rl); int k = hh % NSHARD; uint16_t l16 = rl;
+        /* grow: all copies of one sequence go to one shard, so a dominant sequence overflows a fixed share of the block */
+        if (sl[k] + 10 + rl > sc[k]) { sc[k] = sc[k] * 2 + 10 + rl; sb[k] = realloc(sb[k], sc[k]); if (!sb[k]) die("out of memory"); }
+        char *d = sb[k] + sl[k];
         memcpy(d, &hh, 8); memcpy(d + 8, &l16, 2); memcpy(d + 10, rs, rl); sl[k] += 10 + rl;
       }
     }
     free(b->buf);
     if (O.fastq_out) { b->buf = out; b->len = olen; q_put(&QOUT, b); }
-    else { for (int k = 0; k < NSHARD; k++) { block *x = xmalloc(sizeof(block)); x->buf = sb[k]; x->len = sl[k]; q_put(&QS[k], x); } free(sb); free(sl); free(b); }
+    else { for (int k = 0; k < NSHARD; k++) { block *x = xmalloc(sizeof(block)); x->buf = sb[k]; x->len = sl[k]; q_put(&QS[k], x); } free(sb); free(sl); free(sc); free(b); }
   }
   return NULL;
 }

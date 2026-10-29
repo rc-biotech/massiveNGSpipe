@@ -57,6 +57,10 @@ error_hint <- function(msg) {
     "detect_strand_mode" = "RNA strand detection failed: often a broken STAR index or too few mapped reads",
     "RNA orientation unresolved" =
       "RNA strand unresolved: see aligned/QC_STATS/rna_strand.csv. ~0 informative reads even after the whole-BAM fallback = few reads on annotated genes: check alignment rate and assay (e.g. shRNA/CRISPR screen tags, DNA; PRJNA418238 2026-10-20) before excluding; sense fraction between thresholds = moderately stranded -> per-run config$rna_strand_by_run",
+    "dbGaP|Access denied|unauthorized while resolving" =
+      "controlled-access data (dbGaP): cannot be downloaded; set KEEP = FALSE for the study's runs",
+    "munmap_chunk|invalid pointer|double free|free\\(\\): invalid|Segmentation fault|core dumped" =
+      "a compiled helper (trimcollapse/demultiplexer) crashed: report it with the input file",
     "fasterq-dump|prefetch|sra_to_fastq|aws.*s3" =
       "download failed: retry; check the accession, network and temp space",
     "lazy-load|lazy load|cannot open compressed file.*\\.rdb" =

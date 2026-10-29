@@ -113,3 +113,18 @@ test_that("adapter_scan_reads picks the insert/adapter junction (known, poly-A t
   expect_equal(scan(paste0(ins, "GTTCAGAGTTCTACAGTCCGACGATC"), "novo.fq"), "GTTCAGAGTTCT")             # not in the list
   expect_equal(scan(rnd(n, 60), "none.fq"), "disable")                                                  # no adapter
 })
+
+test_that("collapse survives a dominant sequence (shard buffer growth, Valen PRJNA563539 crash 2026-10-29)", {
+  bin <- tryCatch(massiveNGSpipe:::trimcollapse_binary(), error = function(e) NULL)
+  skip_if(is.null(bin), "trimcollapse binary not available")
+  dir <- file.path(tempdir(), "tc_dominant"); unlink(dir, recursive = TRUE); dir.create(dir)
+  set.seed(4); n <- 400000; dom <- "ACGTACGTACGTACGTACGTACGTACGTAC"
+  rnd <- vapply(seq_len(n * 0.4), function(i) paste(sample(c("A", "C", "G", "T"), 30, TRUE), collapse = ""), "")
+  s <- sample(c(rep(dom, n - length(rnd)), rnd))
+  f <- file.path(dir, "dom.fastq"); writeLines(paste0("@r", seq_along(s), "\n", s, "\n+\n", strrep("I", 30)), f)
+  out <- massiveNGSpipe:::fast_collapse_fastq(f, dir, threads = 4)
+  x <- Biostrings::readDNAStringSet(out)
+  counts <- as.integer(sub(".*_x", "", names(x)))
+  expect_equal(sum(counts), n)
+  expect_equal(counts[as.character(x) == dom], n - length(rnd))
+})

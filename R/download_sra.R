@@ -318,6 +318,15 @@ validate_fastq_download <- function(filenames, accession, PAIRED_END, is_compres
     file.rename(old_path, new_path)
     filenames <- paste0(accession, suffix)
   }
+  # SRA sometimes labels a run SINGLE although every spot holds two reads (e.g. PRJNA1029246: 2 x 150 nt, read 1 =
+  # insert + adapter). Use read 1 as the single-end file, as for SINGLE runs in general, and drop read 2.
+  two_reads <- setequal(filenames, paste0(accession, c("_1", "_2"), suffix))
+  if (!PAIRED_END && two_reads) {
+    message(accession, ": LibraryLayout is SINGLE but SRA returned two reads per spot; using read 1, removing read 2")
+    file.remove(file.path(outdir, paste0(accession, "_2", suffix)))
+    file.rename(file.path(outdir, paste0(accession, "_1", suffix)), file.path(outdir, paste0(accession, suffix)))
+    filenames <- paste0(accession, suffix)
+  }
   if (setequal(filenames, paste0(accession, suffix))) {
     stopifnot(
       "extracted one fastq, but LibraryLayout is not SINGLE" =

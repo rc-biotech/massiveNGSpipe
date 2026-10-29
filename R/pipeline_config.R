@@ -83,6 +83,10 @@
 #' output BAM, roughly the same order of magnitude as the input; the flat
 #' margin absorbs estimation error and leaves headroom for anything else
 #' using the same drive). Ignored when ssd_scratch_dir is NULL.
+#' @param pshift_per_library logical, default FALSE. When the study-wide strict P-shift pass fails, detect offsets
+#' per library (strict, then weak only for that library) instead of a study-wide weak pass; a study with libraries
+#' that fail both stops and lists them (exclude them or stage offsets). Default FALSE keeps the study-wide passes:
+#' failures usually correlate within a study (e.g. a wrong adapter), so failing study-wide moves on faster.
 #' @param adapter_detection character, default "scan": adapter detection from the first 200k raw reads without FastQC
 #' (known adapters, the upstream-most junction, poly(A)-tailing protocols, de novo 12-mer; 3-7x faster than FastQC and
 #' correct on linker designs where FastQC picks the downstream adapter). "fastqc" = the previous FastQC-based detection
@@ -217,6 +221,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             skip_failed_sessions = 0,
                             auto_footprint_mate = TRUE,
                             adapter_detection = c("scan", "fastqc")[1],
+                            pshift_per_library = FALSE,
                             delete_raw_files = mode == "online",
                             delete_trimmed_files = mode == "online",
                             delete_collapsed_files = mode == "online",
@@ -313,6 +318,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               skip_failed_sessions = skip_failed_sessions,
               auto_footprint_mate = auto_footprint_mate,
               adapter_detection = adapter_detection,
+              pshift_per_library = pshift_per_library,
               compress_raw_data = compress_raw_data,
               stop_downloading_new_data_at_drive_usage = stop_downloading_new_data_at_drive_usage,
               max_unprocessed_downloads = max_unprocessed_downloads,
