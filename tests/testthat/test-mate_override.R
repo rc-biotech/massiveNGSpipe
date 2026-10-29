@@ -34,3 +34,23 @@ test_that("mate override table is parsed strictly", {
                                             trim_tail = 0, source = "x"), file.path(d, "mate_override_manual.csv"))
   expect_error(massiveNGSpipe:::mate_overrides(d), "mate must be 1 or 2")
 })
+
+test_that("paired_footprint_mate picks read 2 only when read 1 has no insert", {
+  dir <- file.path(tempdir(), "footprint_mate"); unlink(dir, recursive = TRUE); dir.create(dir)
+  set.seed(2)
+  rnd <- function(n, k) vapply(seq_len(n), function(i) paste(sample(c("A", "C", "G", "T"), k, TRUE), collapse = ""), "")
+  wfq <- function(s, f) writeLines(paste0("@r", seq_along(s), "\n", s, "\n+\n", strrep("I", nchar(s))), f)
+  n <- 2000; ad <- "AGATCGGAAGAGCGTCGTGTAGGG"
+  junk_r1 <- paste0("ACGTCTGAACTCCAGTCACGATC", strrep("G", 40))
+  good_r1 <- paste0(rnd(n, 30), "AGATCGGAAGAGCACACGTCTG")
+  good_r2 <- paste0("GAT", rnd(n, 5), rnd(n, 30), "TC", ad)
+  wfq(rep(junk_r1, n), file.path(dir, "junk_1.fastq")); wfq(good_r2, file.path(dir, "junk_2.fastq"))
+  wfq(good_r1, file.path(dir, "ok_1.fastq")); wfq(good_r2, file.path(dir, "ok_2.fastq"))
+  d1 <- massiveNGSpipe:::paired_footprint_mate(file.path(dir, "junk_1.fastq"), file.path(dir, "junk_2.fastq"))
+  expect_equal(d1$mate, 2L); expect_true(d1$reverse)
+  d2 <- massiveNGSpipe:::paired_footprint_mate(file.path(dir, "ok_1.fastq"), file.path(dir, "ok_2.fastq"))
+  expect_equal(d2$mate, 1L); expect_false(d2$reverse)                           # usable read 1: default path unchanged
+  wfq(rep(junk_r1, n), file.path(dir, "bad_2.fastq"))
+  d3 <- massiveNGSpipe:::paired_footprint_mate(file.path(dir, "junk_1.fastq"), file.path(dir, "bad_2.fastq"))
+  expect_equal(d3$mate, 1L)                                                     # read 2 without inserts: no switch
+})

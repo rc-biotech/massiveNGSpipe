@@ -38,7 +38,10 @@ mate_overrides <- function(trimmed_dir) {
 
 #' Runs of a study that use a mate override
 #' @noRd
-mate_override_runs <- function(trimmed_dir) mate_overrides(trimmed_dir)$Run
+mate_override_runs <- function(trimmed_dir) {
+  auto <- mate_override_auto_path(trimmed_dir)
+  unique(c(mate_overrides(trimmed_dir)$Run, if (file.exists(auto)) fread(auto, colClasses = "character")$Run))
+}
 
 #' Treat overridden runs as single-end in an in-memory run table (metadata files are not touched)
 #' @param runs data.table with Run, LibraryLayout
@@ -88,4 +91,65 @@ trim_with_mate_override <- function(run, filenames, target_dir, trimmed_dir) {
   fast_trim_state$collapsed <- final
   data.table(id = run, adapter = o$adapter, barcode_detected = o$trim_front + o$trim_tail > 0,
              barcode5p_size = o$trim_front, barcode3p_size = o$trim_tail, mate_override = o$mate, reverse = o$reverse)
+}
+
+#' @noRd
+mate_override_auto_path <- function(trimmed_dir) file.path(trimmed_dir, "mate_override_auto.csv")
+
+#' Which mate of a paired-end Ribo-seq run holds the footprint (first reads only, fast)
+#'
+#' Read 1 is unusable when most reads start with one fixed sequence (adapter / index read-through, e.g. PRJNA1301971:
+#' 96% ACGTCTGAACTCCAGTCAC + index, then poly-G). Read 2 is then used when its reads carry an insert followed by an
+#' Illumina adapter seed. Anything else keeps read 1 (the default paired path).
+#' @param file1,file2 read 1 / read 2 fastq(.gz)
+#' @param n reads sampled from the start of each file
+#' @return list(mate, reverse, r1_top_prefix, r2_top_prefix, r2_insert_adapter, reason)
+#' @noRd
+paired_footprint_mate <- function(file1, file2, n = 1e5, prefix_nt = 20, junk_min = 0.5, insert_min = 0.3) {
+  seqs <- function(f) { con <- if (grepl("\\.gz$", f)) gzfile(f, "r") else file(f, "r"); on.exit(close(con))
+    l <- readLines(con, n = 4 * n); l[seq(2, length(l), by = 4)] }
+  top_prefix <- function(s) { p <- substr(s[nchar(s) >= prefix_nt], 1, prefix_nt); if (!length(p)) return(0); max(table(p)) / length(p) }
+  insert_adapter <- function(s) { pos <- regexpr("AGATCGGAAGAGC", s, fixed = TRUE); mean(pos >= 18) }
+  s1 <- seqs(file1); s2 <- seqs(file2)
+  r1 <- top_prefix(s1); r2 <- top_prefix(s2); i2 <- insert_adapter(s2)
+  use2 <- r1 >= junk_min && r2 < 0.2 && i2 >= insert_min
+  list(mate = if (use2) 2L else 1L, reverse = use2, r1_top_prefix = round(r1, 3), r2_top_prefix = round(r2, 3),
+       r2_insert_adapter = round(i2, 3),
+       reason = sprintf("auto: read 1 top %d-nt prefix %.0f%% of reads, read 2 insert+adapter %.0f%%", prefix_nt, 100 * r1, 100 * i2))
+}
+
+#' Trim + collapse a paired run from read 2 (automatic footprint-mate detection)
+#'
+#' Read 2 goes through the normal single-end barcode/UMI detection and trimcollapse path (via a Run-named symlink),
+#' the collapsed reads are reverse-complemented back to the RNA sense and the decision is recorded in
+#' \code{mate_override_auto.csv} (used like the manual table by alignment and experiment creation).
+#' @noRd
+trim_from_read2_auto <- function(study_sample, file2, target_dir, trimmed_dir, mode, decision) {
+  run <- study_sample$Run
+  tmp <- file.path(trimmed_dir, ".mate2_input", run); dir.create(tmp, recursive = TRUE, showWarnings = FALSE)
+  on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
+  link <- file.path(tmp, paste0(run, if (grepl("\\.gz$", file2)) ".fastq.gz" else ".fastq"))
+  if (!file.symlink(normalizePath(file2), link)) stop("mate override: cannot link read 2 for ", run)
+  ss <- copy(study_sample)[, LibraryLayout := "SINGLE"]
+  fast_trim_state$collapsed <- NULL
+  barcode_dt <- run_barcode_detection_and_trim(ss, tmp, target_dir, trimmed_dir, mode, link, NULL)
+  final <- fast_trim_state$collapsed
+  if (is.null(final) || !file.exists(final))
+    stop("mate override (auto) for ", run, ": read 2 did not go through the fast trim path (adapter '", barcode_dt$adapter,
+         "'); add a manual row to ", mate_override_path(trimmed_dir))
+  seqs <- Biostrings::readDNAStringSet(final)
+  tmpf <- file.path(dirname(final), paste0(".", basename(final), ".mate_tmp", Sys.getpid(), ".gz"))
+  Biostrings::writeXStringSet(Biostrings::reverseComplement(seqs), tmpf, compress = TRUE)
+  if (!file.rename(tmpf, final)) { unlink(tmpf); stop("mate override: cannot replace ", final) }
+  row <- data.table(Run = run, mate = 2L, reverse = TRUE, adapter = barcode_dt$adapter,
+                    trim_front = barcode_dt$barcode5p_size, trim_tail = barcode_dt$barcode3p_size, source = decision$reason)
+  f <- mate_override_auto_path(trimmed_dir)
+  old <- if (file.exists(f)) fread(f, colClasses = "character")[Run != run] else NULL
+  fwrite(rbind(old, row[, lapply(.SD, as.character)], fill = TRUE), f)
+  write_json_atomic(c(decision, list(Run = run, output = basename(final), output_md5 = file_md5(final), n_seqs = length(seqs),
+                                     time = format(Sys.time(), tz = "UTC", usetz = TRUE))),
+                    file.path(trimmed_dir, ".mate_override", paste0(run, ".json")))
+  fast_trim_state$collapsed <- final
+  barcode_dt[, `:=`(mate_override = 2L, reverse = TRUE)]
+  barcode_dt
 }

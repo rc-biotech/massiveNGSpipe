@@ -129,11 +129,22 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
                 file2 <- if(!single_end) filenames[2]
                 barcode_dt <- data.table()
                 # Opt-in: trim + collapse only the chosen mate (mate_override_manual.csv, R/mate_override.R)
-                if (run %in% mate_override_runs(trimmed_dir)) {
+                if (run %in% mate_overrides(trimmed_dir)$Run) {
                   barcode_dt <- trim_with_mate_override(run, filenames, target_dir, trimmed_dir)
                   set_sample_flag(config, "trim", experiment, run, value = barcode_dt)
                   set_sample_flag(config, "collapsed", experiment, run)
                   return(barcode_dt)
+                }
+                # Paired Ribo-seq whose read 1 has no insert: use read 2 (automatic, recorded in mate_override_auto.csv)
+                if (!single_end && runs[i]$LIBRARYTYPE == "RFP" && !isFALSE(config$auto_footprint_mate)) {
+                  decision <- paired_footprint_mate(file, file2)
+                  message(run, ": footprint mate ", decision$mate, " (", decision$reason, ")")
+                  if (decision$mate == 2L) {
+                    barcode_dt <- trim_from_read2_auto(study_sample, file2, target_dir, trimmed_dir, mode, decision)
+                    set_sample_flag(config, "trim", experiment, run, value = barcode_dt)
+                    set_sample_flag(config, "collapsed", experiment, run)
+                    return(barcode_dt)
+                  }
                 }
                 check_for_barcodes <- runs[i]$LIBRARYTYPE == "RFP"
                 # RNA inputs built with small-RNA kits may require explicit

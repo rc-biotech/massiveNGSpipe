@@ -83,6 +83,9 @@
 #' output BAM, roughly the same order of magnitude as the input; the flat
 #' margin absorbs estimation error and leaves headroom for anything else
 #' using the same drive). Ignored when ssd_scratch_dir is NULL.
+#' @param auto_footprint_mate logical, default TRUE. For paired-end Ribo-seq, detect runs whose read 1 has no insert
+#' (one fixed prefix in most reads) and trim + collapse read 2 instead, reverse-complemented (R/mate_override.R).
+#' Runs with a usable read 1 are unchanged.
 #' @param skip_failed_sessions integer vector, default 0 (off). Studies with an error record in these previous
 #' sessions are left out of \code{run_pipeline()}: 1 = the last session, 2 = the second last, c(1, 2) = both (session
 #' index as in \code{\link{pipeline_errors}}, newest first). Avoids re-failing known errors on restart; clear or fix
@@ -208,6 +211,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             ssd_min_free_gb = 50,
                             max_ram_wait_minutes = 120,
                             skip_failed_sessions = 0,
+                            auto_footprint_mate = TRUE,
                             delete_raw_files = mode == "online",
                             delete_trimmed_files = mode == "online",
                             delete_collapsed_files = mode == "online",
@@ -302,6 +306,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               ssd_min_free_gb = ssd_min_free_gb,
               max_ram_wait_minutes = max_ram_wait_minutes,
               skip_failed_sessions = skip_failed_sessions,
+              auto_footprint_mate = auto_footprint_mate,
               compress_raw_data = compress_raw_data,
               stop_downloading_new_data_at_drive_usage = stop_downloading_new_data_at_drive_usage,
               max_unprocessed_downloads = max_unprocessed_downloads,
