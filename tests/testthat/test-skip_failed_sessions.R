@@ -15,3 +15,15 @@ test_that("studies with errors in selected previous sessions are skipped", {
   cfg$skip_failed_sessions <- c(1, 2)
   expect_equal(names(massiveNGSpipe:::drop_studies_failed_in_sessions(pl, cfg)), "C")
 })
+
+test_that("skip_failed_sessions accepts a start time (all sessions since then)", {
+  proj <- file.path(tempdir(), "skip_failed_since"); unlink(proj, recursive = TRUE)
+  for (s in c("2026-10-20 10:00:00.1", "2026-10-25 00:00:34.5", "2026-10-29 11:00:00.2")) dir.create(file.path(proj, "error_logs", s), recursive = TRUE)
+  saveRDS("x", file.path(proj, "error_logs", "2026-10-20 10:00:00.1", "OLD-homo_sapiens.rds"))
+  saveRDS("x", file.path(proj, "error_logs", "2026-10-25 00:00:34.5", "V1-homo_sapiens.rds"))
+  saveRDS("x", file.path(proj, "error_logs", "2026-10-29 11:00:00.2", "V2-homo_sapiens.rds"))
+  mk <- function(s) list(organisms = list(hs = list(conf = c(exp = paste0(s, "-homo_sapiens")))))
+  pl <- list(OLD = mk("OLD"), V1 = mk("V1"), V2 = mk("V2"), OK = mk("OK"))
+  cfg <- list(project = proj, skip_failed_sessions = "2026-10-25")
+  expect_equal(names(massiveNGSpipe:::drop_studies_failed_in_sessions(pl, cfg)), c("OLD", "OK"))
+})

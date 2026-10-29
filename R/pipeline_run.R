@@ -262,9 +262,14 @@ all_pending_failed <- function(config, pending) {
 #' @noRd
 drop_studies_failed_in_sessions <- function(pipelines, config) {
   idx <- config$skip_failed_sessions
-  idx <- idx[!is.na(idx) & idx > 0]
-  if (!length(idx) || !length(pipelines)) return(pipelines)
   config$error_dir <- NULL
+  if (is.character(idx) || inherits(idx, "POSIXt")) {           # all sessions started at or after this time
+    dirs <- session_error_dirs(config)
+    since <- as.POSIXct(idx[1], tz = "")
+    started <- as.POSIXct(substr(basename(dirs), 1, 19), tz = "")
+    idx <- which(!is.na(started) & started >= since)
+  } else idx <- idx[!is.na(idx) & idx > 0]
+  if (!length(idx) || !length(pipelines)) return(pipelines)
   failed <- unique(unlist(lapply(idx, function(i) pipeline_errors(config, index = i)$exp)))
   if (!length(failed)) return(pipelines)
   exps <- lapply(pipelines, function(p) unname(vapply(p$organisms, function(o) unname(o$conf["exp"]), character(1))))

@@ -88,8 +88,8 @@
 #' Runs with a usable read 1 are unchanged.
 #' @param skip_failed_sessions integer vector, default 0 (off). Studies with an error record in these previous
 #' sessions are left out of \code{run_pipeline()}: 1 = the last session, 2 = the second last, c(1, 2) = both (session
-#' index as in \code{\link{pipeline_errors}}, newest first). Avoids re-failing known errors on restart; clear or fix
-#' them and set 0 to retry.
+#' index as in \code{\link{pipeline_errors}}, newest first), or a start time ("2026-10-25" / POSIXct) = every session
+#' started at or after it. Avoids re-failing known errors on restart; clear or fix them and set 0 to retry.
 #' @param max_ram_wait_minutes numeric, default 120 (10 before 2026-10-23: with the shared-budget reserve, waits of
 #'  20+ minutes for ~115 GB free are normal on the shared server, and 10 failed PRJNA627881). See
 #' R/pipeline_align_memory.R: when a sample's estimated STAR BAM-sort RAM
