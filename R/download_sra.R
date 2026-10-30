@@ -144,6 +144,9 @@ download_sra_ebi <- function(accession, outdir, compress) {
   old_timeout <- options(timeout = max(getOption("timeout"), 24 * 3600)); on.exit(options(old_timeout), add = TRUE)
   res <- try(ORFik::download.SRA(accession, outdir, rename = FALSE))
   if (is(res, "try-error")) {
+    # partial EBI files next to fastq-dump's output made validate_fastq_download() reject the run
+    partial <- list.files(outdir, paste0("^", accession, "(_[12])?\\.fastq\\.gz$"), full.names = TRUE)
+    if (length(partial)) { message("Removing partial EBI downloads: ", paste(basename(partial), collapse = ", ")); file.remove(partial) }
     message("Using fastq-dump fallback")
     res <- ORFik::download.SRA(accession, outdir, use.ebi.ftp = FALSE,
                                rename = FALSE, compress = compress)
