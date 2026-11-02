@@ -514,6 +514,12 @@ test_that("experiment_error_message extracts the step name and first line, witho
   err <- experiment_error_message(config, "PRJNA809587-homo_sapiens_RNA-seq")
   expect_identical(err$step, "align")
   expect_identical(err$message, "Error : ! in callr subprocess.")
+
+  # fetch/trim records are keyed by the study accession (Valen, 2026-11-02: PRJNA1494916 collapse error shown as active)
+  saveRDS(paste("PRJNA1494916", "(", "collapse", ")", "Error : collapse failed", paste(Sys.time())),
+          report_failed_pipe_path(config, "PRJNA1494916"))
+  err <- experiment_error_message(config, "PRJNA1494916-homo_sapiens")
+  expect_identical(err$step, "collapse")
 })
 
 test_that("pipeline_checklist shows FAILED (not active) for a study with a recorded crash, and WAITING (not active) for every later stage blocked behind it", {

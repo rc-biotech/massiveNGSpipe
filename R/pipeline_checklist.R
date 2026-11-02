@@ -64,8 +64,10 @@ candidate_is_eligible <- function(config, prev_flags, candidate) {
 #' @noRd
 experiment_error_message <- function(config, exp) {
   if (is.null(config$error_dir)) return(NULL)
-  path <- report_failed_pipe_path(config, exp)
-  if (!file.exists(path)) return(NULL)
+  # fetch/trim/exp records are keyed by the study accession, later stages by experiment name (as exp_or_study_failed())
+  paths <- report_failed_pipe_path(config, unique(c(exp, sub("-.*", "", exp))))
+  path <- paths[file.exists(paths)][1]
+  if (is.na(path)) return(NULL)
   raw <- tryCatch(readRDS(path), error = function(e) NA_character_)
   if (length(raw) != 1 || is.na(raw) || !is.character(raw)) return(NULL)
   # report_failed_pipe()'s own record format is
@@ -408,6 +410,10 @@ pipeline_checklist <- function(pipelines, config, print = TRUE, run_status = NUL
 
     if (n_done < n_total) {
       candidates <- exps[!done_vec]
+      # Studies with an error record are skipped by the stage loops: pick the active study among the others, so a
+      # failed study is not shown as "active" (0 samples/hr) or as blocking later stages (Valen run, 2026-11-02)
+      failed <- vapply(candidates, function(e) !is.null(experiment_error_message(config, e)), logical(1))
+      if (any(!failed)) candidates <- candidates[!failed]
       if (!is.na(marker_step)) {
         started <- vapply(candidates, function(e) n_samples_done(config, marker_step, e) > 0, logical(1))
         if (any(started)) {
