@@ -59,7 +59,7 @@ curate_metadata <- function(accessions, config, organisms = "all",
                             step_mode = FALSE, open_editor = interactive(),
                             validate_correctness = TRUE, fix_loop = TRUE,
                             only_curated = FALSE, update_google_sheet = TRUE,
-                            BPPARAM = if (length(accessions) > 5) {bpparam()} else SerialParam()) {
+                            BPPARAM = metadata_bpparam(accessions)) {
   stopifnot(length(fix_loop) == 1); stopifnot(is(fix_loop, "logical"))
   stopifnot(length(update_google_sheet) == 1); stopifnot(is(update_google_sheet, "logical"))
   stopifnot(length(only_curated) == 1); stopifnot(is(only_curated, "logical"))
@@ -119,7 +119,7 @@ curation_loop_until_valid <- function(fix_loop, validate_correctness, config,
 #' of studies. Will use a random increasing wait time between study attempts. See log files for more error info.
 #' @return a data.table of all metadata for all accessions
 pipeline_metadata <- function(accessions, config, force = FALSE, max_attempts = 7, max_attempts_loop = 1,
-                              BPPARAM = if (length(accessions) > 5) {bpparam()} else SerialParam()) {
+                              BPPARAM = metadata_bpparam(accessions)) {
   do <- ifelse(config$mode == "online", "downloading", "processing")
   message("- Metadata ", do, "...")
   accessions <- gsub(" $|^ ", "", accessions)
@@ -427,7 +427,7 @@ add_new_data <- function(accessions, config, organisms = "all",
                          open_editor = interactive(),
                          open_google_sheet = interactive(),
                          organism_name_cleanup = TRUE,
-                         BPPARAM = if (length(accessions) > 5) {bpparam()} else SerialParam()) {
+                         BPPARAM = metadata_bpparam(accessions)) {
   blacklist <- blacklist_read(config)
   whole <- blacklist[is.na(run_id)]$id
   if (any(whole %in% accessions)) {
@@ -839,4 +839,18 @@ metadata_legacy_columns <- function(dt) {
   if (is.data.frame(dt) && "UNIQUE" %in% names(dt) && !"COMMENT" %in% names(dt))
     data.table::setnames(dt, "UNIQUE", "COMMENT")
   invisible(dt)
+}
+
+#' Workers for SRA metadata downloads, within NCBI E-utilities limits
+#'
+#' NCBI allows 3 requests per second per IP without an API key and 10 with one; every worker is a separate client, so
+#' the default bpparam() (all cores) triggered "too many requests" errors. Without a key the download runs serially;
+#' with ENTREZ_KEY / NCBI_API_KEY set (ORFik reads it), 3 workers. ORFik spaces and retries the requests themselves.
+#' @param accessions character, the accessions to download
+#' @return a BiocParallelParam
+#' @noRd
+metadata_bpparam <- function(accessions) {
+  key <- nzchar(Sys.getenv("ENTREZ_KEY", Sys.getenv("NCBI_API_KEY")))
+  if (length(accessions) <= 5 || !key) return(SerialParam())
+  MulticoreParam(workers = 3)
 }
