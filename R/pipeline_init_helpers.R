@@ -462,7 +462,27 @@ reference_assembly <- function(organism) {
                "Pyricularia oryzae" = "GCF_000002495.2",             # 70-15 (MG8), classic reference
                "Fusarium graminearum" = "GCF_000240135.3",           # PH-1
                "Penicillium oxalicum" = "GCF_001723175.1",
-               "Naumovozyma castellii" = "GCF_000237345.1")       # CBS 4309
+               "Naumovozyma castellii" = "GCF_000237345.1",       # CBS 4309
+               # Valen batch 2 new species 2026-11-03: no RefSeq "reference genome" found by name, or a study strain
+               "Listeria monocytogenes" = "GCF_000196035.1",         # EGD-e
+               "Listeria innocua" = "GCF_000195795.1",               # Clip11262
+               "Acetobacterium woodii" = "GCF_000247605.1",          # DSM 1030
+               "Pseudomonas putida" = "GCF_000007565.2",             # KT2440
+               "Pseudomonas syringae" = "GCF_000012205.1",           # pv. phaseolicola 1448A (now P. savastanoi), PRJNA1055550
+               "Klebsiella michiganensis" = "GCF_002090195.1",       # M5al
+               "Streptococcus pneumoniae" = "GCF_000014365.2",       # D39
+               "Streptococcus pyogenes" = "GCF_000006785.2",         # M1 GAS SF370
+               "Streptomyces lividans" = "GCF_000739105.1",          # TK24
+               "Sodalis praecaptivus" = "GCF_000517425.1",           # HS1, complete
+               "Eubacterium limosum" = "GCF_000807675.2",            # ATCC 8486
+               "Clostridium ljungdahlii" = "GCF_000143685.1",        # DSM 13528
+               "Staphylococcus aureus" = "GCF_000013425.1",          # NCTC 8325 (parent of HG001/RN4220/SH1000)
+               "Campylobacter jejuni" = "GCF_000009085.1",           # NCTC 11168
+               "Lacticaseibacillus rhamnosus" = "GCF_000026505.1",   # GG (ATCC 53103)
+               "Mycoplasmoides pneumoniae" = "GCF_000027345.1",      # M129
+               "Sinorhizobium meliloti" = "GCF_000006965.1",         # 1021
+               "Methanosarcina mazei" = "GCF_000007065.1",           # Go1
+               "Moneuplotes crassus" = "GCA_946863485.1")            # DP1, GenBank only
   out <- unname(curated[organism]); out[is.na(out)] <- organism[is.na(out)]
   out
 }
