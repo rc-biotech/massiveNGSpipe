@@ -482,6 +482,7 @@ reference_assembly <- function(organism) {
                "Mycoplasmoides pneumoniae" = "GCF_000027345.1",      # M129
                "Sinorhizobium meliloti" = "GCF_000006965.1",         # 1021
                "Methanosarcina mazei" = "GCF_000007065.1",           # Go1
+               "Lactococcus lactis" = "GCF_000009425.1",             # MG1363 (now L. cremoris), host of phage sk1 (PRJNA970321)
                "Moneuplotes crassus" = "GCA_946863485.1")            # DP1, GenBank only
   out <- unname(curated[organism]); out[is.na(out)] <- organism[is.na(out)]
   out
