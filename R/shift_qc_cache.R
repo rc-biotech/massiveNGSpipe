@@ -310,12 +310,54 @@ shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct 
   data.table::fwrite(zero_frame, file = file.path(QCFolder, "Ribo_frames_badzero.csv"))
 
   plot_idx <- intersect(ok_idx, subset)
-  if (length(plot_idx) > 0) shift_qc_build_combined_plot(df, plot_idx)
+  if (length(plot_idx) > 0) shift_qc_plot_guarded(df, plot_idx)
 
   trimmed_dir <- file.path(bam_dir_from_df(df), "trim")
   check_adapter_barcode_quality(bam_dir_from_df(df), trimmed_dir, max_no_adapter_removed_pct)
   periodicity_check_flag(zero_frame, QCFolder, has_cds_data = nrow(frameQC) > 0)
   invisible(NULL)
+}
+
+#' Build the combined shift-barplot in a child process with a memory ceiling
+#'
+#' 2026-11-05 (iwasaki_1k_yeast, 1152 libraries): building this 39-sample plot inside the pipeline session repeatedly
+#' grew the R process past 58 GB (allocation in ggplotGrob via ORFik::pSitePlot); the host then terminated the session
+#' with SIGTERM. The same plot built standalone from the same cached hitMaps takes 1.6 GB, and the trigger was not
+#' found. The plot is a QC picture only (frame tables and the verdict flag do not depend on it), so it is built in a
+#' child process that is stopped when it exceeds \code{max_gb}; the plot is then skipped with a warning and a stale
+#' plot from an earlier run is removed so it cannot be mistaken for the current shifts.
+#' @param df an ORFik experiment
+#' @param plot_idx integer, row indices passed to \code{shift_qc_build_combined_plot()}
+#' @param max_gb numeric, resident memory limit of the plotting process
+#' @param poll numeric, seconds between memory checks
+#' @return invisible(TRUE) when the plot was written, else invisible(FALSE)
+#' @noRd
+shift_qc_plot_guarded <- function(df, plot_idx, max_gb = getOption("mngsp.shift_plot_max_gb", 16), poll = 2) {
+  output <- file.path(shift_qc_output_dir(df), "pshifts_barplots.png")
+  skip <- function(why) {
+    suppressWarnings(file.remove(c(output, paste0(output, ".fst"))))
+    warning("Combined P-shift plot for ", name(df), " skipped: ", why, call. = FALSE)
+    invisible(FALSE)
+  }
+  px <- callr::r_bg(function(df, plot_idx, dev) {
+    if (is.null(dev)) loadNamespace("massiveNGSpipe")
+    else suppressMessages(pkgload::load_all(dev, quiet = TRUE, helpers = FALSE, attach_testthat = FALSE))
+    get("shift_qc_build_combined_plot", envir = asNamespace("massiveNGSpipe"))(df, plot_idx)
+    TRUE
+  }, args = list(df = df, plot_idx = plot_idx, dev = dev_package_path()), package = FALSE)
+  on.exit(if (px$is_alive()) px$kill_tree(), add = TRUE)
+  while (px$is_alive()) {
+    Sys.sleep(poll)
+    rss <- tryCatch(px$get_memory_info()[["rss"]], error = function(e) 0)
+    if (rss > max_gb * 1024^3) {
+      px$kill_tree()
+      return(skip(paste0("plotting process exceeded ", max_gb, " GB")))
+    }
+  }
+  res <- tryCatch(px$get_result(), error = function(e) e)
+  if (inherits(res, "error")) return(skip(conditionMessage(res)))
+  message("Saved pshift plots to location: ", output)
+  invisible(TRUE)
 }
 
 #' Reassemble the combined shift-barplot from cached per-sample hitMaps

@@ -167,6 +167,7 @@ test_that("shift_qc_cached() computes every sample on a first call, then skips a
   testthat::local_mocked_bindings(
     shift_qc_one_sample = function(...) { call_count <<- call_count + 1; fake_result },
     shift_qc_build_combined_plot = function(...) invisible(NULL),
+    shift_qc_plot_guarded = function(...) invisible(TRUE),
     check_adapter_barcode_quality = function(...) invisible(NULL)
   )
   testthat::local_mocked_bindings(
@@ -193,6 +194,7 @@ test_that("shift_qc_cached() recomputes only the one sample whose pshifted file 
       fake_result
     },
     shift_qc_build_combined_plot = function(...) invisible(NULL),
+    shift_qc_plot_guarded = function(...) invisible(TRUE),
     check_adapter_barcode_quality = function(...) invisible(NULL)
   )
   testthat::local_mocked_bindings(
@@ -238,6 +240,7 @@ test_that("shift_qc_cached() writes each sample's cache file as soon as THAT sam
       fake_result
     },
     shift_qc_build_combined_plot = function(...) invisible(NULL),
+    shift_qc_plot_guarded = function(...) invisible(TRUE),
     check_adapter_barcode_quality = function(...) invisible(NULL)
   )
   testthat::local_mocked_bindings(
@@ -267,6 +270,7 @@ test_that("shift_qc_cached() blocks incomplete study QC and retries only the fai
       ok_result
     },
     shift_qc_build_combined_plot = function(...) invisible(NULL),
+    shift_qc_plot_guarded = function(...) invisible(TRUE),
     check_adapter_barcode_quality = function(...) invisible(NULL)
   )
   testthat::local_mocked_bindings(
@@ -309,6 +313,7 @@ test_that("shift_qc_cached() doesn't crash when one sample's frames table has ze
       normal_result
     },
     shift_qc_build_combined_plot = function(...) invisible(NULL),
+    shift_qc_plot_guarded = function(...) invisible(TRUE),
     check_adapter_barcode_quality = function(...) invisible(NULL)
   )
   testthat::local_mocked_bindings(
@@ -336,6 +341,7 @@ test_that("shift_qc_cached() aggregates cached per-sample frame tables into Ribo
   testthat::local_mocked_bindings(
     shift_qc_one_sample = function(df_one_row, ...) results_by_run[[ORFik::runIDs(df_one_row)]],
     shift_qc_build_combined_plot = function(...) invisible(NULL),
+    shift_qc_plot_guarded = function(...) invisible(TRUE),
     check_adapter_barcode_quality = function(...) invisible(NULL)
   )
   testthat::local_mocked_bindings(
@@ -364,7 +370,7 @@ test_that("shift_qc_cached() plots only the already-existing shiftPlots() max-39
                       frames = data.table::data.table(frame = 0, score = 1, fraction = "x", length = 30))
   testthat::local_mocked_bindings(
     shift_qc_one_sample = function(...) fake_result,
-    shift_qc_build_combined_plot = function(df, plot_idx) plotted_idx <<- plot_idx,
+    shift_qc_plot_guarded = function(df, plot_idx) plotted_idx <<- plot_idx,
     check_adapter_barcode_quality = function(...) invisible(NULL)
   )
   testthat::local_mocked_bindings(
@@ -419,6 +425,7 @@ test_that("cached QC carries full-study sample labels into single-row workers", 
           fraction = sub("^RFP_", "", name_short), length = 28), name_short = name_short)
     },
     shift_qc_build_combined_plot = function(...) invisible(NULL),
+    shift_qc_plot_guarded = function(...) invisible(TRUE),
     check_adapter_barcode_quality = function(...) invisible(NULL)
   )
   shift_qc_cached(df, BPPARAM = BiocParallel::SerialParam())
@@ -459,6 +466,7 @@ test_that("all and unique QC aggregates stay separate and preserve the other mod
            frames=data.table::data.table(frame=c(0,1),score=scores,fraction="A",length=30))
     },
     shift_qc_build_combined_plot = function(...) invisible(NULL),
+    shift_qc_plot_guarded = function(...) invisible(TRUE),
     check_adapter_barcode_quality = function(...) invisible(NULL)
   )
   shift_qc_cached(df, BPPARAM=BiocParallel::SerialParam())
@@ -473,4 +481,15 @@ test_that("all and unique QC aggregates stay separate and preserve the other mod
   expect_equal(data.table::fread(unique_path)$score, c(1,10))
   expect_true(file.exists(file.path(dirname(all_path),"good.rds")))
   expect_true(file.exists(file.path(dirname(unique_path),"warning.rds")))
+})
+
+test_that("shift_qc_plot_guarded() stops a plotting process above its memory limit and removes a stale plot", {
+  df <- fake_qc_stub(2)
+  out_dir <- tempfile("plot_guard_"); dir.create(out_dir)
+  testthat::local_mocked_bindings(shift_qc_output_dir = function(df) out_dir)
+  stale <- file.path(out_dir, c("pshifts_barplots.png", "pshifts_barplots.png.fst"))
+  file.create(stale)
+  expect_warning(res <- shift_qc_plot_guarded(df, 1:2, max_gb = 1e-6, poll = 0.2), "exceeded")
+  expect_false(res)
+  expect_false(any(file.exists(stale)))
 })
