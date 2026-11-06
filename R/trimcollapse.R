@@ -35,6 +35,7 @@ trimcollapse_run <- function(file, output.dir, adapter, trim.front = 0, trim.tai
   trim_dir <- file.path(output.dir, "trim")
   dir.create(file.path(trim_dir, "SINGLE"), showWarnings = FALSE, recursive = TRUE)
   if (is.null(json)) json <- file.path(trim_dir, paste0("report_", id, ".json"))
+  json <- path.expand(json)                     # the binary gets no shell: a "~/..." report path would not open
   out <- if (is.null(fastq_out)) file.path(trim_dir, "SINGLE", paste0("collapsed_trimmed_", id, ".fasta.gz")) else path.expand(fastq_out)
   args <- c("-i", shQuote(file), if (is.null(fastq_out)) c("-o", shQuote(out)) else c("--fastq-out", shQuote(out)),
             "-j", shQuote(json), "-a", adapter, "-f", trim.front, "-t", trim.tail, "--tail-after-adapter", tail_after_adapter,

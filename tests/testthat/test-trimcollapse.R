@@ -128,3 +128,12 @@ test_that("collapse survives a dominant sequence (shard buffer growth, Valen PRJ
   expect_equal(sum(counts), n)
   expect_equal(counts[as.character(x) == dom], n - length(rnd))
 })
+
+test_that("trimcollapse_run expands a '~' report path (the binary gets no shell)", {
+  skip_if(Sys.which("cc") == "", "no C compiler")
+  rel <- file.path("~", paste0(".mngsp_tc_tilde_", Sys.getpid())); d <- path.expand(rel); dir.create(d, showWarnings = FALSE)
+  on.exit(unlink(d, recursive = TRUE), add = TRUE)
+  f <- make_reads(file.path(d, "SRR000003.fastq.gz"), n = 500)
+  trimcollapse_run(f, d, "AGATCGGAAGAG", fastq_out = file.path(d, "tc.fq"), json = file.path(rel, "tc.json"), threads = 2)
+  expect_true(file.exists(file.path(d, "tc.json")))
+})
