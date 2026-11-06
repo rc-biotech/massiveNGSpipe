@@ -137,3 +137,13 @@ test_that("trimcollapse_run expands a '~' report path (the binary gets no shell)
   trimcollapse_run(f, d, "AGATCGGAAGAG", fastq_out = file.path(d, "tc.fq"), json = file.path(rel, "tc.json"), threads = 2)
   expect_true(file.exists(file.path(d, "tc.json")))
 })
+
+test_that("fast_collapse_fastq expands a '~' output directory (the binary writes through a shell)", {
+  skip_if(Sys.which("cc") == "", "no C compiler")
+  rel <- file.path("~", paste0(".mngsp_fc_tilde_", Sys.getpid())); d <- path.expand(rel); dir.create(d, showWarnings = FALSE)
+  on.exit(unlink(d, recursive = TRUE), add = TRUE)
+  f <- make_reads(file.path(d, "SRR000004.fastq.gz"), n = 300)
+  out <- massiveNGSpipe:::fast_collapse_fastq(f, rel, threads = 2)
+  expect_true(file.exists(out))
+  expect_false(grepl("~", out, fixed = TRUE))
+})

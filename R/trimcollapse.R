@@ -113,6 +113,7 @@ trimcollapse_binary <- function() {
 #' @return path of collapsed_<name>.fasta.gz, as ORFik names it
 #' @noRd
 fast_collapse_fastq <- function(file, outdir, threads = 8) {
+  file <- path.expand(file); outdir <- path.expand(outdir)   # the binary writes via a shell (pigz): "~/..." would not be expanded
   out <- file.path(outdir, paste0("collapsed_", gsub(ORFik:::fastq_regex_pattern(), ".fasta", basename(file)), ".gz"))
   json <- tempfile(fileext = ".json"); on.exit(unlink(json), add = TRUE)
   tmp <- paste0(out, ".tmp.fasta.gz")
