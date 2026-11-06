@@ -41,6 +41,7 @@ metadata_qc_table <- function(config = pipeline_config(),
            length(missing), " done runs missing): rerun extend_done_samples_metadata(config) first")
   }
   meta <- qc_prepare_metadata(metadata)
+  all_runs <- meta$Run
   if (!is.null(organisms)) meta <- meta[ScientificName %in% organisms]
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
   exp_dir <- ORFik::config()["exp"]
@@ -69,6 +70,8 @@ metadata_qc_table <- function(config = pipeline_config(),
   out <- merge(meta, feat, by = "Run", all.x = TRUE, sort = FALSE)
   out <- qc_order_and_round(out, out_file)
   stopifnot(nrow(out) == nrow(meta), !anyDuplicated(out$Run))
+  # an organism subset updates its rows in the existing table instead of replacing the whole file
+  if (!is.null(organisms) && !is.null(out_file)) out <- qc_merge_subset(out, out_file, organisms, all_runs)
   if (!is.null(out_file)) {
     tmp <- paste0(out_file, ".tmp"); fwrite(out, tmp); stopifnot(file.rename(tmp, out_file))
     message("- Wrote ", out_file, ": ", nrow(out), " samples, ", ncol(out), " columns")
@@ -364,6 +367,30 @@ qc_terminal_bias <- function(dir, runs) {
 
 #' Column order of the previous table, rounded numerics
 #' @noRd
+#' Merge recomputed organism rows into an existing QC table
+#'
+#' Keeps the rows of other organisms from \code{out_file} (only runs still in \code{all_runs}), replaces the rows of
+#' \code{organisms} with \code{out} and returns the table in \code{all_runs} order.
+#' @param out recomputed rows (the organisms subset)
+#' @param out_file existing table
+#' @param organisms the recomputed ScientificName values
+#' @param all_runs runs of the full done-samples metadata, in output order
+#' @return data.table
+#' @keywords internal
+qc_merge_subset <- function(out, out_file, organisms, all_runs) {
+  if (!file.exists(out_file)) return(out)
+  prev <- fread(out_file)
+  keep <- prev[!(ScientificName %in% organisms) & Run %in% all_runs & !(Run %in% out$Run)]
+  if (!nrow(keep)) return(out)
+  for (cl in intersect(names(keep), names(out))) if (!identical(class(keep[[cl]]), class(out[[cl]])))
+    set(keep, j = cl, value = methods::as(keep[[cl]], class(out[[cl]])[1]))
+  res <- rbindlist(list(out, keep), use.names = TRUE, fill = TRUE)
+  res <- res[order(match(Run, all_runs))]
+  setcolorder(res, intersect(c(names(out), names(keep)), names(res)))
+  message("- Kept ", nrow(keep), " rows of other organisms from ", out_file)
+  res
+}
+
 qc_order_and_round <- function(out, out_file) {
   if (!is.null(out_file) && file.exists(out_file)) {
     prev <- names(fread(out_file, nrows = 0))

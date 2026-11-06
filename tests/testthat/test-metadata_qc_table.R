@@ -13,3 +13,15 @@ test_that("qc_cov_metrics returns an NA row for a missing coverage file", {
   r <- qc_cov_metrics(tempfile(), list())
   expect_true(is.na(r$Total_Cov_Signal))
 })
+
+test_that("qc_merge_subset keeps other organisms' rows and replaces the subset", {
+  f <- tempfile(fileext = ".csv")
+  data.table::fwrite(data.table::data.table(Run = c("a", "b", "c", "gone"), ScientificName = c("Homo sapiens", "Mus musculus", "Homo sapiens", "Mus musculus"),
+                                            x = c(1, 2, 3, 4)), f)
+  out <- data.table::data.table(Run = c("a", "c"), ScientificName = "Homo sapiens", x = c(10, 30), y = c("p", "q"))
+  res <- qc_merge_subset(out, f, "Homo sapiens", all_runs = c("a", "b", "c"))
+  expect_equal(res$Run, c("a", "b", "c"))
+  expect_equal(res$x, c(10, 2, 30))
+  expect_true(is.na(res[Run == "b", y]))
+  expect_identical(qc_merge_subset(out, tempfile(), "Homo sapiens", c("a", "c")), out)
+})
