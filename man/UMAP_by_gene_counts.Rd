@@ -16,7 +16,8 @@ UMAP_by_gene_counts(
   min_dist = 2,
   seed = 1L,
   threads = 8,
-  force = FALSE
+  force = FALSE,
+  n_components = 2L
 )
 }
 \arguments{
@@ -39,6 +40,8 @@ UMAP_by_gene_counts(
 \item{threads}{threads for the uwot neighbour search}
 
 \item{force}{logical, recompute even if the cached embedding is valid}
+
+\item{n_components}{Embedding dimensionality; values other than 2 are saved separately, for example \code{UMAP_by_gene_counts_6d.fst}. Independent embeddings do not share interchangeable axes.}
 }
 \value{
 invisible(NULL), files are written
@@ -54,6 +57,6 @@ directly so that only \code{uwot} is needed (no scater/SingleCellExperiment, no 
 \item \code{uwot::umap} on the PCA scores
 }
 Log counts are computed in row chunks, only the top variable genes are materialised.
-The embedding is cached: when the count fingerprint (samples, genes, per-sample totals) and
-parameters are unchanged, only the metadata columns are refreshed.
+The embedding is cached: when the full count-matrix hash, sample and gene identities,
+parameters and runtime versions are unchanged, only the metadata columns are refreshed.
 }

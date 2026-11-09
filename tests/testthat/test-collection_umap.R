@@ -10,6 +10,11 @@ test_that("umap_from_counts is reproducible, thread independent and validates in
   expect_identical(a, b)
   # chunked log-normalisation/variance gives the same result as one chunk
   expect_identical(a, umap_from_counts(counts, ntop = 100, seed = 1, threads = 1, chunk_rows = 7))
+  six <- umap_from_counts(counts, ntop = 100, seed = 1, threads = 1, n_components = 6)
+  expect_identical(names(six), paste("UMAP", 1:6))
+  expect_identical(six, umap_from_counts(counts, ntop = 100, seed = 1, threads = 1, n_components = 6))
+  expect_identical(six, umap_from_counts(counts, ntop = 100, seed = 1, threads = 4, n_components = 6))
+  expect_error(umap_from_counts(counts, n_components=1), "n_components")
   counts[, 3] <- 0L
   expect_error(umap_from_counts(counts, ntop = 100), "zero counts")
 })
