@@ -1274,6 +1274,12 @@ pshift_needed_subset <- function(df, accepted_lengths, allowed_hard12_species, B
   candidates <- candidates[!vapply(candidates, is.null, logical(1))]
   shifting_table <- if (length(candidates)) candidates else NULL
 
+  # Pass marker for live progress (pshift_sample_progress(), checklist): which samples this pass shifts, from when.
+  # Outputs of an interrupted earlier pass are rewritten, so only files newer than the marker count for these samples.
+  pass_marker <- pshift_pass_marker_path(dirname(pshifted_filepath(df_subset[1, ])))
+  dir.create(dirname(pass_marker), showWarnings = FALSE, recursive = TRUE)
+  saveRDS(list(time = Sys.time(), runs = sub("\\.ofst$", "", basename(subset_paths))), pass_marker)
+
   # Mitoribosome profiling: offsets measured on mitochondrial CDSs (R/pshift_mito.R), passed as known shifts.
   mito_auto <- is_mito_sample(df_subset)
   if (any(mito_auto)) {
@@ -1321,9 +1327,16 @@ pshift_needed_subset <- function(df, accepted_lengths, allowed_hard12_species, B
       pshift_preserve_sibling_offsets(shift_path, previous, ofst_filepath(df[!needs, ]))
     pshift_record_applied_offsets(df_subset, recipe = recipe)
     save_pshifted_length_distributions(df_subset)
+    unlink(pass_marker)
   }
   res
 }
+
+#' Marker of a running P-shift pass (one per mapper branch), read by \code{pshift_sample_progress()}
+#' @param pshifted_dir the branch's pshifted folder
+#' @return character path
+#' @noRd
+pshift_pass_marker_path <- function(pshifted_dir) file.path(pshifted_dir, "pshift_pass_in_progress.rds")
 
 # Preserve metadata for unchanged P-sites without restoring stale retry offsets.
 pshift_preserve_sibling_offsets <- function(path, previous, unchanged_paths) {

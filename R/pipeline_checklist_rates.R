@@ -171,3 +171,45 @@ generic_progress_rate <- function(stage_name, active_experiment, amount) {
   key <- if (is.na(active_experiment)) stage_name else paste(stage_name, active_experiment)
   rate_since_first_seen(key, amount)
 }
+
+#' Live per-sample progress of the P-shift stage, read from its output files
+#'
+#' P-shifting hands each study to ORFik's \code{shiftFootprintsByExperiment()} (its own BiocParallel dispatch), so no
+#' per-sample marker can be set from our side. Its outputs are observable instead: a sample counts as shifted once
+#' \code{<bam>/aligned[/unique_mappers]/pshifted/<Run>_pshifted.ofst} exists and is not older than that sample's input
+#' \code{ofst/<Run>.ofst} (a stale output from an earlier shift of older input is not counted). The stage runs the
+#' all-mapper branch, then the unique-mapper branch, then validation; the phase reported is the first incomplete one
+#' (Håkon, 2026-11-10: Valen batch 2 showed "no per-sample progress tracked" for pshift).
+#' @param pipelines the pipelines list
+#' @param config the mNGSp config object (\code{all_mappers}, \code{split_unique_mappers})
+#' @param experiment character, experiment id
+#' @return list(done, total, phase) or NULL if the experiment/runs are unknown or no branch is enabled
+#' @noRd
+pshift_sample_progress <- function(pipelines, config, experiment) {
+  conf <- experiment_conf(pipelines, experiment); runs <- experiment_run_ids(pipelines)[[experiment]]
+  if (is.null(conf) || length(runs) == 0) return(NULL)
+  lib <- file.path(conf["bam"], "aligned")
+  branches <- list()
+  if (isTRUE(config$all_mappers)) branches[["all mappers"]] <- lib
+  if (isTRUE(config$split_unique_mappers)) branches[["unique mappers"]] <- file.path(lib, "unique_mappers")
+  if (length(branches) == 0) return(NULL)
+  shifted <- function(dir) {
+    out <- file.path(dir, "pshifted", paste0(runs, "_pshifted.ofst")); inp <- file.path(dir, "ofst", paste0(runs, ".ofst"))
+    ok <- file.exists(out)
+    ok[ok & file.exists(inp)] <- file.mtime(out[ok & file.exists(inp)]) >= file.mtime(inp[ok & file.exists(inp)])
+    # A running pass (marker from pshift_needed_subset()) rewrites its samples, including outputs left by an interrupted
+    # earlier pass: those count only once written after the pass started.
+    marker <- pshift_pass_marker_path(file.path(dir, "pshifted"))
+    pass <- if (file.exists(marker)) tryCatch(readRDS(marker), error = function(e) NULL) else NULL
+    if (!is.null(pass)) {
+      redo <- runs %in% pass$runs & ok
+      ok[redo] <- file.mtime(out[redo]) >= pass$time
+    }
+    sum(ok)
+  }
+  for (b in names(branches)) {
+    n <- shifted(branches[[b]])
+    if (n < length(runs)) return(list(done = as.integer(n), total = length(runs), phase = b))
+  }
+  list(done = length(runs), total = length(runs), phase = "validating")
+}

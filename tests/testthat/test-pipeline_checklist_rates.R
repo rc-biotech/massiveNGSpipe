@@ -142,3 +142,39 @@ test_that("generic_progress_rate() uses a stage+experiment key for the sample ca
   expect_equal(rate_sample, 4)  # +4 samples in 1 hour
   expect_equal(rate_study, 2)   # +2 studies in 1 hour
 })
+
+test_that("pshift_sample_progress counts fresh shifted outputs per branch and reports the phase", {
+  bam <- tempfile("fake_bam_")
+  pipelines <- fake_pipelines(bam_dir = bam, runs = data.table::data.table(
+    Run = c("SRR001", "SRR002", "SRR003"), LibraryLayout = "SINGLE", LIBRARYTYPE = "RFP", ScientificName = "Homo sapiens"))
+  exp <- "PRJNA000001-homo_sapiens"; config <- list(all_mappers = TRUE, split_unique_mappers = TRUE)
+  lib <- file.path(bam, "aligned"); uni <- file.path(lib, "unique_mappers")
+  for (d in c(lib, uni)) { dir.create(file.path(d, "ofst"), recursive = TRUE); dir.create(file.path(d, "pshifted"))
+    file.create(file.path(d, "ofst", paste0(c("SRR001", "SRR002", "SRR003"), ".ofst"))) }
+  old <- Sys.time() - 3600; new <- Sys.time() + 60
+  touch <- function(f, t) { file.create(f); Sys.setFileTime(f, t) }
+  expect_identical(pshift_sample_progress(pipelines, config, exp), list(done = 0L, total = 3L, phase = "all mappers"))
+  touch(file.path(lib, "pshifted", "SRR001_pshifted.ofst"), new)
+  touch(file.path(lib, "pshifted", "SRR002_pshifted.ofst"), old)            # stale: older than its input ofst
+  expect_identical(pshift_sample_progress(pipelines, config, exp)$done, 1L)
+  for (r in c("SRR002", "SRR003")) touch(file.path(lib, "pshifted", paste0(r, "_pshifted.ofst")), new)
+  touch(file.path(uni, "pshifted", "SRR001_pshifted.ofst"), new)
+  expect_identical(pshift_sample_progress(pipelines, config, exp), list(done = 1L, total = 3L, phase = "unique mappers"))
+  for (r in c("SRR002", "SRR003")) touch(file.path(uni, "pshifted", paste0(r, "_pshifted.ofst")), new)
+  expect_identical(pshift_sample_progress(pipelines, config, exp)$phase, "validating")
+  expect_null(pshift_sample_progress(pipelines, config, "no_such_experiment"))
+  # a restarted pass over SRR002/SRR003: their old outputs no longer count until rewritten
+  saveRDS(list(time = Sys.time() + 90, runs = c("SRR002", "SRR003")), pshift_pass_marker_path(file.path(lib, "pshifted")))
+  expect_identical(pshift_sample_progress(pipelines, config, exp), list(done = 1L, total = 3L, phase = "all mappers"))
+  touch(file.path(lib, "pshifted", "SRR002_pshifted.ofst"), Sys.time() + 120)
+  expect_identical(pshift_sample_progress(pipelines, config, exp)$done, 2L)
+})
+
+test_that("format_checklist shows pshift per-sample progress with its phase", {
+  tab <- data.table::data.table(stage = "pipe_pshift_and_validate", done = 3L, total = 5L, rate_label = NA_character_,
+                                state = "running", active_experiment = "PRJNA1-x", active_done = c(4L, 14L), active_total = 14L,
+                                active_error = NA_character_, active_phase = c("unique mappers", "validating"))
+  txt <- strsplit(format_checklist(tab), "\n")[[1]]
+  expect_match(txt[1], "active: PRJNA1-x (4/14 samples, unique mappers)", fixed = TRUE)
+  expect_match(txt[2], "active: PRJNA1-x (14/14 samples shifted, validating)", fixed = TRUE)
+})

@@ -394,6 +394,7 @@ pipeline_checklist <- function(pipelines, config, print = TRUE, run_status = NUL
     active_done <- NA_integer_
     active_total <- NA_integer_
     active_error <- NA_character_
+    active_phase <- NA_character_
     state <- if (n_done == n_total) "done" else "queued"
 
     # Marks active_experiment/state as "failed" if a crash is recorded
@@ -452,7 +453,7 @@ pipeline_checklist <- function(pipelines, config, print = TRUE, run_status = NUL
             state <- "running"
           }
         }
-      } else if (n_done > 0) {
+      } else if (n_done > 0 || stage_name == "pipe_pshift_and_validate") {
         # No per-sample marker exists for this stage at all (whole-study
         # steps that hand off to ORFik's own internal BiocParallel
         # dispatch or process a whole folder in one call: cigar_collapse,
@@ -466,6 +467,11 @@ pipeline_checklist <- function(pipelines, config, print = TRUE, run_status = NUL
           active_experiment <- candidate
           active_total <- unname(sample_totals[active_experiment])
           state <- "running"
+          if (stage_name == "pipe_pshift_and_validate") {
+            # no markers (ORFik dispatches the samples), but each shifted file is observable
+            p <- pshift_sample_progress(pipelines, config, active_experiment)
+            if (!is.null(p)) { active_done <- p$done; active_total <- p$total; active_phase <- p$phase }
+          }
         }
       }
     }
@@ -478,7 +484,7 @@ pipeline_checklist <- function(pipelines, config, print = TRUE, run_status = NUL
                            rate_label = rate_label,
                            state = state, active_experiment = active_experiment,
                            active_done = active_done, active_total = active_total,
-                           active_error = active_error)
+                           active_error = active_error, active_phase = active_phase)
   })
   tab <- data.table::rbindlist(rows)
   txt <- format_checklist(tab)
@@ -780,8 +786,13 @@ format_checklist <- function(tab) {
       sprintf(" -- waiting on upstream: %s", row$active_experiment)
     } else if (!is.na(row$active_experiment)) {
       if (!is.na(row$active_done)) {
-        sprintf(" -- active: %s (%d/%d samples%s)", row$active_experiment, row$active_done,
-                row$active_total, rate_suffix)
+        # "active_phase" %in% names(tab): same backward compatibility as rate_label above
+        phase <- if ("active_phase" %in% names(tab) && !is.na(row$active_phase)) paste0(", ", row$active_phase) else ""
+        if (identical(row$active_phase, "validating")) {
+          sprintf(" -- active: %s (%d/%d samples shifted, validating%s)", row$active_experiment, row$active_done,
+                  row$active_total, rate_suffix)
+        } else sprintf(" -- active: %s (%d/%d samples%s%s)", row$active_experiment, row$active_done,
+                row$active_total, phase, rate_suffix)
       } else {
         # Named via the same "first not-yet-done" inference used
         # everywhere else in this checklist, but no live per-sample
