@@ -32,3 +32,34 @@ test_that("umap_sample_metadata matches the curated metadata layout", {
   expect_identical(m$studies, m$BioProject)
   expect_error(umap_sample_metadata("nope", meta), "No samples")
 })
+
+test_that("UMAP axis annotation scores modules and labels axes by within-study correlation", {
+  modules <- umap_marker_modules()
+  base <- attr(modules, "baseline")
+  prolif_genes <- modules$up[[match("proliferation", modules$module)]]
+  genes <- c(base, prolif_genes, "VIM", "FN1", "CDH1", "OTHER")
+  set.seed(2)
+  n <- 40
+  prolif <- rep(c(1, 8), each = n / 2)          # proliferation varies with the axis
+  counts <- matrix(rpois(length(genes) * n, 50), length(genes), n,
+                   dimnames = list(paste0("tx", seq_along(genes)), paste0("R", seq_len(n))))
+  p <- genes %in% prolif_genes
+  counts[p, ] <- rpois(sum(p) * n, rep(prolif * 20, each = sum(p)))
+  scores <- umap_module_scores(counts, genes, modules)
+  expect_identical(scores$sample, colnames(counts))
+  expect_true("proliferation" %in% names(scores))
+  # EMT has 3 of 15 genes present: skipped at the default fraction, scored when allowed
+  expect_false("EMT" %in% names(scores))
+  expect_true("EMT" %in% names(umap_module_scores(counts, genes, modules, min_gene_fraction = 0.2)))
+  expect_false("interferon" %in% names(scores))   # no interferon genes present
+  expect_gt(mean(scores$proliferation[21:40]) - mean(scores$proliferation[1:20]), 1)
+
+  u <- data.table(sample = colnames(counts), BioProject = rep(c("P1", "P2"), n / 2),
+                  `UMAP 1` = prolif + rnorm(n, sd = 0.1), `UMAP 2` = rnorm(n))
+  assoc <- umap_axis_associations(u, scores, 2)
+  expect_identical(nrow(assoc), 2L * (ncol(scores) - 1L))
+  expect_identical(assoc[axis == 1][which.max(abs(within_study)), module], "proliferation")
+  expect_identical(umap_axis_label(c("a", "b", "c"), c(0.1, -0.6, 0.3)), "b (-), c (+)")
+  expect_identical(umap_axis_label(c("a", "b"), c(0.1, -0.15)), "b (-; weak), a (+; weak)")
+  expect_error(umap_module_scores(counts[-(1:12), ], genes[-(1:12)], modules), "housekeeping")
+})
