@@ -419,3 +419,21 @@ test_that("resolve_adapter_for_trim() still detects polyN when the adapter carri
   expect_true(result$polyN_adapter)
   file.remove(result$tempfile)
 })
+
+test_that("umi_length_from_duplication finds a random 5' UMI and ignores ragged footprint ends", {
+  set.seed(5)
+  rnd <- function(n, k) vapply(seq_len(n), function(i) paste(sample(c("A", "C", "G", "T"), k, TRUE), collapse = ""), "")
+  fp <- rnd(6000, 34)
+  copies <- sample(fp, 60000, replace = TRUE)                                       # every footprint ~10 times
+  umi <- paste0("GAT", rnd(length(copies), 5), copies, "TC")                        # GAT + 5 random + insert + TC
+  k <- massiveNGSpipe:::umi_length_from_duplication(umi, "5p")
+  expect_equal(as.integer(k), 8L)
+  expect_equal(as.integer(massiveNGSpipe:::umi_length_from_duplication(umi, "3p")), 0L)   # fixed TC: not a UMI
+  # same molecules without UMI but with ragged 5' ends (0-2 nt missing): no call
+  ragged <- substring(copies, sample(1:3, length(copies), replace = TRUE))
+  expect_equal(as.integer(massiveNGSpipe:::umi_length_from_duplication(ragged, "5p")), 0L)
+  # 3' UMI (reverse side) and too few reads
+  umi3 <- paste0(copies, rnd(length(copies), 6))
+  expect_equal(as.integer(massiveNGSpipe:::umi_length_from_duplication(umi3, "3p")), 6L)
+  expect_equal(as.integer(massiveNGSpipe:::umi_length_from_duplication(umi[1:100], "5p")), 0L)
+})

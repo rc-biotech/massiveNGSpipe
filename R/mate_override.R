@@ -100,7 +100,7 @@ mate_override_auto_path <- function(trimmed_dir) file.path(trimmed_dir, "mate_ov
 #'
 #' Read 1 is unusable when most reads start with one fixed sequence (adapter / index read-through, e.g. PRJNA1301971:
 #' 96% ACGTCTGAACTCCAGTCAC + index, then poly-G). Read 2 is then used when its reads carry an insert followed by an
-#' Illumina adapter seed. Anything else keeps read 1 (the default paired path).
+#' Illumina adapter seed. Anything else uses read 1 (both processed as single-end, see trim_from_footprint_mate()).
 #' @param file1,file2 read 1 / read 2 fastq(.gz)
 #' @param n reads sampled from the start of each file
 #' @return list(mate, reverse, r1_top_prefix, r2_top_prefix, r2_insert_adapter, reason)
@@ -118,38 +118,55 @@ paired_footprint_mate <- function(file1, file2, n = 1e5, prefix_nt = 20, junk_mi
        reason = sprintf("auto: read 1 top %d-nt prefix %.0f%% of reads, read 2 insert+adapter %.0f%%", prefix_nt, 100 * r1, 100 * i2))
 }
 
-#' Trim + collapse a paired run from read 2 (automatic footprint-mate detection)
+#' Trim + collapse a paired footprint run from its footprint mate only (automatic footprint-mate detection)
 #'
-#' Read 2 goes through the normal single-end barcode/UMI detection and trimcollapse path (via a Run-named symlink),
-#' the collapsed reads are reverse-complemented back to the RNA sense and the decision is recorded in
-#' \code{mate_override_auto.csv} (used like the manual table by alignment and experiment creation).
+#' Paired-end footprint libraries (Ribo-seq, disome, SSU) carry the whole footprint in one mate: both mates cover the same
+#' ~30 nt fragment, and the other mate adds only adapter / UMI sequence (or, when read 1 has no insert, nothing). Aligning
+#' both mates as a pair made STAR reject most reads as "too short" (2026-11-10: median 38\% of reads, up to 99.9\%, over
+#' 52 paired Valen batch 1 studies). So exactly one mate is used, as single-end: the chosen mate goes through the normal
+#' single-end barcode/UMI detection and trimcollapse path (via a Run-named symlink); read 2 is reverse-complemented back
+#' to the RNA sense. The decision is recorded in \code{mate_override_auto.csv}, which alignment and experiment creation
+#' use like the manual table (the run is single-end from here on; metadata is not changed).
+#' @param study_sample one-row run table
+#' @param file the chosen mate's read file
+#' @param decision list from \code{paired_footprint_mate()} (mate, reverse, reason)
 #' @noRd
-trim_from_read2_auto <- function(study_sample, file2, target_dir, trimmed_dir, mode, decision) {
-  run <- study_sample$Run
-  tmp <- file.path(trimmed_dir, ".mate2_input", run); dir.create(tmp, recursive = TRUE, showWarnings = FALSE)
+trim_from_footprint_mate <- function(study_sample, file, target_dir, trimmed_dir, mode, decision) {
+  run <- study_sample$Run; mate <- as.integer(decision$mate); reverse <- isTRUE(decision$reverse)
+  tmp <- file.path(trimmed_dir, ".mate_input", run); dir.create(tmp, recursive = TRUE, showWarnings = FALSE)
   on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
-  link <- file.path(tmp, paste0(run, if (grepl("\\.gz$", file2)) ".fastq.gz" else ".fastq"))
-  if (!file.symlink(normalizePath(file2), link)) stop("mate override: cannot link read 2 for ", run)
+  link <- file.path(tmp, paste0(run, if (grepl("\\.gz$", file)) ".fastq.gz" else ".fastq"))
+  if (!file.symlink(normalizePath(file), link)) stop("footprint mate: cannot link read ", mate, " for ", run)
   ss <- copy(study_sample)[, LibraryLayout := "SINGLE"]
   fast_trim_state$collapsed <- NULL
   barcode_dt <- run_barcode_detection_and_trim(ss, tmp, target_dir, trimmed_dir, mode, link, NULL)
   final <- fast_trim_state$collapsed
-  if (is.null(final) || !file.exists(final))
-    stop("mate override (auto) for ", run, ": read 2 did not go through the fast trim path (adapter '", barcode_dt$adapter,
+  fast_path <- !is.null(final) && file.exists(final)
+  if (!fast_path && reverse)
+    stop("footprint mate (auto) for ", run, ": read 2 did not go through the fast trim path (adapter '", barcode_dt$adapter,
          "'); add a manual row to ", mate_override_path(trimmed_dir))
-  seqs <- Biostrings::readDNAStringSet(final)
-  tmpf <- file.path(dirname(final), paste0(".", basename(final), ".mate_tmp", Sys.getpid(), ".gz"))
-  Biostrings::writeXStringSet(Biostrings::reverseComplement(seqs), tmpf, compress = TRUE)
-  if (!file.rename(tmpf, final)) { unlink(tmpf); stop("mate override: cannot replace ", final) }
-  row <- data.table(Run = run, mate = 2L, reverse = TRUE, adapter = barcode_dt$adapter,
+  n <- NA_integer_
+  if (fast_path && reverse) {
+    seqs <- Biostrings::readDNAStringSet(final); n <- length(seqs)
+    tmpf <- file.path(dirname(final), paste0(".", basename(final), ".mate_tmp", Sys.getpid(), ".gz"))
+    Biostrings::writeXStringSet(Biostrings::reverseComplement(seqs), tmpf, compress = TRUE)
+    if (!file.rename(tmpf, final)) { unlink(tmpf); stop("footprint mate: cannot replace ", final) }
+  }
+  row <- data.table(Run = run, mate = mate, reverse = reverse, adapter = barcode_dt$adapter,
                     trim_front = barcode_dt$barcode5p_size, trim_tail = barcode_dt$barcode3p_size, source = decision$reason)
   f <- mate_override_auto_path(trimmed_dir)
   old <- if (file.exists(f)) fread(f, colClasses = "character")[Run != run] else NULL
   fwrite(rbind(old, row[, lapply(.SD, as.character)], fill = TRUE), f)
-  write_json_atomic(c(decision, list(Run = run, output = basename(final), output_md5 = file_md5(final), n_seqs = length(seqs),
+  write_json_atomic(c(decision, list(Run = run, output = if (fast_path) basename(final) else NA_character_,
+                                     output_md5 = if (fast_path) file_md5(final) else NA_character_, n_seqs = n,
                                      time = format(Sys.time(), tz = "UTC", usetz = TRUE))),
                     file.path(trimmed_dir, ".mate_override", paste0(run, ".json")))
-  fast_trim_state$collapsed <- final
-  barcode_dt[, `:=`(mate_override = 2L, reverse = TRUE)]
+  # Without the fast path the trimmed mate is collapsed by the collapse stage as a single-end run (layout override)
+  fast_trim_state$collapsed <- if (fast_path) final else NULL
+  barcode_dt[, `:=`(mate_override = mate, reverse = reverse)]
   barcode_dt
 }
+
+#' Library types whose paired-end runs are footprints (one mate is used, see trim_from_footprint_mate())
+#' @noRd
+footprint_library_types <- function() c("RFP", "disome", "SSU")

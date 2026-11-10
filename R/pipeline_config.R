@@ -91,9 +91,10 @@
 #' (known adapters, the upstream-most junction, poly(A)-tailing protocols, de novo 12-mer; 3-7x faster than FastQC and
 #' correct on linker designs where FastQC picks the downstream adapter). "fastqc" = the previous FastQC-based detection
 #' (falls back to the scan if FastQC fails). adapters_manual.csv rows always win.
-#' @param auto_footprint_mate logical, default TRUE. For paired-end Ribo-seq, detect runs whose read 1 has no insert
-#' (one fixed prefix in most reads) and trim + collapse read 2 instead, reverse-complemented (R/mate_override.R).
-#' Runs with a usable read 1 are unchanged.
+#' @param auto_footprint_mate logical, default TRUE. Paired-end footprint libraries (RFP, disome, SSU) are processed from
+#' one mate only, as single-end: read 1, or read 2 (reverse-complemented) when read 1 has no insert (one fixed prefix in
+#' most reads). Both mates cover the same footprint, so aligning them as a pair only lost reads (R/mate_override.R).
+#' FALSE restores the previous paired processing.
 #' @param skip_failed_sessions integer vector, default 0 (off). Studies with an error record in these previous
 #' sessions are left out of \code{run_pipeline()}: 1 = the last session, 2 = the second last, c(1, 2) = both (session
 #' index as in \code{\link{pipeline_errors}}, newest first), or a start time ("2026-10-25" / POSIXct) = every session

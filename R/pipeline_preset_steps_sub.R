@@ -136,16 +136,19 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
                   set_sample_flag(config, "collapsed", experiment, run)
                   return(barcode_dt)
                 }
-                # Paired Ribo-seq whose read 1 has no insert: use read 2 (automatic, recorded in mate_override_auto.csv)
-                if (!single_end && runs[i]$LIBRARYTYPE == "RFP" && !isFALSE(config$auto_footprint_mate)) {
+                # Paired footprint libraries: only the mate with the insert is trimmed, collapsed and aligned, as
+                # single-end (read 1, or read 2 when read 1 has no insert); recorded in mate_override_auto.csv
+                if (!single_end && runs[i]$LIBRARYTYPE %in% footprint_library_types() && !isFALSE(config$auto_footprint_mate)) {
                   decision <- paired_footprint_mate(file, file2)
                   message(run, ": footprint mate ", decision$mate, " (", decision$reason, ")")
-                  if (decision$mate == 2L) {
-                    barcode_dt <- trim_from_read2_auto(study_sample, file2, target_dir, trimmed_dir, mode, decision)
-                    set_sample_flag(config, "trim", experiment, run, value = barcode_dt)
+                  barcode_dt <- trim_from_footprint_mate(study_sample, if (decision$mate == 2L) file2 else file,
+                                                         target_dir, trimmed_dir, mode, decision)
+                  set_sample_flag(config, "trim", experiment, run, value = barcode_dt)
+                  if (!is.null(fast_trim_state$collapsed)) {
+                    if (decision$mate == 1L) orient_collapsed_fasta(fast_trim_state$collapsed, run, trimmed_dir)
                     set_sample_flag(config, "collapsed", experiment, run)
-                    return(barcode_dt)
                   }
+                  return(barcode_dt)
                 }
                 check_for_barcodes <- runs[i]$LIBRARYTYPE == "RFP"
                 # RNA inputs built with small-RNA kits may require explicit

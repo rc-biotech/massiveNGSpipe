@@ -495,6 +495,16 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
                                                 z_score_normalize = TRUE)
     }
 
+    # Random UMIs are invisible to the curves above (random UMI bases next to a random-looking insert); read
+    # duplication finds them (umi_length_from_duplication()). The larger call per side wins.
+    reads_dup <- tryCatch(as.character(readDNAStringSet(file_trim, format = "fastq", nrec = 3e5, use.names = FALSE)),
+                          error = function(e) character())
+    umi5 <- umi_length_from_duplication(reads_dup, "5p", max_k = max_barcode_left_size)
+    umi3 <- umi_length_from_duplication(reads_dup, "3p", max_k = max_barcode_right_size)
+    if (umi5 > barcode5p_size || umi3 > barcode3p_size)
+      message("-- UMI from read duplication: 5' ", umi5, " nt (curves ", barcode5p_size, "), 3' ", umi3, " nt (curves ", barcode3p_size, ")")
+    barcode5p_size <- max(barcode5p_size, umi5); barcode3p_size <- max(barcode3p_size, umi3)
+
     barcode_sizes <- constrain_barcode_sizes(barcode5p_size, barcode3p_size,
                                              max_size_after, minimum_size)
     barcode5p_size <- barcode_sizes["barcode5p_size"]
@@ -626,6 +636,41 @@ barcode_change_point_3p <- function(curves_3p, max_barcode_right_size,
   pos <- as.numeric(names(tab))
   cut_right <- as.numeric(names(which.max(rev(tab[pos <= max_barcode_right_size]))))
   max(0, cut_right, na.rm = TRUE)
+}
+
+#' Length of a random UMI at one read end, from read duplication
+#'
+#' Base-content and quality curves find fixed barcodes, but not random UMIs: N random bases followed by an insert look
+#' the same position by position (real data, 2026-11-10: PRJNA1301971 read 2 = GAT + 5 nt UMI + footprint; quality 39
+#' at every position, top-base share 33-38\% in the UMI vs 27-32\% in the insert). Duplication sees them: copies of one
+#' footprint carry different UMIs, so trimming one more UMI base makes more reads identical, increasingly so towards the
+#' UMI end, and once the UMI is gone trimming further merges almost nothing (PRJNA1301971: 0.2, 0.5, 1.1, 2.2, 4.3\%
+#' then 0.1\%). Footprint ends without a UMI give a different shape: ragged 5' ends merge most at the first base and
+#' less after it (PRJNA638018: 22, 23, 9, 1\%), never a rise followed by a collapse.
+#' The UMI end is the position k where the merge fraction has risen (non-decreasing from k - 1) to at least
+#' \code{min_drop} and falls below \code{collapse_ratio} of it at k + 1.
+#' @param seqs character, adapter-trimmed reads (inserts with their flanks)
+#' @param side "5p" (trim from the read start) or "3p" (from the read end)
+#' @param max_k largest UMI length tested
+#' @param min_rest reads must keep at least this many nucleotides after trimming max_k
+#' @param min_drop,collapse_ratio decision thresholds, see above
+#' @param min_reads fewer usable reads: no call (0)
+#' @return integer, nucleotides to trim (0 when no UMI signal); attribute "merge" holds the merge fractions
+#' @noRd
+umi_length_from_duplication <- function(seqs, side = c("5p", "3p"), max_k = 15L, min_rest = 18L,
+                                        min_drop = 0.01, collapse_ratio = 0.1, min_reads = 20000L) {
+  side <- match.arg(side)
+  seqs <- seqs[nchar(seqs) >= max_k + min_rest]
+  if (length(seqs) < min_reads) return(structure(0L, merge = numeric()))
+  if (side == "3p") seqs <- as.character(Biostrings::reverse(Biostrings::BStringSet(seqs)))
+  u <- vapply(0:max_k, function(k) length(unique(substring(seqs, k + 1L))), numeric(1))
+  merge <- (u[-length(u)] - u[-1]) / u[-length(u)]                 # merge[k]: fraction merged by trimming base k
+  k <- 0L
+  for (i in seq_len(length(merge) - 1L)) {
+    rising <- i == 1L || merge[i] >= merge[i - 1L]
+    if (rising && merge[i] >= min_drop && merge[i + 1L] < collapse_ratio * merge[i]) k <- i
+  }
+  structure(as.integer(k), merge = round(merge, 4))
 }
 
 #' Tail-anchored quality/content curves for 3' barcode detection

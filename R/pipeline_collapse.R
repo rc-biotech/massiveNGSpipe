@@ -66,6 +66,7 @@ pipeline_collapse <- function(pipeline, config, pipelines = list(pipeline)) {
     if (!step_is_next_not_done(config, "collapsed", conf["exp"])) next
     experiment <- conf["exp"]
     trimmed_dir <- fs::path(conf["bam"], "trim")
+    study <- apply_mate_override_layout(study, trimmed_dir)   # footprint-mate runs are single-end (R/mate_override.R)
     runs_paired <- study[ScientificName == organism &
                            LibraryLayout == "PAIRED"]
     runs_single <- study[ScientificName == organism &
