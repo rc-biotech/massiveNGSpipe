@@ -234,6 +234,8 @@ pipe_counts <- function(pipelines, config) {
 #' @param path_suffix character, default "". Add suffix to saved collection name, like a date to seperate version.
 #' @param extend_metadata logical, default TRUE. Also update metadata_done_samples_extended.csv.
 #' @param force_metadata logical, default FALSE. Passed as \code{force} to update_done_samples_metadata.
+#' @param done_samples_experiments named character (organism names) of experiments for metadata_done_samples.csv, default
+#' NULL = every pcounts-flagged experiment of the project (previous behaviour).
 #' @return invisible(NULL)
 #' @export
 #' @examples
@@ -245,7 +247,8 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
                                     path_suffix = "", BPPARAM = MulticoreParam(workers = bpparam()$workers,
                                                                                exportglobals = FALSE, progressbar = TRUE,
                                                                                log = FALSE, force.GC = FALSE, fallback = T),
-                                    extend_metadata = TRUE, max_removed = 0, force_metadata = FALSE) {
+                                    extend_metadata = TRUE, max_removed = 0, force_metadata = FALSE,
+                                    done_samples_experiments = NULL) {
   message("- Collection of all samples of all organism")
   done_organisms <- unique(done_organisms)
   stopifnot(length(names(done_experiments)) > 0)
@@ -288,7 +291,9 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
 
   # Metadata of ALL done samples of the project (independent of the subset merged here), then the
   # cell line extended version used by RiboCrypt (sheet read only).
-  all_done <- step_is_done_pipelines(config, "pcounts", pipelines)
+  # done_samples_experiments restricts it, e.g. to the studies of a release when pcounts-flagged studies are held back
+  # from the collections (Release 4, 2026-11-10: 48 studies held back after QC).
+  all_done <- if (is.null(done_samples_experiments)) step_is_done_pipelines(config, "pcounts", pipelines) else done_samples_experiments
   dt_complete <- update_done_samples_metadata(config, pipelines, done_experiments = all_done,
                                               max_removed = max_removed, force = force_metadata)
   if (extend_metadata) {

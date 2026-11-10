@@ -18,7 +18,8 @@ pipeline_collection_master(
     progressbar = TRUE, log = FALSE, force.GC = FALSE, fallback = T),
   extend_metadata = TRUE,
   max_removed = 0,
-  force_metadata = FALSE
+  force_metadata = FALSE,
+  done_samples_experiments = NULL
 )
 }
 \arguments{
@@ -44,6 +45,9 @@ unique(names(done_experiments))}
 disappear without \code{force}.}
 
 \item{force_metadata}{logical, default FALSE. Passed as \code{force} to update_done_samples_metadata.}
+
+\item{done_samples_experiments}{named character (organism names) of experiments for metadata_done_samples.csv, default
+NULL = every pcounts-flagged experiment of the project (previous behaviour).}
 }
 \value{
 invisible(NULL)
