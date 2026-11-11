@@ -28,3 +28,20 @@ test_that("annotation_validate_cds and annotation_write_gtf round-trip a two-exo
   expect_equal(max(end(x[x$type == "CDS"])), 112L)                # CDS excludes the stop codon
   expect_equal(start(x[x$type == "stop_codon"]), 113L)
 })
+
+test_that("assembly_fragmentation_flag writes poor_assembly.rds above the sequence threshold and removes it below", {
+  d <- tempfile(); dir.create(d); fa <- file.path(d, "genome.fa")
+  seqs <- Biostrings::DNAStringSet(c(chr1 = strrep("ACGT", 500), chr2 = strrep("ACGT", 250), s1 = "ACGTACGT", s2 = "ACGTAC"))
+  Biostrings::writeXStringSet(seqs, fa)
+  expect_warning(x <- assembly_fragmentation_flag(fa, max_seqlevels = 3), "Poor assembly")
+  expect_true(x$flagged); expect_equal(x$sequences, 4L); expect_equal(x$n50, 2000)
+  expect_true(file.exists(file.path(d, "poor_assembly.rds")))
+  expect_equal(readRDS(file.path(d, "poor_assembly.rds"))$sequences, 4L)
+  y <- assembly_fragmentation_flag(fa, max_seqlevels = 10)
+  expect_false(y$flagged); expect_false(file.exists(file.path(d, "poor_assembly.rds")))
+})
+
+test_that("goat is pinned to the T2T assembly from GenBank", {
+  expect_equal(reference_assembly("Capra hircus"), "GCA_041735815.1")
+  expect_equal(reference_db("Capra hircus"), "genbank")
+})

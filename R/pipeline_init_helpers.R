@@ -111,6 +111,7 @@ get_annotation_and_index <- function(organism,
 
   index <- NULL
   if (!is.null(annotation)) {
+    assembly_fragmentation_flag(annotation["genome"])
     get_file_size_gb <- function(file_path) {
       file_size_bytes <- file.info(file_path)$size
       file_size_gb <- file_size_bytes / (1024^3)  # Convert bytes to GB
@@ -123,6 +124,37 @@ get_annotation_and_index <- function(organism,
                                max.ram = max_ram)
   }
   return(list(annotation = annotation, index = index))
+}
+
+#' Flag highly fragmented genome assemblies
+#'
+#' Assemblies with thousands of sequences (unplaced scaffolds, contig-level builds) make every per-chromosome step slow:
+#' bigWig and covRle of merged tracks, count tables, megafst pages (one per chromosome). When the genome has more than
+#' \code{max_seqlevels} sequences, \code{poor_assembly.rds} is written next to it (sequence count, N50, share of the
+#' genome in the 100 largest sequences) and a warning is given, so a better assembly can be pinned in
+#' \code{reference_assembly()}. Below the threshold an existing flag is removed.
+#' @param genome path to the genome fasta (a .fai index is created if missing)
+#' @param max_seqlevels integer, default \code{getOption("mngsp.poor_assembly_seqlevels", 3000)}
+#' @return invisible list with the statistics, flagged = TRUE/FALSE
+#' @export
+assembly_fragmentation_flag <- function(genome, max_seqlevels = getOption("mngsp.poor_assembly_seqlevels", 3000)) {
+  fai <- paste0(genome, ".fai")
+  if (!file.exists(fai)) Rsamtools::indexFa(genome)
+  len <- sort(as.numeric(data.table::fread(fai, header = FALSE, select = 2)[[1]]), decreasing = TRUE)
+  stats <- list(genome = genome, sequences = length(len), genome_bp = sum(len),
+                n50 = len[which(cumsum(len) >= sum(len) / 2)[1]],
+                top100_share = sum(utils::head(len, 100)) / sum(len),
+                max_seqlevels = max_seqlevels, checked = format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
+  stats$flagged <- stats$sequences > max_seqlevels
+  flag <- file.path(dirname(genome), "poor_assembly.rds")
+  if (stats$flagged) {
+    saveRDS(stats, flag)
+    warning("Poor assembly: ", basename(genome), " has ", stats$sequences, " sequences (> ", max_seqlevels,
+            "), N50 ", round(stats$n50 / 1e6, 1), " Mb, ", round(100 * stats$top100_share, 1),
+            "% in the 100 largest. Per-chromosome steps (bigWig, megafst) will be slow; consider pinning a ",
+            "chromosome-level assembly in reference_assembly(). Flag: ", flag, call. = FALSE)
+  } else if (file.exists(flag)) file.remove(flag)
+  invisible(stats)
 }
 
 #' Get all required annotation for an organism
@@ -483,7 +515,9 @@ reference_assembly <- function(organism) {
                "Sinorhizobium meliloti" = "GCF_000006965.1",         # 1021
                "Methanosarcina mazei" = "GCF_000007065.1",           # Go1
                "Lactococcus lactis" = "GCF_000009425.1",             # MG1363 (now L. cremoris), host of phage sk1 (PRJNA970321)
-               "Moneuplotes crassus" = "GCA_946863485.1")            # DP1, GenBank only
+               "Moneuplotes crassus" = "GCA_946863485.1",            # DP1, GenBank only
+               # 2026-11-11: Ensembl ARS1 toplevel has 29,907 sequences (unplaced scaffolds); T2T assembly instead
+               "Capra hircus" = "GCA_041735815.1")                   # T2T-goat2.0 (VGL), 31 sequences, GenBank annotation
   out <- unname(curated[organism]); out[is.na(out)] <- organism[is.na(out)]
   out
 }
