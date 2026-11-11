@@ -524,7 +524,10 @@ reference_assembly <- function(organism) {
                "Lactococcus lactis" = "GCF_000009425.1",             # MG1363 (now L. cremoris), host of phage sk1 (PRJNA970321)
                "Moneuplotes crassus" = "GCA_946863485.1",            # DP1, GenBank only
                # 2026-11-11: Ensembl ARS1 toplevel has 29,907 sequences (unplaced scaffolds); T2T assembly instead
-               "Capra hircus" = "GCA_041735815.1")                   # T2T-goat2.0 (VGL), 31 sequences, GenBank annotation
+               "Capra hircus" = "GCA_041735815.1",                   # T2T-goat2.0 (VGL), 31 sequences, GenBank annotation
+               # Release 4 batch 3 new species 2026-11-11: study strains
+               "Halobacterium salinarum" = "GCF_000006805.1",        # NRC-1 (PRJNA413990)
+               "Pseudomonas fluorescens" = "GCF_931907645.1")        # SBW25 (PRJEB19014)
   out <- unname(curated[organism]); out[is.na(out)] <- organism[is.na(out)]
   out
 }

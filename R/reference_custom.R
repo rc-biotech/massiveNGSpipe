@@ -13,7 +13,8 @@
 #' @param organism scientific name, e.g. "Capra hircus"
 #' @param genome path or URL of the genome fasta (.fa/.fna/.fasta, optionally .gz); NULL when \code{accession} is given
 #' @param annotation path or URL of the GTF/GFF3 (optionally .gz); NULL when \code{accession} is given
-#' @param accession NCBI assembly accession (e.g. "GCA_041735815.1"), used when genome/annotation are NULL
+#' @param accession NCBI assembly accession (e.g. "GCA_041735815.1"), used when genome/annotation are NULL. Default: the
+#' assembly pinned for the organism in \code{reference_assembly()} (study strain), when there is one
 #' @param ref_dir reference directory, default \code{ORFik::config()["ref"]}
 #' @param star_index logical, default TRUE: build the STAR index
 #' @param overwrite logical, default FALSE: stop if the folder already holds a complete reference (outputs.rds)
@@ -22,9 +23,10 @@
 #' @examples
 #' # add_custom_genome("Capra hircus", accession = "GCA_041735815.1")
 #' # add_custom_genome("Mus musculus", genome = "~/my_mm39.fa", annotation = "~/my_annotation.gtf")
-add_custom_genome <- function(organism, genome = NULL, annotation = NULL, accession = NULL,
+add_custom_genome <- function(organism, genome = NULL, annotation = NULL, accession = pinned_accession(organism),
                               ref_dir = ORFik::config()["ref"], star_index = TRUE, overwrite = FALSE) {
   if (is.null(genome) != is.null(annotation)) stop("Give both genome and annotation, or an accession")
+  if (!is.null(genome) && missing(accession)) accession <- NULL   # own files: the pinned accession does not describe them
   if (is.null(genome)) {
     if (is.null(accession)) stop("Give genome + annotation, or an NCBI accession")
     urls <- ncbi_assembly_urls(accession)
@@ -51,6 +53,13 @@ add_custom_genome <- function(organism, genome = NULL, annotation = NULL, access
   if (star_index)
     ORFik::STAR.index(ann, notify_load_existing = FALSE, max.ram = file.size(ann["genome"]) / 1024^3 * 20)
   invisible(ann)
+}
+
+#' Assembly accession pinned for an organism in reference_assembly(), else NULL
+#' @noRd
+pinned_accession <- function(organism) {
+  a <- reference_assembly(organism)
+  if (grepl("^GC[AF]_[0-9]{9}\\.[0-9]+$", a)) a else NULL
 }
 
 #' NCBI FTP URLs of an assembly's genome fasta and annotation

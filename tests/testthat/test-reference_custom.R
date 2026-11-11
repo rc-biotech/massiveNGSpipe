@@ -27,3 +27,11 @@ test_that("ncbi_assembly_urls validates the accession and resolves the T2T goat 
   expect_match(u[["genome"]], "GCA/041/735/815/GCA_041735815.1_T2T-goat2.0/GCA_041735815.1_T2T-goat2.0_genomic.fna.gz$")
   expect_match(u[["annotation"]], "_genomic.gtf.gz$")
 })
+
+test_that("add_custom_genome defaults to the assembly pinned for the organism", {
+  expect_identical(massiveNGSpipe:::pinned_accession("Capra hircus"), "GCA_041735815.1")
+  expect_identical(massiveNGSpipe:::pinned_accession("Halobacterium salinarum"), "GCF_000006805.1")
+  expect_null(massiveNGSpipe:::pinned_accession("Homo sapiens"))
+  expect_identical(eval(formals(add_custom_genome)$accession, list(organism = "Klebsiella michiganensis"),
+                        asNamespace("massiveNGSpipe")), "GCF_002090195.1")
+})

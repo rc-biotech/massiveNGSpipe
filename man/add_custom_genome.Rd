@@ -8,7 +8,7 @@ add_custom_genome(
   organism,
   genome = NULL,
   annotation = NULL,
-  accession = NULL,
+  accession = pinned_accession(organism),
   ref_dir = ORFik::config()["ref"],
   star_index = TRUE,
   overwrite = FALSE
@@ -21,7 +21,8 @@ add_custom_genome(
 
 \item{annotation}{path or URL of the GTF/GFF3 (optionally .gz); NULL when \code{accession} is given}
 
-\item{accession}{NCBI assembly accession (e.g. "GCA_041735815.1"), used when genome/annotation are NULL}
+\item{accession}{NCBI assembly accession (e.g. "GCA_041735815.1"), used when genome/annotation are NULL. Default: the
+assembly pinned for the organism in \code{reference_assembly()} (study strain), when there is one}
 
 \item{ref_dir}{reference directory, default \code{ORFik::config()["ref"]}}
 
