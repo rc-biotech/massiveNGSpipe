@@ -108,6 +108,13 @@ get_annotation_and_index <- function(organism,
                                  db = db)
     if (!is.null(annotation)) break
   }
+  # A pinned NCBI accession that biomartr cannot find (e.g. new GenBank-only assemblies): fetch it from the NCBI FTP site
+  acc <- reference_assembly(organism)
+  if (is.null(annotation) && grepl("^GC[AF]_[0-9]{9}\\.[0-9]+$", acc)) {
+    message("--- ", acc, " not found through biomartr; fetching it from the NCBI FTP site (add_custom_genome)")
+    annotation <- tryCatch(add_custom_genome(organism, accession = acc, ref_dir = dirname(dir), star_index = FALSE),
+                           error = function(e) { warning("add_custom_genome failed for ", organism, ": ", conditionMessage(e)); NULL })
+  }
 
   index <- NULL
   if (!is.null(annotation)) {
