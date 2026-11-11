@@ -99,8 +99,10 @@ mate_override_auto_path <- function(trimmed_dir) file.path(trimmed_dir, "mate_ov
 #' Which mate of a paired-end Ribo-seq run holds the footprint (first reads only, fast)
 #'
 #' Read 1 is unusable when most reads start with one fixed sequence (adapter / index read-through, e.g. PRJNA1301971:
-#' 96% ACGTCTGAACTCCAGTCAC + index, then poly-G). Read 2 is then used when its reads carry an insert followed by an
-#' Illumina adapter seed. Anything else uses read 1 (both processed as single-end, see trim_from_footprint_mate()).
+#' 96% ACGTCTGAACTCCAGTCAC + index, then poly-G) or are N-masked at the start (e.g. PRJNA563539: 35-nt read 1 with 16
+#' leading N). Read 2 is then used when its reads carry an insert followed by an Illumina adapter seed (TruSeq, or the
+#' small RNA 5' adapter RA5 that read 2 of small RNA kits reads into). Anything else uses read 1 (both processed as
+#' single-end, see trim_from_footprint_mate()).
 #' @param file1,file2 read 1 / read 2 fastq(.gz)
 #' @param n reads sampled from the start of each file
 #' @return list(mate, reverse, r1_top_prefix, r2_top_prefix, r2_insert_adapter, reason)
@@ -109,13 +111,16 @@ paired_footprint_mate <- function(file1, file2, n = 1e5, prefix_nt = 20, junk_mi
   seqs <- function(f) { con <- if (grepl("\\.gz$", f)) gzfile(f, "r") else file(f, "r"); on.exit(close(con))
     l <- readLines(con, n = 4 * n); l[seq(2, length(l), by = 4)] }
   top_prefix <- function(s) { p <- substr(s[nchar(s) >= prefix_nt], 1, prefix_nt); if (!length(p)) return(0); max(table(p)) / length(p) }
-  insert_adapter <- function(s) { pos <- regexpr("AGATCGGAAGAGC", s, fixed = TRUE); mean(pos >= 18) }
+  n_masked <- function(s) { p <- substr(s[nchar(s) >= prefix_nt], 1, prefix_nt); if (!length(p)) return(0)
+    mean(nchar(gsub("[^N]", "", p)) >= prefix_nt / 2) }
+  insert_adapter <- function(s) { pos <- pmax(regexpr("AGATCGGAAGAGC", s, fixed = TRUE), regexpr("GATCGTCGGACTG", s, fixed = TRUE))
+    mean(pos >= 18) }
   s1 <- seqs(file1); s2 <- seqs(file2)
-  r1 <- top_prefix(s1); r2 <- top_prefix(s2); i2 <- insert_adapter(s2)
+  r1 <- max(top_prefix(s1), n_masked(s1)); r2 <- top_prefix(s2); i2 <- insert_adapter(s2)
   use2 <- r1 >= junk_min && r2 < 0.2 && i2 >= insert_min
   list(mate = if (use2) 2L else 1L, reverse = use2, r1_top_prefix = round(r1, 3), r2_top_prefix = round(r2, 3),
        r2_insert_adapter = round(i2, 3),
-       reason = sprintf("auto: read 1 top %d-nt prefix %.0f%% of reads, read 2 insert+adapter %.0f%%", prefix_nt, 100 * r1, 100 * i2))
+       reason = sprintf("auto: read 1 top %d-nt prefix or N-masked %.0f%% of reads, read 2 insert+adapter %.0f%%", prefix_nt, 100 * r1, 100 * i2))
 }
 
 #' Trim + collapse a paired footprint run from its footprint mate only (automatic footprint-mate detection)

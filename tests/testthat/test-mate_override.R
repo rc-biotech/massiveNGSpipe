@@ -53,6 +53,14 @@ test_that("paired_footprint_mate picks read 2 only when read 1 has no insert", {
   wfq(rep(junk_r1, n), file.path(dir, "bad_2.fastq"))
   d3 <- massiveNGSpipe:::paired_footprint_mate(file.path(dir, "junk_1.fastq"), file.path(dir, "bad_2.fastq"))
   expect_equal(d3$mate, 1L)                                                     # read 2 without inserts: no switch
+  # small RNA kit, read 1 N-masked at the start (PRJNA563539): read 2 = insert + RA5 adapter
+  wfq(paste0(strrep("N", 16), rnd(n, 19)), file.path(dir, "nmask_1.fastq"))
+  wfq(paste0(rnd(n, 31), "GATCGTCGGACTGTAGAACTCTGAACGTGTAG"), file.path(dir, "ra5_2.fastq"))
+  d4 <- massiveNGSpipe:::paired_footprint_mate(file.path(dir, "nmask_1.fastq"), file.path(dir, "ra5_2.fastq"))
+  expect_equal(d4$mate, 2L); expect_true(d4$reverse)
+  wfq(paste0(rnd(n, 30), "TGGAATTCTCGGGTGCCAAGG"), file.path(dir, "small_1.fastq"))
+  d5 <- massiveNGSpipe:::paired_footprint_mate(file.path(dir, "small_1.fastq"), file.path(dir, "ra5_2.fastq"))
+  expect_equal(d5$mate, 1L)                                                     # usable small RNA read 1: unchanged
 })
 
 test_that("paired footprint runs are trimmed and collapsed from one mate only, as single-end (read 1 or read 2)", {
