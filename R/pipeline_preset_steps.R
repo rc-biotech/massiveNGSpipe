@@ -489,6 +489,9 @@ safe_se_cbind <- function(count_lists) {
 #'  A successful organism merge also writes merge_input_files.csv with the actual
 #'  input paths, mapper mode, size and UTC modification time. A study-level pool
 #'  appears as one input file and does not by itself enumerate its constituent runs.
+#' @param parallel_mappers logical, default TRUE. Merge and convert the all- and unique-mapper tracks in parallel
+#'  (forked processes; about twice the peak memory of one branch) and run bigWig, both strands and the count-table
+#'  regions concurrently. FALSE gives the sequential order; the output files are identical.
 #' @return invisible(NULL)
 #' @export
 #' @examples
@@ -503,7 +506,7 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
                                libtype_to_merge = libtype_long_to_short(config$preset),
                                suffix = "",
                                out_dir_base = config$config["bam"],
-                               exclude_inhibitors = NULL) {
+                               exclude_inhibitors = NULL, parallel_mappers = TRUE) {
   message("- Merge all samples per organism")
   done_organisms <- unique(done_organisms)
   stopifnot(length(names(done_experiments)) > 0)
@@ -538,43 +541,39 @@ pipeline_merge_org <- function(config, pipelines = pipeline_init_all(config, onl
       dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
       fwrite(sel$manifest, file.path(out_dir, "merge_manifest.csv"))
     }
-    if (config$all_mappers) {
-      message("--- Merging all mappers..")
-      if (is.null(sel)) {
-        paths <- filepath(df, "default", base_folders = libFolder(df, mode = "all"))
-        input_inventory[["all"]] <- merge_input_file_inventory(paths, "all")
-        ORFik::mergeLibs(df, out_dir, "all", "default", FALSE, paths = paths, filter_chunk_rows = 5e8)
-        make_additional_formats(df[1,], exp_name, out_dir)
-      } else {
-        input_inventory[["all"]] <- merge_input_file_inventory(sel$paths_all, "all")
-        ORFik::mergeLibs(sel$df, out_dir, "all", "default", FALSE, paths = sel$paths_all,
-                         lib_names_full = paste0("input_", seq_len(nrow(sel$df))), filter_chunk_rows = 5e8)
-        make_additional_formats(sel$df[1,], exp_name, out_dir)
-      }
-    }
-
+    # The all- and unique-mapper branches are independent: merge both (in parallel), create the experiment, then
+    # build both branches' formats (in parallel). Outputs are identical to the former sequential order.
+    merge_df <- if (is.null(sel)) df else sel$df
+    merge_names <- if (is.null(sel)) bamVarName(merge_df, skip.libtype = FALSE) else paste0("input_", seq_len(nrow(sel$df)))
+    paths <- list()
+    if (config$all_mappers)
+      paths$all <- if (is.null(sel)) filepath(df, "default", base_folders = libFolder(df, mode = "all")) else sel$paths_all
     if (config$split_unique_mappers) {
-      message("--- Merging Unique mappers only")
-      df_unique_merged <- read.experiment(exp_name)
-      uniqueMappers(df_unique_merged) <- TRUE
-      out_dir_unique <- libFolder(df_unique_merged)
-      if (is.null(sel)) {
+      paths$unique <- if (is.null(sel)) {
         df_unique <- df_raw
         uniqueMappers(df_unique) <- TRUE
         df_unique <- update_path_per_sample(df_unique, libtype_df, libtype_to_merge = libtype_to_merge)
         stopifnot(all(grepl("unique", filepath(df_unique, "default"))))
-        paths <- filepath(df_unique, "default",
-                          base_folders = libFolder(df_unique, mode = "all"))
-        input_inventory[["unique"]] <- merge_input_file_inventory(paths, "unique")
-        ORFik::mergeLibs(df_unique, out_dir_unique, "all", "default", FALSE,
-                         paths = paths, filter_chunk_rows = 5e8)
-      } else {
-        input_inventory[["unique"]] <- merge_input_file_inventory(sel$paths_unique, "unique")
-        ORFik::mergeLibs(sel$df, out_dir_unique, "all", "default", FALSE, paths = sel$paths_unique,
-                         lib_names_full = paste0("input_", seq_len(nrow(sel$df))), filter_chunk_rows = 5e8)
+        filepath(df_unique, "default", base_folders = libFolder(df_unique, mode = "all"))
+      } else sel$paths_unique
+      if (!config$all_mappers) stop("split_unique_mappers needs all_mappers (the merged experiment is created from the all-mapper track)")
+    }
+    for (mp in names(paths)) input_inventory[[mp]] <- merge_input_file_inventory(paths[[mp]], mp)
+    out_dirs <- c(all = out_dir, unique = file.path(out_dir, "unique_mappers"))
+    message("--- Merging ", paste(names(paths), collapse = " + "), " mappers", if (parallel_mappers && length(paths) > 1) " (in parallel)")
+    run_forked(lapply(setNames(names(paths), names(paths)), function(mp) function()
+      ORFik::mergeLibs(merge_df, out_dirs[[mp]], "all", "default", FALSE, paths = paths[[mp]],
+                       lib_names_full = merge_names, filter_chunk_rows = 5e8)),
+      parallel = parallel_mappers && length(paths) > 1)
+    if (length(paths)) {
+      df_merged <- make_merged_experiment(merge_df[1, ], exp_name, out_dir)
+      formats <- list(all = function() make_additional_formats_internal(df_merged[1, ], parallel = parallel_mappers))
+      if (!is.null(paths$unique)) {
+        df_unique_merged <- df_merged; uniqueMappers(df_unique_merged) <- TRUE
+        stopifnot(identical(normalizePath(libFolder(df_unique_merged)), normalizePath(out_dirs[["unique"]])))
+        formats$unique <- function() make_additional_formats_internal(df_unique_merged[1, ], parallel = parallel_mappers)
       }
-      make_additional_formats_internal(df_unique_merged[1,])
-      # fwrite(data.table(Run = runIDs(df)))
+      run_forked(formats, parallel = parallel_mappers && length(formats) > 1)
     }
     if (length(input_inventory)) {
       inventory <- rbindlist(input_inventory, use.names = TRUE)
@@ -692,17 +691,24 @@ library_strategies_allowed <- function() {
 #' @return invisible(NULL)
 #' @export
 make_additional_formats <- function(df_ref, exp_name, out_dir_exp) {
+  df <- make_merged_experiment(df_ref, exp_name, out_dir_exp)
+  return(make_additional_formats_internal(df))
+}
+
+#' Create the experiment of a merged track (one library per mapper folder) and read it back
+#' @inheritParams make_additional_formats
+#' @return the experiment
+#' @noRd
+make_merged_experiment <- function(df_ref, exp_name, out_dir_exp) {
   message(exp_name)
   stopifnot(is(df_ref, "experiment"))
-
   libtype_df_ref <- libraryTypes(df_ref)
   stopifnot(length(libtype_df_ref) == 1)
   create.experiment(out_dir_exp, exper = exp_name,
                     txdb = df_ref@txdb,
                     libtype = libtype_df_ref,  fa = df_ref@fafile,
                     organism = organism(df_ref))
-  df <- read.experiment(exp_name, output.env = new.env())
-  return(make_additional_formats_internal(df))
+  read.experiment(exp_name, output.env = new.env())
 }
 
 #' Make additional formats for an experiment
@@ -712,7 +718,8 @@ make_additional_formats <- function(df_ref, exp_name, out_dir_exp) {
 #' @return invisible(NULL)
 #' @export
 make_additional_formats_internal <- function(df, libtype_df_ref =
-                                               identical(libraryTypes(df), "RFP")) {
+                                               identical(libraryTypes(df), "RFP"),
+                                             parallel = TRUE) {
   if (libtype_df_ref) {
     message("- covRle & Bigwig method: ORFik (5' ends)")
 
@@ -720,11 +727,50 @@ make_additional_formats_internal <- function(df, libtype_df_ref =
     message("- covRle & Bigwig method: full read")
   }
   if (!(libtype_df_ref && make_point_covrle(df))) convert_to_covRleList(df)
-  convert_to_bigWig(df, in_files = filepath(df, "cov"))
-  ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE,
-                            BPPARAM = SerialParam())
+  # bigWig and the count tables only read the covRle: run them concurrently (outputs identical to the serial order)
+  run_forked(list(bigwig = function() master_bigwig(df, parallel = parallel),
+                  counts = function() ORFik::countTable_regions(df, lib.type = "cov", forceRemake = TRUE,
+                    BPPARAM = if (parallel) BiocParallel::MulticoreParam(4, exportglobals = FALSE, log = FALSE)
+                              else SerialParam())),
+             parallel = parallel)
   suppressWarnings(remove.experiments(df))
   return(invisible(NULL))
+}
+
+#' bigWig of a one-library master from its covRle, forward and reverse strand written concurrently
+#'
+#' Same files as \code{convert_to_bigWig(df, in_files = filepath(df, "cov"))}: <lib>_forward.bigWig and
+#' <lib>_reverse.bigWig for stranded data, <lib>.bigWig otherwise.
+#' @noRd
+master_bigwig <- function(df, parallel = TRUE) {
+  in_file <- filepath(df, "cov")
+  out_dir <- file.path(libFolder(df), "bigwig"); dir.create(out_dir, showWarnings = FALSE)
+  file <- file.path(out_dir, ORFik:::remove.file_ext(basename(in_file)))
+  x <- fimport(in_file)
+  stranded <- strandMode(x) && ORFik:::rna_strand_resolve(in_file) != "unstranded"
+  if (!stranded) return(convert_to_bigWig(df, in_files = in_file))
+  # The RleList is written directly: byte-identical to export.bw(GRanges(<RleList>)) (md5 checked) without building
+  # a GRanges of every run first. The C writer (zlib) is ~85% of the time, so the two strands run concurrently.
+  run_forked(list(forward = function() rtracklayer::export.bw(f(x), paste0(file, "_forward.bigWig")),
+                  reverse = function() rtracklayer::export.bw(r(x), paste0(file, "_reverse.bigWig"))),
+             parallel = parallel)
+  invisible(NULL)
+}
+
+#' Run independent functions in forked processes (or in sequence) and fail if any failed
+#' @param funs named list of functions without arguments
+#' @param parallel logical, FALSE runs them in order in this process
+#' @return list of results
+#' @noRd
+run_forked <- function(funs, parallel = TRUE) {
+  if (!parallel || .Platform$OS.type == "windows") return(lapply(funs, function(f) f()))
+  # results are wrapped in a list so that a function returning NULL is not mistaken for a killed process
+  jobs <- lapply(funs, function(f) parallel::mcparallel(list(f()), mc.set.seed = FALSE))
+  res <- lapply(jobs, function(j) parallel::mccollect(j, wait = TRUE)[[1]])
+  died <- vapply(res, is.null, logical(1)); failed <- vapply(res, inherits, logical(1), "try-error")
+  if (any(died)) stop("forked job '", names(funs)[died][1], "' died without a result (killed or out of memory?)")
+  if (any(failed)) stop("forked job '", names(funs)[failed][1], "' failed: ", as.character(res[failed][[1]]))
+  lapply(res, `[[`, 1)
 }
 
 #' covRle + covRleList of a P-site master track straight from its OFST table

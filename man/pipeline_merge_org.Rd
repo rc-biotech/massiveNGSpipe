@@ -13,7 +13,8 @@ pipeline_merge_org(
   libtype_to_merge = libtype_long_to_short(config$preset),
   suffix = "",
   out_dir_base = config$config["bam"],
-  exclude_inhibitors = NULL
+  exclude_inhibitors = NULL,
+  parallel_mappers = TRUE
 )
 }
 \arguments{
@@ -33,7 +34,14 @@ unique(names(done_experiments))}
 config$complete_metadata) to leave out of the master, matched as "_"-separated tokens, e.g.
 c("harr", "ltm", "lactim") keeps initiation-drug libraries (also "chx_harr") out of the pooled elongation track.
 Mixed studies then contribute per-sample P-shifted files; a merge_manifest.csv (included/excluded runs) is
-written to the master directory.}
+written to the master directory.
+A successful organism merge also writes merge_input_files.csv with the actual
+input paths, mapper mode, size and UTC modification time. A study-level pool
+appears as one input file and does not by itself enumerate its constituent runs.}
+
+\item{parallel_mappers}{logical, default TRUE. Merge and convert the all- and unique-mapper tracks in parallel
+(forked processes; about twice the peak memory of one branch) and run bigWig, both strands and the count-table
+regions concurrently. FALSE gives the sequential order; the output files are identical.}
 
 \item{path_suffix}{character, default "". Add suffix to saved experiment name,
 like a date to seperate version.}
