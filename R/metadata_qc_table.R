@@ -54,12 +54,19 @@ metadata_qc_table <- function(config = pipeline_config(),
   study_runs <- study_runs[file.exists(file.path(exp_dir, paste0(study, ".csv")))]
   pre <- qc_study_features_all(study_runs, cache_dir, workers, motif_orgs = orgs)
   st_all <- pre$study; motifs <- pre$motif
+  # Per-run cache files of ALL organisms read once, in two parallel calls: starting a worker pool costs ~1.5 s, so per-
+  # organism reads (2-3 pools x 115 organisms) took most of the run; pools below start only for runs left to compute
+  prefetched <- if (nrow(st_all)) {
+    f_cov <- file.path(cache_dir, st_all$experiment, paste0(st_all$Run, ".rds"))
+    f_bam <- file.path(cache_dir, st_all$experiment, paste0(st_all$Run, "_bam.rds"))
+    list(cov = setNames(qc_read_caches(f_cov, workers), f_cov), bam = setNames(qc_read_caches(f_bam, workers), f_bam))
+  }
   feats <- list()
   for (org in orgs) {
     m_org <- meta[ScientificName == org]
     message("- QC table: ", org, " (", nrow(m_org), " samples, ", uniqueN(m_org$study), " studies)")
     st <- if (nrow(st_all)) st_all[experiment %in% study_runs$study[study_runs$org == org]] else data.table()
-    heavy <- qc_heavy_features(st, org, cache_dir, workers)
+    heavy <- qc_heavy_features(st, org, cache_dir, workers, prefetched)
     motif <- motifs[[org]]
     if (nrow(st)) {
       st <- st[, !c("bam", "cov", "experiment"), with = FALSE]
@@ -69,7 +76,7 @@ metadata_qc_table <- function(config = pipeline_config(),
     feats[[org]] <- st
   }
   feat <- rbindlist(feats, fill = TRUE)
-  term <- qc_terminal_bias(terminal_bias_dir, meta$Run)
+  term <- qc_terminal_bias(terminal_bias_dir, meta$Run, cache_dir, workers)
   if (!is.null(term) && nrow(term)) feat <- merge(feat, term, by = "Run", all = TRUE)
   feat <- feat[!duplicated(Run)]
   out <- merge(meta, feat, by = "Run", all.x = TRUE, sort = FALSE)
@@ -227,6 +234,16 @@ qc_motif_features_cached <- function(org, cache_dir) {
 #' @noRd
 qc_chunks <- function(n, k) split(seq_len(n), ceiling(seq_len(n) / ceiling(n / max(1L, min(n, k)))))
 
+#' Cache entries for files: from the prefetched lookup (named by path) when given, else read them (parallel)
+#' @noRd
+qc_cached <- function(files, prefetched, workers) {
+  if (is.null(prefetched)) return(qc_read_caches(files, workers))
+  miss <- !(files %in% names(prefetched))
+  out <- unname(prefetched[match(files, names(prefetched))])
+  if (any(miss)) out[miss] <- qc_read_caches(files[miss], workers)
+  out
+}
+
 #' Read many small cache files in parallel chunks (each file: list(sig, row)); NULL for missing/unreadable
 #' @noRd
 qc_read_caches <- function(files, workers) {
@@ -246,7 +263,7 @@ qc_file_sig <- function(f) {
 
 #' Heavy per-run features (coverage biotype metrics cached per run; BAM metrics via qc_bam_features)
 #' @noRd
-qc_heavy_features <- function(st, org, cache_dir, workers) {
+qc_heavy_features <- function(st, org, cache_dir, workers, prefetched = NULL) {
   if (is.null(st) || !nrow(st)) return(NULL)
   runs <- st[, .(Run, experiment, bam, cov)]
   runs[, sig := paste(QC_CACHE_VERSION, qc_file_sig(bam), qc_file_sig(cov))]
@@ -255,7 +272,7 @@ qc_heavy_features <- function(st, org, cache_dir, workers) {
                     output.env = new.env())), stop.error = FALSE), error = function(e) NULL)
   if (!is.null(ann) && grepl("\\.gff3?(\\.gz)?$", ann)) runs[, sig := paste(sig, "gff3key")]
   runs[, cache := file.path(cache_dir, experiment, paste0(Run, ".rds"))]
-  cached <- qc_read_caches(runs$cache, workers)
+  cached <- qc_cached(runs$cache, prefetched$cov, workers)
   ok <- vapply(seq_along(cached), function(i) !is.null(cached[[i]]) && identical(cached[[i]]$sig, runs$sig[i]), logical(1))
   todo <- runs[!ok]
   message("-- heavy QC: ", sum(ok), " cached, ", nrow(todo), " to compute")
@@ -276,17 +293,17 @@ qc_heavy_features <- function(st, org, cache_dir, workers) {
   out <- rbindlist(c(cached_rows, res), fill = TRUE)
   drop <- intersect(c("Sequencing_Layout", "Soft_Clipped_Reads_Pct"), names(out))
   if (length(drop)) out[, (drop) := NULL]
-  bam <- qc_bam_features(runs, cache_dir, workers)
+  bam <- qc_bam_features(runs, cache_dir, workers, prefetched$bam)
   merge(out, bam, by = "Run", all = TRUE)
 }
 
 #' BAM metrics per run, cached separately from the coverage metrics (signature: QC_BAM_CACHE_VERSION + BAM file)
 #' @noRd
-qc_bam_features <- function(runs, cache_dir, workers) {
+qc_bam_features <- function(runs, cache_dir, workers, prefetched = NULL) {
   runs <- copy(runs)
   runs[, bsig := paste(QC_BAM_CACHE_VERSION, qc_file_sig(bam))]
   runs[, bcache := file.path(cache_dir, experiment, paste0(Run, "_bam.rds"))]
-  cached <- qc_read_caches(runs$bcache, workers)
+  cached <- qc_cached(runs$bcache, prefetched, workers)
   ok <- vapply(seq_along(cached), function(i) !is.null(cached[[i]]) && identical(cached[[i]]$sig, runs$bsig[i]), logical(1))
   todo <- runs[!ok]
   message("-- BAM QC: ", sum(ok), " cached, ", nrow(todo), " to compute")
@@ -440,7 +457,7 @@ qc_motif_features <- function(org) {
 
 #' Terminal nucleotide proportions (first base at the read 5' / 3' end) from per-run bias tsv files
 #' @noRd
-qc_terminal_bias <- function(dir, runs) {
+qc_terminal_bias <- function(dir, runs, cache_dir = NULL, workers = 1) {
   if (is.null(dir) || !dir.exists(dir)) return(NULL)
   files <- list.files(dir, "_[53]prime_bias\\.tsv$", recursive = TRUE, full.names = TRUE)
   if (!length(files)) return(NULL)
@@ -448,11 +465,29 @@ qc_terminal_bias <- function(dir, runs) {
                      Run = sub("_[53]prime_bias\\.tsv$", "", basename(files)))
   info <- info[Run %in% runs]
   if (!nrow(info)) return(NULL)
-  obs <- rbindlist(lapply(seq_len(nrow(info)), function(i) {
-    dt <- fread(info$f[i]); col <- if (info$flank[i] == "5'") "read_5prime_3nt" else "read_3prime_3nt"
-    dt[, base := substr(get(col), 1L, 1L)][, .(o = sum(count)), by = base][, .(Run = info$Run[i], key = paste0(base, info$flank[i]), p = o / sum(o))]
-  }))
-  dcast(obs[!duplicated(paste(Run, key))], Run ~ key, value.var = "p")
+  # per-file results cached on the file signature (one cache file); only new/changed files are read, in one worker pool
+  info[, key := paste(f, qc_file_sig(f))]
+  cache <- if (!is.null(cache_dir)) file.path(cache_dir, "_terminal_bias.rds")
+  old <- if (!is.null(cache) && file.exists(cache)) tryCatch(readRDS(cache), error = function(e) NULL)
+  if (is.null(old)) old <- data.table(fkey = character(), Run = character(), key = character(), p = numeric())
+  todo <- info[!(key %in% old$fkey)]
+  message("- terminal bias: ", nrow(info) - nrow(todo), " files cached, ", nrow(todo), " to read")
+  one <- function(i) {
+    dt <- fread(todo$f[i]); col <- if (todo$flank[i] == "5'") "read_5prime_3nt" else "read_3prime_3nt"
+    dt[, base := substr(get(col), 1L, 1L)][, .(o = sum(count)), by = base][
+      , .(fkey = todo$key[i], Run = todo$Run[i], key = paste0(base, todo$flank[i]), p = o / sum(o))]
+  }
+  new <- if (nrow(todo)) {
+    if (workers > 1 && nrow(todo) > 50) rbindlist(unlist(BiocParallel::bplapply(qc_chunks(nrow(todo), workers * 4), function(ix) lapply(ix, one),
+                                                         BPPARAM = BiocParallel::MulticoreParam(workers = workers)), recursive = FALSE))
+    else rbindlist(lapply(seq_len(nrow(todo)), one))
+  }
+  obs <- rbind(old[fkey %in% info$key], new, fill = TRUE)
+  if (!is.null(cache) && nrow(todo)) { tmp <- paste0(cache, ".tmp"); saveRDS(obs, tmp); file.rename(tmp, cache) }
+  obs <- obs[fkey %in% info$key]
+  # same row order as the uncached version (file order) before removing duplicate Run x key
+  obs <- obs[order(match(fkey, info$key))]
+  dcast(obs[!duplicated(paste(Run, key)), .(Run, key, p)], Run ~ key, value.var = "p")
 }
 
 #' Column order of the previous table, rounded numerics

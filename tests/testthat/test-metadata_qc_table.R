@@ -36,3 +36,23 @@ test_that("QC cache reads keep positions (chunks contiguous, n = 1 works)", {
   expect_identical(vapply(r[1:7], `[[`, 0, "sig"), as.numeric(1:7)); expect_null(r[[8]])
   expect_length(massiveNGSpipe:::qc_read_caches(f[1], 16), 1)
 })
+
+test_that("prefetched cache lookup returns entries by path, missing ones read", {
+  f <- tempfile(fileext = rep(".rds", 3)); for (i in seq_along(f)) saveRDS(list(sig = i), f[i])
+  pre <- setNames(massiveNGSpipe:::qc_read_caches(f[1:2], 2), f[1:2])
+  r <- massiveNGSpipe:::qc_cached(f[c(3, 1, 2)], pre, 2)
+  expect_identical(vapply(r, `[[`, 0, "sig"), c(3, 1, 2))
+})
+
+test_that("terminal bias is cached per file and equals the uncached result", {
+  d <- file.path(tempdir(), "tb"); unlink(d, recursive = TRUE); dir.create(file.path(d, "s1"), recursive = TRUE)
+  w <- function(run, side, x) data.table::fwrite(data.table::data.table(x, count = c(5, 3, 2)), file.path(d, "s1", paste0(run, "_", side, "_bias.tsv")), sep = "\t")
+  for (r in c("SRR1", "SRR2")) { w(r, "5prime", data.table::data.table(read_5prime_3nt = c("ACG", "TTT", "GAA")))
+    w(r, "3prime", data.table::data.table(read_3prime_3nt = c("CCA", "AGT", "AAA"))) }
+  cd <- file.path(tempdir(), "tbc"); unlink(cd, recursive = TRUE); dir.create(cd)
+  ref <- massiveNGSpipe:::qc_terminal_bias(d, c("SRR1", "SRR2"))
+  a <- massiveNGSpipe:::qc_terminal_bias(d, c("SRR1", "SRR2"), cd, 1)
+  expect_true(file.exists(file.path(cd, "_terminal_bias.rds")))
+  b <- massiveNGSpipe:::qc_terminal_bias(d, c("SRR1", "SRR2"), cd, 1)
+  expect_equal(a, ref); expect_equal(b, ref); expect_equal(ref[Run == "SRR1"][["A5'"]], 0.5)
+})
