@@ -45,17 +45,22 @@ metadata_qc_table <- function(config = pipeline_config(),
   if (!is.null(organisms)) meta <- meta[ScientificName %in% organisms]
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
   exp_dir <- ORFik::config()["exp"]
+  orgs <- names(sort(table(meta$ScientificName), decreasing = TRUE))     # largest first: longest tasks start first
+  # Cheap per-study features (experiment, STAR logs, frames, read lengths) are cached per study; motif features (large
+  # collection motif tables in, small per-run table out) are cached per organism. Everything uncached runs as ONE
+  # task queue on forked workers, longest tasks first (motif tables of the biggest organisms, then the biggest studies),
+  # one task each, so a slow task never starts last. (A separate mcparallel future is killed by BiocParallel's cleanup.)
+  study_runs <- meta[, .(runs = list(Run), n = .N, org = ScientificName[1]), by = study]
+  study_runs <- study_runs[file.exists(file.path(exp_dir, paste0(study, ".csv")))]
+  pre <- qc_study_features_all(study_runs, cache_dir, workers, motif_orgs = orgs)
+  st_all <- pre$study; motifs <- pre$motif
   feats <- list()
-  for (org in names(sort(table(meta$ScientificName)))) {
+  for (org in orgs) {
     m_org <- meta[ScientificName == org]
     message("- QC table: ", org, " (", nrow(m_org), " samples, ", uniqueN(m_org$study), " studies)")
-    studies <- unique(m_org$study)
-    studies <- studies[file.exists(file.path(exp_dir, paste0(studies, ".csv")))]
-    study_tabs <- lapply(studies, function(s) tryCatch(qc_study_features(s, m_org[study == s]$Run),
-      error = function(e) { message("-- ", s, ": ", conditionMessage(e)); NULL }))
-    st <- rbindlist(study_tabs, fill = TRUE)
+    st <- if (nrow(st_all)) st_all[experiment %in% study_runs$study[study_runs$org == org]] else data.table()
     heavy <- qc_heavy_features(st, org, cache_dir, workers)
-    motif <- tryCatch(qc_motif_features(org), error = function(e) { message("-- motif features: ", conditionMessage(e)); NULL })
+    motif <- motifs[[org]]
     if (nrow(st)) {
       st <- st[, !c("bam", "cov", "experiment"), with = FALSE]
       if (!is.null(heavy) && nrow(heavy)) st <- merge(st, heavy, by = "Run", all.x = TRUE)
@@ -105,7 +110,7 @@ qc_study_features <- function(study, runs) {
                      bam = df$filepath)
   d <- df; uniqueMappers(d) <- TRUE
   base[, cov := tryCatch(filepath(d, "cov", base_folders = libFolder(d, mode = "all")), error = function(e) NA_character_)]
-  base <- base[Run %in% runs]
+  if (!is.null(runs)) base <- base[Run %in% runs]
   aligned <- dirname(df$filepath[1])
   # STAR logs
   star_f <- file.path(aligned, c("LOGS_SINGLE", "LOGS", "LOGS_PAIRED"), "00_STAR_LOG_table.csv")
@@ -147,6 +152,87 @@ qc_study_features <- function(study, runs) {
   base
 }
 
+#' Bump when qc_study_features() changes, to invalidate the per-study cache
+#' @noRd
+QC_STUDY_CACHE_VERSION <- "study_v1"
+
+#' Files qc_study_features() reads for a study (also the ones that do not exist yet: their appearance invalidates)
+#' @noRd
+qc_study_inputs <- function(study, exp_dir = ORFik::config()["exp"]) {
+  csv <- file.path(exp_dir, paste0(study, ".csv"))
+  x <- fread(csv, header = FALSE, fill = TRUE, skip = 3)                # libtype,...,filepath,Run rows
+  h <- unlist(x[1]); fp <- x[[which(h == "filepath")[1]]][-1]; run <- if ("Run" %in% h) x[[which(h == "Run")[1]]][-1] else character()
+  aligned <- dirname(fp[1])
+  c(csv, file.path(aligned, c("LOGS_SINGLE", "LOGS", "LOGS_PAIRED"), "00_STAR_LOG_table.csv"),
+    file.path(aligned, "QC_STATS", "Ribo_frames_all.csv"), file.path(aligned, "ofst", "read_length_distribution", paste0(run, ".csv")))
+}
+
+#' Per-study features for all studies + motif features per organism. Cached entries are checked in parallel chunks;
+#' the uncached ones form one queue (motif organisms first, by size, then studies by run count), one forked task each.
+#' Results are small tables, so forked workers (no large return objects) are the cheapest way.
+#' @return list(study = data.table, motif = named list of data.tables per organism)
+#' @noRd
+qc_study_features_all <- function(study_runs, cache_dir, workers, motif_orgs = character()) {
+  sr <- copy(study_runs)[order(-n)]
+  sr[, cache := file.path(cache_dir, study, "_study_features.rds")]
+  chk <- if (nrow(sr)) {
+    chunks <- split(seq_len(nrow(sr)), cut(seq_len(nrow(sr)), min(nrow(sr), workers * 4), labels = FALSE))
+    unlist(BiocParallel::bplapply(chunks, function(ix) lapply(ix, function(i) {
+      sig <- tryCatch(paste(QC_STUDY_CACHE_VERSION, paste(qc_file_sig(qc_study_inputs(sr$study[i])), collapse = ";")),
+                      error = function(e) NA_character_)
+      old <- if (file.exists(sr$cache[i])) tryCatch(readRDS(sr$cache[i]), error = function(e) NULL)
+      list(sig = sig, tab = if (!is.na(sig) && !is.null(old) && identical(old$sig, sig)) old$tab)
+    }), BPPARAM = BiocParallel::MulticoreParam(workers = workers)), recursive = FALSE)
+  } else list()
+  sr[, sig := vapply(chk, `[[`, "", "sig")]
+  hit <- !vapply(chk, function(x) is.null(x$tab), logical(1))
+  todo <- which(!hit)
+  tasks <- c(lapply(motif_orgs, function(o) list(type = "motif", org = o)), lapply(todo, function(i) list(type = "study", i = i)))
+  message("- QC study features: ", sum(hit), " cached, ", length(todo), " to compute; motif tables: ", length(motif_orgs),
+          " organisms (", min(workers, max(1, length(tasks))), " workers)")
+  res <- if (length(tasks)) BiocParallel::bplapply(tasks, function(t) {
+    if (t$type == "motif") return(tryCatch(qc_motif_features_cached(t$org, cache_dir),
+                                           error = function(e) { message("-- motif features ", t$org, ": ", conditionMessage(e)); NULL }))
+    i <- t$i
+    tab <- tryCatch(qc_study_features(sr$study[i], NULL), error = function(e) { message("-- ", sr$study[i], ": ", conditionMessage(e)); NULL })
+    if (!is.null(tab) && !is.na(sr$sig[i])) {
+      dir.create(dirname(sr$cache[i]), showWarnings = FALSE, recursive = TRUE)
+      tmp <- paste0(sr$cache[i], ".tmp", Sys.getpid()); saveRDS(list(sig = sr$sig[i], tab = tab), tmp); file.rename(tmp, sr$cache[i])
+    }
+    tab
+  }, BPPARAM = BiocParallel::MulticoreParam(workers = min(workers, length(tasks)), tasks = length(tasks), stop.on.error = FALSE)) else list()
+  is_motif <- vapply(tasks, function(t) t$type == "motif", logical(1))
+  motif <- setNames(lapply(res[is_motif], function(x) if (is.data.frame(x)) x), motif_orgs)
+  new <- res[!is_motif]; new <- new[vapply(new, is.data.frame, logical(1))]
+  out <- rbindlist(c(lapply(chk[hit], `[[`, "tab"), new), fill = TRUE)
+  if (nrow(out)) out <- out[Run %in% unlist(sr$runs)]
+  list(study = out, motif = motif)
+}
+
+#' Motif features cached per organism (signature = the three collection motif tables)
+#' @noRd
+qc_motif_features_cached <- function(org, cache_dir) {
+  coll <- paste0("all_samples-", gsub(" ", "_", org))
+  f <- file.path(ORFik::config()["bam"], coll, "meta_collection_tables", paste0("meta_collection_table_", c("TIS", "TTS", "PP"), ".fst"))
+  if (!all(file.exists(f))) return(qc_motif_features(org))
+  sig <- paste(qc_file_sig(f), collapse = ";"); cache <- file.path(cache_dir, paste0("_motif_", gsub(" ", "_", org), ".rds"))
+  old <- if (file.exists(cache)) tryCatch(readRDS(cache), error = function(e) NULL)
+  if (!is.null(old) && identical(old$sig, sig)) return(old$tab)
+  tab <- qc_motif_features(org)
+  if (!is.null(tab)) saveRDS(list(sig = sig, tab = tab), cache)
+  tab
+}
+
+#' Read many small cache files in parallel chunks (each file: list(sig, row)); NULL for missing/unreadable
+#' @noRd
+qc_read_caches <- function(files, workers) {
+  if (!length(files)) return(list())
+  chunks <- split(seq_along(files), cut(seq_along(files), min(length(files), workers * 4), labels = FALSE))
+  res <- BiocParallel::bplapply(chunks, function(ix) lapply(files[ix], function(f)
+    if (file.exists(f)) tryCatch(readRDS(f), error = function(e) NULL) else NULL), BPPARAM = BiocParallel::MulticoreParam(workers = workers))
+  unlist(res, recursive = FALSE, use.names = FALSE)
+}
+
 #' File signature for cache invalidation
 #' @noRd
 qc_file_sig <- function(f) {
@@ -165,7 +251,7 @@ qc_heavy_features <- function(st, org, cache_dir, workers) {
                     output.env = new.env())), stop.error = FALSE), error = function(e) NULL)
   if (!is.null(ann) && grepl("\\.gff3?(\\.gz)?$", ann)) runs[, sig := paste(sig, "gff3key")]
   runs[, cache := file.path(cache_dir, experiment, paste0(Run, ".rds"))]
-  cached <- lapply(runs$cache, function(f) if (file.exists(f)) tryCatch(readRDS(f), error = function(e) NULL) else NULL)
+  cached <- qc_read_caches(runs$cache, workers)
   ok <- vapply(seq_along(cached), function(i) !is.null(cached[[i]]) && identical(cached[[i]]$sig, runs$sig[i]), logical(1))
   todo <- runs[!ok]
   message("-- heavy QC: ", sum(ok), " cached, ", nrow(todo), " to compute")
@@ -196,7 +282,7 @@ qc_bam_features <- function(runs, cache_dir, workers) {
   runs <- copy(runs)
   runs[, bsig := paste(QC_BAM_CACHE_VERSION, qc_file_sig(bam))]
   runs[, bcache := file.path(cache_dir, experiment, paste0(Run, "_bam.rds"))]
-  cached <- lapply(runs$bcache, function(f) if (file.exists(f)) tryCatch(readRDS(f), error = function(e) NULL) else NULL)
+  cached <- qc_read_caches(runs$bcache, workers)
   ok <- vapply(seq_along(cached), function(i) !is.null(cached[[i]]) && identical(cached[[i]]$sig, runs$bsig[i]), logical(1))
   todo <- runs[!ok]
   message("-- BAM QC: ", sum(ok), " cached, ", nrow(todo), " to compute")
