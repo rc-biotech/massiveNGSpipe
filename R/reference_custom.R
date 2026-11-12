@@ -91,6 +91,8 @@ custom_reference_fetch <- function(source, dest) {
   gz <- grepl("\\.gz$", source)
   tmp <- paste0(dest, if (gz) ".gz" else "", ".part")
   if (grepl("^(https?|ftp)://", source)) {
+    # R's default timeout (60 s) cuts large genomes (gorilla T2T: 974 MB, stopped at 738 MB, 2026-11-12)
+    old_to <- options(timeout = max(7200, getOption("timeout"))); on.exit(options(old_to), add = TRUE)
     if (utils::download.file(source, tmp, mode = "wb", quiet = TRUE) != 0) stop("Download failed: ", source)
   } else {
     if (!file.exists(source)) stop("File not found: ", source)
