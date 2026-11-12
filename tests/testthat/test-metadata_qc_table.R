@@ -25,3 +25,14 @@ test_that("qc_merge_subset keeps other organisms' rows and replaces the subset",
   expect_true(is.na(res[Run == "b", y]))
   expect_identical(qc_merge_subset(out, tempfile(), "Homo sapiens", c("a", "c")), out)
 })
+
+test_that("QC cache reads keep positions (chunks contiguous, n = 1 works)", {
+  for (n in c(1, 2, 5, 17, 1000)) {
+    ch <- massiveNGSpipe:::qc_chunks(n, 64)
+    expect_identical(unlist(ch, use.names = FALSE), seq_len(n)); expect_lte(length(ch), 64)
+  }
+  f <- tempfile(fileext = rep(".rds", 7)); for (i in seq_along(f)) saveRDS(list(sig = i), f[i])
+  r <- massiveNGSpipe:::qc_read_caches(c(f, file.path(tempdir(), "missing.rds")), 3)
+  expect_identical(vapply(r[1:7], `[[`, 0, "sig"), as.numeric(1:7)); expect_null(r[[8]])
+  expect_length(massiveNGSpipe:::qc_read_caches(f[1], 16), 1)
+})

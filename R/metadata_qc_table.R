@@ -176,7 +176,7 @@ qc_study_features_all <- function(study_runs, cache_dir, workers, motif_orgs = c
   sr <- copy(study_runs)[order(-n)]
   sr[, cache := file.path(cache_dir, study, "_study_features.rds")]
   chk <- if (nrow(sr)) {
-    chunks <- split(seq_len(nrow(sr)), cut(seq_len(nrow(sr)), min(nrow(sr), workers * 4), labels = FALSE))
+    chunks <- qc_chunks(nrow(sr), workers * 4)
     unlist(BiocParallel::bplapply(chunks, function(ix) lapply(ix, function(i) {
       sig <- tryCatch(paste(QC_STUDY_CACHE_VERSION, paste(qc_file_sig(qc_study_inputs(sr$study[i])), collapse = ";")),
                       error = function(e) NA_character_)
@@ -223,11 +223,15 @@ qc_motif_features_cached <- function(org, cache_dir) {
   tab
 }
 
+#' Contiguous chunks of 1..n, at most k (order preserved: callers map results back by position; works for n = 1)
+#' @noRd
+qc_chunks <- function(n, k) split(seq_len(n), ceiling(seq_len(n) / ceiling(n / max(1L, min(n, k)))))
+
 #' Read many small cache files in parallel chunks (each file: list(sig, row)); NULL for missing/unreadable
 #' @noRd
 qc_read_caches <- function(files, workers) {
   if (!length(files)) return(list())
-  chunks <- split(seq_along(files), cut(seq_along(files), min(length(files), workers * 4), labels = FALSE))
+  chunks <- qc_chunks(length(files), workers * 4)
   res <- BiocParallel::bplapply(chunks, function(ix) lapply(files[ix], function(f)
     if (file.exists(f)) tryCatch(readRDS(f), error = function(e) NULL) else NULL), BPPARAM = BiocParallel::MulticoreParam(workers = workers))
   unlist(res, recursive = FALSE, use.names = FALSE)
