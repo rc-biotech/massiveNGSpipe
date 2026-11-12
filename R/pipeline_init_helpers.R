@@ -527,7 +527,10 @@ reference_assembly <- function(organism) {
                "Capra hircus" = "GCA_041735815.1",                   # T2T-goat2.0 (VGL), 31 sequences, GenBank annotation
                # Release 4 batch 3 new species 2026-11-11: study strains
                "Halobacterium salinarum" = "GCF_000006805.1",        # NRC-1 (PRJNA413990)
-               "Pseudomonas fluorescens" = "GCF_931907645.1")        # SBW25 (PRJEB19014)
+               "Pseudomonas fluorescens" = "GCF_931907645.1",        # SBW25 (PRJEB19014)
+               # 2026-11-12 (Håkon): Ensembl Pan_tro_3.0 / gorGor4 toplevel have 44k / 41k sequences; NHGRI T2T primary assemblies
+               "Pan troglodytes" = "GCF_028858775.2",                # NHGRI_mPanTro3-v2.1_pri, 25 sequences, RefSeq annotation
+               "Gorilla gorilla" = "GCF_029281585.2")                # NHGRI_mGorGor1-v2.1_pri, 25 sequences, RefSeq annotation
   out <- unname(curated[organism]); out[is.na(out)] <- organism[is.na(out)]
   out
 }
