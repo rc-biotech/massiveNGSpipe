@@ -743,6 +743,13 @@ make_additional_formats_internal <- function(df, libtype_df_ref =
 #' <lib>_reverse.bigWig for stranded data, <lib>.bigWig otherwise.
 #' @noRd
 master_bigwig <- function(df, parallel = TRUE) {
+  # one bigWig pair per library: group collections (one library per group) used to fail here ("2 files input")
+  for (i in seq_len(nrow(df))) master_bigwig_one(df[i, ], parallel = parallel)
+  invisible(NULL)
+}
+
+#' @noRd
+master_bigwig_one <- function(df, parallel = TRUE) {
   in_file <- filepath(df, "cov")
   out_dir <- file.path(libFolder(df), "bigwig"); dir.create(out_dir, showWarnings = FALSE)
   file <- file.path(out_dir, ORFik:::remove.file_ext(basename(in_file)))
@@ -777,19 +784,22 @@ run_forked <- function(funs, parallel = TRUE) {
 #'
 #' Uses ORFik's point-coverage builder when available (identical output to
 #' convert_to_covRleList, without the GRanges import and per read length passes).
-#' @param df an ORFik experiment with one library
+#' @param df an ORFik experiment (one or more libraries, e.g. group collections)
 #' @return TRUE if the files were written, FALSE to use convert_to_covRleList
 #' @noRd
 make_point_covrle <- function(df) {
   builder <- tryCatch(utils::getFromNamespace(".convert_point_ofst_cov", "ORFik"), error = function(e) NULL)
-  if (is.null(builder) || nrow(df) != 1) return(FALSE)
-  in_file <- filepath(df, "pshifted")
-  lib_name <- ORFik:::remove.file_ext(basename(in_file))
-  out_dir <- file.path(libFolder(df), "cov_RLE_List")
-  out_dir_merged <- file.path(libFolder(df), "cov_RLE")
+  if (is.null(builder)) return(FALSE)
+  # every library of the experiment (group collections have one per group): the point builder sums in double, the fallback
+  # convert_to_covRleList overflows integer coverage on very large groups ("NAs produced by integer overflow")
+  in_files <- filepath(df, "pshifted")
+  out_dir <- file.path(libFolder(df)[1], "cov_RLE_List")
+  out_dir_merged <- file.path(libFolder(df)[1], "cov_RLE")
   dir.create(out_dir, showWarnings = FALSE); dir.create(out_dir_merged, showWarnings = FALSE)
-  done <- builder(in_file, file.path(out_dir, lib_name), file.path(out_dir_merged, lib_name),
-                  seqinfo(df), "qs")
+  done <- all(vapply(in_files, function(in_file) {
+    lib_name <- ORFik:::remove.file_ext(basename(in_file))
+    isTRUE(builder(in_file, file.path(out_dir, lib_name), file.path(out_dir_merged, lib_name), seqinfo(df), "qs"))
+  }, logical(1)))
   if (done) message("- covRle & covRleList: built from point OFST table")
   done
 }
