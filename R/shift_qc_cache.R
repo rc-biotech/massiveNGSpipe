@@ -349,12 +349,15 @@ shift_qc_plot_guarded <- function(df, plot_idx, max_gb = getOption("mngsp.shift_
     warning("Combined P-shift plot for ", name(df), " skipped: ", why, call. = FALSE)
     invisible(FALSE)
   }
-  px <- callr::r_bg(function(df, plot_idx, dev) {
-    if (is.null(dev)) loadNamespace("massiveNGSpipe")
+  staged <- staged_worker_lib()
+  px <- callr::r_bg(function(df, plot_idx, dev, staged) {
+    if (!is.null(staged)) { .libPaths(c(staged, .libPaths())); loadNamespace("massiveNGSpipe", lib.loc = staged) }
+    else if (is.null(dev)) loadNamespace("massiveNGSpipe")
     else suppressMessages(pkgload::load_all(dev, quiet = TRUE, helpers = FALSE, attach_testthat = FALSE))
     get("shift_qc_build_combined_plot", envir = asNamespace("massiveNGSpipe"))(df, plot_idx)
     TRUE
-  }, args = list(df = df, plot_idx = plot_idx, dev = dev_package_path()), package = FALSE)
+  }, args = list(df = df, plot_idx = plot_idx, dev = if (is.null(staged)) dev_package_path() else NULL, staged = staged),
+  package = FALSE)
   on.exit(if (px$is_alive()) px$kill_tree(), add = TRUE)
   while (px$is_alive()) {
     Sys.sleep(poll)

@@ -75,8 +75,17 @@ run_experiment_subprocess <- function(func, args = list(),
   attempt <- 0
   repeat {
     attempt <- attempt + 1
-    dev <- dev_package_path()
-    px <- if (is.null(dev)) {
+    staged <- staged_worker_lib()
+    dev <- if (is.null(staged)) dev_package_path() else NULL
+    px <- if (!is.null(staged)) {
+      # installed build of the same source commit: ~16 s to load instead of ~34 s for load_all() (2026-11-17 profiling)
+      callr::r_bg(function(.f, .args, .lib) {
+        .libPaths(c(.lib, .libPaths())); loadNamespace("massiveNGSpipe", lib.loc = .lib)
+        environment(.f) <- asNamespace("massiveNGSpipe")
+        do.call(.f, .args)
+      }, args = list(.f = func, .args = args, .lib = staged), package = FALSE,
+      stdout = logfile_out, stderr = logfile_err)
+    } else if (is.null(dev)) {
       callr::r_bg(func, args = args, package = "massiveNGSpipe",
                   stdout = logfile_out, stderr = logfile_err)
     } else {
@@ -177,4 +186,27 @@ sanitize_progress_log <- function(path) {
   txt <- gsub("\r", "\n", txt, fixed = TRUE, useBytes = TRUE)
   cat(txt, file = path)
   invisible(NULL)
+}
+
+#' Staged installed massiveNGSpipe for fresh worker processes, or NULL
+#'
+#' \code{options(massiveNGSpipe.worker_lib = <library dir>)} lets subprocesses load an installed build instead of
+#' \code{pkgload::load_all()} on the source tree (load_all ~34 s vs ~16 s per fresh process, 2026-11-17). Used only when
+#' the staged build was made from the commit the parent session runs: the library dir must contain
+#' \code{SOURCE_COMMIT} equal to the git HEAD of \code{dev_package_path()} (when the parent uses load_all), else NULL with
+#' a message, so a stale build is never used silently.
+#' @return character path or NULL
+#' @noRd
+staged_worker_lib <- function() {
+  lib <- getOption("massiveNGSpipe.worker_lib")
+  if (is.null(lib) || !dir.exists(file.path(lib, "massiveNGSpipe"))) return(NULL)
+  dev <- dev_package_path()
+  if (is.null(dev)) return(lib)
+  head <- tryCatch(system2("git", c("-C", dev, "rev-parse", "HEAD"), stdout = TRUE, stderr = FALSE), error = function(e) "")
+  dirty <- tryCatch(length(system2("git", c("-C", dev, "status", "--porcelain", "--", "R", "DESCRIPTION", "NAMESPACE"),
+                                   stdout = TRUE, stderr = FALSE)) > 0, error = function(e) TRUE)
+  built <- tryCatch(readLines(file.path(lib, "SOURCE_COMMIT"), warn = FALSE)[1], error = function(e) "")
+  if (!dirty && length(head) == 1 && identical(head, built)) return(lib)
+  message("massiveNGSpipe.worker_lib ignored: staged build ", built, " != source ", head[1], if (dirty) " (source has local changes)")
+  NULL
 }

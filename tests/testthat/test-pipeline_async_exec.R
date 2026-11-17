@@ -190,3 +190,24 @@ test_that("run_experiment_subprocess runs the load_all() source tree in the chil
   g <- function() stop("child boom")
   expect_error(run_experiment_subprocess(g, list(), file.path(d, "o2.log"), file.path(d, "e2.log"), poll_interval = 1), "child boom")
 })
+
+test_that("staged_worker_lib() is used only for a build of the running source commit", {
+  withr::local_options(massiveNGSpipe.worker_lib = NULL)
+  expect_null(staged_worker_lib())
+  lib <- withr::local_tempdir(); dir.create(file.path(lib, "massiveNGSpipe"))
+  withr::local_options(massiveNGSpipe.worker_lib = lib)
+  testthat::local_mocked_bindings(dev_package_path = function() NULL)
+  expect_identical(staged_worker_lib(), lib)              # parent runs an installed package: no commit check needed
+  repo <- withr::local_tempdir()
+  system2("git", c("-C", repo, "init", "-q")); writeLines("x", file.path(repo, "DESCRIPTION"))
+  system2("git", c("-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", "add", "."), stdout = FALSE)
+  system2("git", c("-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x"), stdout = FALSE)
+  head <- system2("git", c("-C", repo, "rev-parse", "HEAD"), stdout = TRUE)
+  testthat::local_mocked_bindings(dev_package_path = function() repo)
+  writeLines("not-this-commit", file.path(lib, "SOURCE_COMMIT"))
+  expect_message(expect_null(staged_worker_lib()), "ignored")
+  writeLines(head, file.path(lib, "SOURCE_COMMIT"))
+  expect_identical(staged_worker_lib(), lib)
+  writeLines("changed", file.path(repo, "DESCRIPTION"))  # uncommitted source change: never use the staged build
+  expect_message(expect_null(staged_worker_lib()), "local changes")
+})
