@@ -1335,6 +1335,45 @@ pshift_needed_subset <- function(df, accepted_lengths, allowed_hard12_species, B
   res
 }
 
+#' Copy the all-mappers P-site offsets into the unique-mappers shifting table
+#'
+#' Unique-mapper offsets must equal the all-mapper offsets of the same Run (see the comment in
+#' \code{pipeline_pshift()}). Every unique sample whose saved entry differs from its all-mappers entry, or whose
+#' pshifted file is missing/stale, gets the all-mappers entry staged as an explicit request (pending record + table
+#' entry); \code{pshift_needed_subset()} then reshifts exactly those samples with those offsets.
+#' @param df_all,df_unique the same experiment with \code{uniqueMappers()} FALSE and TRUE
+#' @return invisible character vector, unique raw OFST paths that were staged
+#' @noRd
+pshift_copy_all_shifts_to_unique <- function(df_all, df_unique) {
+  all_table <- file.path(dirname(pshifted_filepath(df_all[1, ])), "shifting_table.rds")
+  if (!file.exists(all_table))
+    stop("Experiment: '", name(df_all), "' has no all-mappers shifting table to copy to unique mappers!")
+  raw_all <- ofst_filepath(df_all); raw_unique <- ofst_filepath(df_unique)
+  unique_table <- file.path(dirname(pshifted_filepath(df_unique[1, ])), "shifting_table.rds")
+  staged <- list()
+  for (i in seq_len(nrow(df_unique))) {
+    entry <- pshift_table_entry(raw_all[i], all_table)
+    if (is.null(entry))
+      stop("Experiment: '", name(df_all), "': no all-mappers offsets for ", basename(raw_all[i]),
+           ", cannot copy them to unique mappers")
+    current <- pshift_table_entry(raw_unique[i], unique_table)
+    if (identical(entry, current) && pshift_sample_valid(df_unique[i, ])) next
+    staged[[raw_unique[i]]] <- entry
+  }
+  if (!length(staged)) return(invisible(character()))
+  message("- copying all-mappers offsets to unique mappers for ", length(staged), " samples")
+  pshift_mark_offsets_pending(unique_table, staged, reason = "copy of all-mappers offsets")
+  # Write the merged table directly: ORFik::shifts_save() overwrites when the new names are not a subset of the old.
+  # Existing keys may be written in another path form: match by normalized path.
+  tab <- if (file.exists(unique_table)) readRDS(unique_table) else list()
+  hit <- match(normalizePath(names(staged), mustWork = FALSE), normalizePath(as.character(names(tab)), mustWork = FALSE))
+  tab[names(tab)[hit[!is.na(hit)]]] <- staged[!is.na(hit)]
+  tab[names(staged)[is.na(hit)]] <- staged[is.na(hit)]
+  dir.create(dirname(unique_table), recursive = TRUE, showWarnings = FALSE)
+  saveRDS(tab, unique_table)
+  invisible(names(staged))
+}
+
 #' Marker of a running P-shift pass (one per mapper branch), read by \code{pshift_sample_progress()}
 #' @param pshifted_dir the branch's pshifted folder
 #' @return character path
@@ -1372,11 +1411,17 @@ pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_
       res <- pshift_extra_lengths_hook(df, res, extra_lengths, BPPARAM)
     }
 
+    # KEEP THIS DESIGN (Håkon, 2026-11-17): unique-mapper offsets are ALWAYS copied from the all-mappers shifting table,
+    # never detected on unique reads. Commit 26b3bc1 (2026-10-07, per-sample resume) replaced the copy with detection,
+    # and 3,300+ (run, read length) units drifted apart; the 2026-11-15 reshift then skipped the unique tables. The copy
+    # goes through the explicit-request mechanism (pending records), so resume, provenance and mito handling still apply.
+    # No extra-length hook here: the copied table already holds the all-mappers extra lengths.
     if(config$split_unique_mappers & !inherits(res, "error")) {
-      uniqueMappers(df) <- TRUE
-      res <- pshift_needed_subset(df, accepted_lengths, allowed_hard12_species, BPPARAM,
+      df_unique <- df
+      uniqueMappers(df_unique) <- TRUE
+      pshift_copy_all_shifts_to_unique(df, df_unique)
+      res <- pshift_needed_subset(df_unique, accepted_lengths, allowed_hard12_species, BPPARAM,
                                   config$max_no_adapter_removed_pct, reuse_shifts_if_existing)
-      res <- pshift_extra_lengths_hook(df, res, extra_lengths, BPPARAM)
     }
 
     if(!inherits(res, "error")) {
