@@ -219,3 +219,19 @@ test_that('outputs of a crashed first pass (no saved shifting table) are not tru
   saveRDS(f$shifts[2],f$table)                                     # table without this library's entry
   expect_false(pshift_sample_valid(f$df[1,])); expect_true(pshift_sample_valid(f$df[2,]))
 })
+
+test_that('a metadata-only change (ctime) keeps an applied sample valid; size or mtime changes do not', {
+  f<-provenance_fixture();mock_provenance_paths(f)
+  pshift_record_applied_offsets(f$df)
+  expect_true(pshift_sample_valid(f$df[1,]))
+  Sys.chmod(f$raw[[1]], "0600"); Sys.chmod(f$post[[1]], "0600")  # changes ctime only
+  rec <- pshift_offset_record_paths(f$raw[[1]], f$post[[1]])$applied
+  r <- readRDS(rec); r$raw$ctime <- r$raw$ctime - 1e5; r$shifted$ctime <- r$shifted$ctime - 1e5; saveRDS(r, rec)
+  expect_true(pshift_sample_valid(f$df[1,]))
+  Sys.setFileTime(f$raw[[1]], Sys.time() + 3600)  # raw rewritten later -> stale
+  expect_false(pshift_sample_valid(f$df[1,]))
+  a <- list(path = "x", size = 1, mtime = 2, ctime = 3)
+  expect_true(pshift_same_file(a, modifyList(a, list(ctime = 99))))
+  expect_false(pshift_same_file(a, modifyList(a, list(size = 2))))
+  expect_false(pshift_same_file(a, NULL))
+})

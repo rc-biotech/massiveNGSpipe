@@ -20,6 +20,13 @@ pshift_file_identity <- function(path) {
        mtime = as.numeric(z$mtime), ctime = as.numeric(z$ctime))
 }
 
+# Same file = same path, size and mtime. ctime is recorded but not compared: it changes on metadata-only events (chmod/chown
+# sweeps, mtime-preserving copies), which made unchanged samples look stale and get reshifted (E. coli PRJEB108825, 2026-11-17).
+pshift_same_file <- function(a, b) {
+  !is.null(a) && !is.null(b) && identical(a$path, b$path) && isTRUE(all.equal(a$size, b$size)) &&
+    isTRUE(all.equal(a$mtime, b$mtime, tolerance = 0))
+}
+
 pshift_offset_record_paths <- function(raw, shifted) {
   id <- sub("\\.ofst$", "", basename(raw))
   list(pending = file.path(dirname(shifted), ".offsets_pending", paste0(id, ".rds")),
@@ -101,7 +108,7 @@ pshift_reusable_offsets <- function(df_one_row, recipe, reuse = TRUE) {
     pending <- readRDS(paths$pending)
     entry <- pshift_table_entry(raw, table_path)
     if (!identical(pending$schema, 1L) || is.null(entry) ||
-        !identical(pending$raw, pshift_file_identity(raw)) ||
+        !pshift_same_file(pending$raw, pshift_file_identity(raw)) ||
         !identical(pending$offsets, entry))
       stop("Pending P-site offsets/source differ from explicit request: ", raw)
     return(entry)
@@ -111,7 +118,7 @@ pshift_reusable_offsets <- function(df_one_row, recipe, reuse = TRUE) {
     record <- readRDS(paths$applied)
     entry <- pshift_table_entry(raw, table_path)
     if (identical(record$schema, 1L) && !is.null(entry) &&
-        identical(record$raw, pshift_file_identity(raw)) &&
+        pshift_same_file(record$raw, pshift_file_identity(raw)) &&
         identical(record$recipe, recipe) && identical(record$offsets, entry)) entry else NULL
   }, error = function(e) NULL)
 }
@@ -131,8 +138,8 @@ pshift_offset_binding_valid <- function(df_one_row) {
     record <- readRDS(paths$applied)
     current <- pshift_table_entry(raw, file.path(dirname(shifted), "shifting_table.rds"))
     identical(record$schema, 1L) && !is.null(current) &&
-      identical(record$raw, pshift_file_identity(raw)) &&
-      identical(record$shifted, pshift_file_identity(shifted)) &&
+      pshift_same_file(record$raw, pshift_file_identity(raw)) &&
+      pshift_same_file(record$shifted, pshift_file_identity(shifted)) &&
       identical(record$offsets, current)
   }, error = function(e) FALSE)
 }
@@ -150,17 +157,17 @@ pshift_record_applied_offsets <- function(df, recipe = NULL) {
       if (!is.null(pending)) stop("Requested P-site output or saved table missing: ", raw)
       next
     }
-    if (!is.null(pending) && (!identical(pending$raw, pshift_file_identity(raw)) ||
+    if (!is.null(pending) && (!pshift_same_file(pending$raw, pshift_file_identity(raw)) ||
                              !identical(pending$offsets, current)))
       stop("Applied P-site offsets/source differ from explicit request: ", raw)
-    if (!is.null(pending) && identical(pending$previous_shifted, pshift_file_identity(shifted)))
+    if (!is.null(pending) && pshift_same_file(pending$previous_shifted, pshift_file_identity(shifted)))
       stop("P-site product was not rewritten after explicit offset request: ", raw)
     # Extra-length writers retain a same-source recipe; legacy records do not
     # acquire a fresh-detection certificate merely by being read again.
     bound_recipe <- recipe
     if (is.null(bound_recipe) && file.exists(paths$applied)) {
       old <- readRDS(paths$applied)
-      if (identical(old$raw, pshift_file_identity(raw))) bound_recipe <- old$recipe
+      if (pshift_same_file(old$raw, pshift_file_identity(raw))) bound_recipe <- old$recipe
     }
     pshift_atomic_record(list(schema = 1L, raw = pshift_file_identity(raw),
       shifted = pshift_file_identity(shifted), offsets = current, recipe = bound_recipe,
