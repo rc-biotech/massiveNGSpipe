@@ -259,10 +259,12 @@ pshift_per_library <- function(df, shifting_table, accepted_lengths, BPPARAM = B
     options(ORFik.pshift.cache = file.path(QCfolder(df), "pshift_index_cache"))
     ORFik::detectRibosomeShifts_index(txdb, txNames = txNames)
   }
+  pshift_cache <- getOption("ORFik.pshift.cache")
   det <- BiocParallel::bplapply(files[todo], function(file) {
     # opt-in: options(massiveNGSpipe.pshift_new = TRUE) uses ORFik::detectRibosomeShifts_new() (C++ counting pass on the ofst
     # path, identical offsets, no import); it falls back to detectRibosomeShifts() for unsupported arguments
     use_new <- isTRUE(getOption("massiveNGSpipe.pshift_new", FALSE))
+    if (use_new && !is.null(pshift_cache)) options(ORFik.pshift.cache = pshift_cache)   # workers of a SnowParam do not inherit options
     rfp <- if (use_new) file else fimport(file)
     detect <- if (use_new) ORFik::detectRibosomeShifts_new else detectRibosomeShifts
     for (strict in c(TRUE, FALSE)) {
