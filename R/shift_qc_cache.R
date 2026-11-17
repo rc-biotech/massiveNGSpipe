@@ -310,7 +310,17 @@ shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct 
   data.table::fwrite(zero_frame, file = file.path(QCFolder, "Ribo_frames_badzero.csv"))
 
   plot_idx <- intersect(ok_idx, subset)
-  if (length(plot_idx) > 0) shift_qc_plot_guarded(df, plot_idx)
+  # options(massiveNGSpipe.shift_qc_plot = FALSE) skips the combined QC picture (~1.5 min per 48-sample study); frame tables
+  # and the verdict are still computed. A stale picture is removed so it cannot be mistaken for the current shifts.
+  if (length(plot_idx) > 0) {
+    if (isTRUE(getOption("massiveNGSpipe.shift_qc_plot", TRUE))) {
+      shift_qc_plot_guarded(df, plot_idx)
+    } else {
+      output <- file.path(shift_qc_output_dir(df), "pshifts_barplots.png")
+      suppressWarnings(file.remove(c(output, paste0(output, ".fst"))))
+      message("Skipped pshift QC plot (option massiveNGSpipe.shift_qc_plot = FALSE)")
+    }
+  }
 
   trimmed_dir <- file.path(bam_dir_from_df(df), "trim")
   check_adapter_barcode_quality(bam_dir_from_df(df), trimmed_dir, max_no_adapter_removed_pct)

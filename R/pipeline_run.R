@@ -16,12 +16,12 @@
 #' @param pipelines list, output of pipeline_init_all
 #' @param config list, output from pipeline_config(), the global config for your
 #' NGS pipeline
-#' @param wait numeric, default 100 (in seconds). How long should each
+#' @param wait numeric, default 10 (in seconds; was 100 until 2026-11-17, which added up to 100 s per stage transition). How long should each
 #' partial pipeline wait if it done before it check for new results
 #' ready to continue with.
 #' @return invisible(NULL)
 #' @export
-run_pipeline <- function(pipelines, config, wait = 100) {
+run_pipeline <- function(pipelines, config, wait = 10) {
 
   pipelines <- drop_studies_failed_in_sessions(pipelines, config)
   if (!length(pipelines)) { message("run_pipeline: no studies left after skip_failed_sessions"); return(invisible(TRUE)) }
@@ -95,7 +95,7 @@ run_pipeline <- function(pipelines, config, wait = 100) {
 #' `config$flag_steps`), used to record its exit via `mark_stage_exited()`
 #' @return invisible(NULL)
 #' @noRd
-parallel_wrap <- function(function_call, pipelines, config, steps, wait = 100,
+parallel_wrap <- function(function_call, pipelines, config, steps, wait = 10,
                           stage_name = NULL) {
   steps_merged <- paste(steps, collapse = ", ", sep = ", ")
   message("Start step pipeline:\n", steps_merged)

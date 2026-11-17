@@ -493,3 +493,24 @@ test_that("shift_qc_plot_guarded() stops a plotting process above its memory lim
   expect_false(res)
   expect_false(any(file.exists(stale)))
 })
+
+test_that("options(massiveNGSpipe.shift_qc_plot = FALSE) skips the QC picture and removes a stale one", {
+  testthat::local_mocked_bindings(pshifted_filepath = fake_qc_stub_pshifted_path)
+  df <- fake_qc_stub()
+  out_dir <- withr::local_tempdir()
+  stale <- file.path(out_dir, "pshifts_barplots.png"); writeLines("old", stale); writeLines("old", paste0(stale, ".fst"))
+  fake_result <- list(hitmap = data.table::data.table(position = 1, frame = 0),
+                      frames = data.table::data.table(frame = 0, score = 1, fraction = "x", length = 30))
+  plotted <- FALSE
+  testthat::local_mocked_bindings(
+    shift_qc_one_sample = function(...) fake_result,
+    shift_qc_plot_guarded = function(...) { plotted <<- TRUE; invisible(TRUE) },
+    shift_qc_output_dir = function(df) out_dir,
+    check_adapter_barcode_quality = function(...) invisible(NULL),
+    shift_qc_annotation_context = function(df) list(upstream = 5, downstream = 20, cds = list(), mrna = list())
+  )
+  withr::local_options(massiveNGSpipe.shift_qc_plot = FALSE)
+  shift_qc_cached(df, BPPARAM = BiocParallel::SerialParam())
+  expect_false(plotted)
+  expect_false(file.exists(stale)); expect_false(file.exists(paste0(stale, ".fst")))
+})
