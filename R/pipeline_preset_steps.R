@@ -767,6 +767,8 @@ run_forked <- function(funs, parallel = TRUE) {
   # results are wrapped in a list so that a function returning NULL is not mistaken for a killed process
   jobs <- lapply(funs, function(f) parallel::mcparallel(list(f()), mc.set.seed = FALSE))
   res <- lapply(jobs, function(j) parallel::mccollect(j, wait = TRUE)[[1]])
+  reap_zombie_children()   # mccollect does not reap after a callr call in this process
+
   died <- vapply(res, is.null, logical(1)); failed <- vapply(res, inherits, logical(1), "try-error")
   if (any(died)) stop("forked job '", names(funs)[died][1], "' died without a result (killed or out of memory?)")
   if (any(failed)) stop("forked job '", names(funs)[failed][1], "' failed: ", as.character(res[failed][[1]]))

@@ -64,7 +64,8 @@ Imports:
     shinyWidgets,
     ShortRead,
     stringr,
-    SummarizedExperiment
+    SummarizedExperiment,
+    sys
 Suggests:
     GenomicFeatures,
     testthat (>= 3.0.0),

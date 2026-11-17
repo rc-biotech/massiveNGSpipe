@@ -101,8 +101,10 @@ run_experiment_subprocess <- function(func, args = list(),
     while (px$is_alive()) {
       Sys.sleep(poll_interval)
       if (!is.null(on_poll)) on_poll()
+      reap_zombie_children(keep = px$get_pid())   # forks of this worker are never reaped once processx runs
     }
     outcome <- tryCatch(list(value = px$get_result()), error = function(e) list(error = e))
+    reap_zombie_children()
     if (is.null(outcome$error)) return(outcome$value)
     if (attempt <= install_race_retries && is_install_race_error(outcome$error)) {
       message("massiveNGSpipe lazy-load race detected in subprocess (attempt ", attempt,

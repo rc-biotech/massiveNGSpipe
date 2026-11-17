@@ -108,6 +108,7 @@ parallel_wrap <- function(function_call, pipelines, config, steps, wait = 10,
     withCallingHandlers(function_call(pipelines, config),
       error = function(e) pipeline_crash_record(config, stage_name %||% steps_merged, e, sys.calls()))
     steps_done <- all_substeps_done_all(config, steps, exps)
+    reap_zombie_children()   # stage workers live for hours and mix callr with forks: see reap_zombie_children()
     if (!all(steps_done) && !stop_requested(config) && !all_pending_failed(config, pending_exps(config, steps, exps))) {
       Sys.sleep(wait)
       pipeline_checklist(pipelines, config)

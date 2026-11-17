@@ -366,8 +366,10 @@ shift_qc_plot_guarded <- function(df, plot_idx, max_gb = getOption("mngsp.shift_
       px$kill_tree()
       return(skip(paste0("plotting process exceeded ", max_gb, " GB")))
     }
+    reap_zombie_children(keep = px$get_pid())
   }
   res <- tryCatch(px$get_result(), error = function(e) e)
+  reap_zombie_children()
   if (inherits(res, "error")) return(skip(conditionMessage(res)))
   message("Saved pshift plots to location: ", output)
   invisible(TRUE)
