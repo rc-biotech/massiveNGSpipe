@@ -55,7 +55,8 @@ pipeline_config(
   threads = list(main = length(pipeline_steps), default = threads_default, trim =
     min(threads_default, 8), collapse = min(threads_default, 16), pshifted =
     min(threads_default, threads_blas_cap), valid_pshift = min(threads_default,
-    threads_blas_cap), pcounts = min(threads_default, threads_blas_cap))
+    threads_blas_cap), pcounts = min(threads_default, threads_blas_cap)),
+  count_cache = FALSE
 )
 }
 \arguments{
@@ -218,6 +219,8 @@ relative toexperiment)}
 
 \item{split_unique_mappers}{logical, default FALSE.
 Run for unique mappers only, split out into seperate directory.}
+
+\item{count_cache}{logical, default FALSE. Reuse validated per-sample coverage counts.}
 
 \item{all_mappers}{logical, default TRUE. Run for all mappers}
 

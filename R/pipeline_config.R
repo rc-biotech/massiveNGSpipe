@@ -127,6 +127,7 @@
 #' relative toexperiment)
 #' @param split_unique_mappers logical, default FALSE.
 #' Run for unique mappers only, split out into seperate directory.
+#' @param count_cache logical, default FALSE. Reuse validated per-sample coverage counts.
 #' @param all_mappers logical, default TRUE. Run for all mappers
 #' @param min_raw_reads_pshift numeric, default 1e5. Raw read-count
 #' threshold (summed across a study's runs) below which a study is
@@ -256,7 +257,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                                            pshifted = min(threads_default, threads_blas_cap),
                                            valid_pshift = min(threads_default, threads_blas_cap),
                                            pcounts = min(threads_default, threads_blas_cap)
-                                           )) {
+                                           ), count_cache = FALSE) {
   # Caps each forked worker's OWN internal BLAS/OpenMP thread pool to
   # the same bound as threads_blas_cap above -- see that parameter's
   # own roxygen for why the worker COUNT cap alone isn't sufficient.
@@ -327,6 +328,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               reuse_shifts_if_existing = reuse_shifts_if_existing,
               split_unique_mappers = split_unique_mappers,
               all_mappers = all_mappers,
+              count_cache = count_cache,
               min_raw_reads_pshift = min_raw_reads_pshift,
               min_alignment_rate_pshift = min_alignment_rate_pshift,
               max_no_adapter_removed_pct = max_no_adapter_removed_pct,
