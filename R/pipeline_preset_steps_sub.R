@@ -1344,7 +1344,7 @@ pshift_needed_subset <- function(df, accepted_lengths, allowed_hard12_species, B
 #' @param df_all,df_unique the same experiment with \code{uniqueMappers()} FALSE and TRUE
 #' @return invisible character vector, unique raw OFST paths that were staged
 #' @noRd
-pshift_copy_all_shifts_to_unique <- function(df_all, df_unique) {
+pshift_copy_all_shifts_to_unique <- function(df_all, df_unique, recipe = NULL) {
   all_table <- file.path(dirname(pshifted_filepath(df_all[1, ])), "shifting_table.rds")
   if (!file.exists(all_table))
     stop("Experiment: '", name(df_all), "' has no all-mappers shifting table to copy to unique mappers!")
@@ -1357,7 +1357,10 @@ pshift_copy_all_shifts_to_unique <- function(df_all, df_unique) {
       stop("Experiment: '", name(df_all), "': no all-mappers offsets for ", basename(raw_all[i]),
            ", cannot copy them to unique mappers")
     current <- pshift_table_entry(raw_unique[i], unique_table)
-    if (identical(entry, current) && pshift_sample_valid(df_unique[i, ])) next
+    # skip only when pshift_needed_subset() will skip it too (same validity AND recipe test); otherwise a sample with an
+    # identical entry but a stale recipe was reshifted without offsets and detected on unique reads (PRJNA928370, 2026-11-17)
+    if (identical(entry, current) && pshift_sample_valid(df_unique[i, ]) &&
+        (is.null(recipe) || pshift_recipe_valid(df_unique[i, ], recipe))) next
     staged[[raw_unique[i]]] <- entry
   }
   if (!length(staged)) return(invisible(character()))
@@ -1419,7 +1422,8 @@ pipeline_pshift <- function(df_list, config, accepted_lengths = config$accepted_
     if(config$split_unique_mappers & !inherits(res, "error")) {
       df_unique <- df
       uniqueMappers(df_unique) <- TRUE
-      pshift_copy_all_shifts_to_unique(df, df_unique)
+      pshift_copy_all_shifts_to_unique(df, df_unique,
+        recipe = pshift_detection_recipe(accepted_lengths, allowed_hard12_species, config$max_no_adapter_removed_pct))
       res <- pshift_needed_subset(df_unique, accepted_lengths, allowed_hard12_species, BPPARAM,
                                   config$max_no_adapter_removed_pct, reuse_shifts_if_existing)
     }

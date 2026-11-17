@@ -63,9 +63,22 @@ test_that("pipeline_pshift() unique pass copies offsets and never runs the extra
   testthat::local_mocked_bindings(
     pshift_needed_subset = function(df, ...) { calls <<- c(calls, paste0("shift:", uniqueMappers(df))); 1 },
     pshift_extra_lengths_hook = function(df, res, ...) { calls <<- c(calls, paste0("extra:", uniqueMappers(df))); res },
-    pshift_copy_all_shifts_to_unique = function(df_all, df_unique) {
+    pshift_copy_all_shifts_to_unique = function(df_all, df_unique, ...) {
       calls <<- c(calls, paste0("copy:", uniqueMappers(df_all), uniqueMappers(df_unique))); invisible(character()) })
   pipeline_pshift(list(stub), config)
   expect_equal(calls, c("shift:FALSE", "extra:FALSE", "copy:FALSETRUE", "shift:TRUE"))
   expect_true(step_is_done(config, "pshifted", name(stub)))
+})
+
+test_that("a sample with an identical unique entry but a stale recipe is still staged (never detected on unique reads)", {
+  x <- local_unique_layout()
+  saveRDS(setNames(lapply(ofst_filepath(x$stub), function(k) x$all_tab[[k]]), ofst_filepath(x$stub_u)), x$unique_table)
+  for (f in pshifted_filepath(x$stub_u)) { Sys.sleep(0.01); writeLines("shifted", f) }
+  recipe_old <- pshift_detection_recipe(28:29, character(), 80)
+  pshift_record_applied_offsets(x$stub_u, recipe = recipe_old)
+  expect_length(pshift_copy_all_shifts_to_unique(x$stub, x$stub_u, recipe = recipe_old), 0)   # same recipe: nothing to do
+  recipe_new <- pshift_detection_recipe(20:33, character(), 80)
+  staged <- pshift_copy_all_shifts_to_unique(x$stub, x$stub_u, recipe = recipe_new)            # recipe changed: copy staged
+  expect_setequal(basename(staged), c("SRR001.ofst", "SRR002.ofst"))
+  expect_identical(pshift_reusable_offsets(x$stub_u[1, ], recipe_new, reuse = FALSE), pshift_canonical_offsets(x$off(c(-12L, -12L))))
 })
