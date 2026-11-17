@@ -255,9 +255,13 @@ pshift_per_library <- function(df, shifting_table, accepted_lengths, BPPARAM = B
   todo <- which(!(files %in% names(shifting_table)))
   txdb <- loadTxdb(df); tx <- loadRegion(txdb, "mrna"); txNames <- filterTranscripts(txdb, 30L, 150L, NULL)
   det <- BiocParallel::bplapply(files[todo], function(file) {
-    rfp <- fimport(file)
+    # opt-in: options(massiveNGSpipe.pshift_new = TRUE) uses ORFik::detectRibosomeShifts_new() (C++ counting pass on the ofst
+    # path, identical offsets, no import); it falls back to detectRibosomeShifts() for unsupported arguments
+    use_new <- isTRUE(getOption("massiveNGSpipe.pshift_new", FALSE))
+    rfp <- if (use_new) file else fimport(file)
+    detect <- if (use_new) ORFik::detectRibosomeShifts_new else detectRibosomeShifts
     for (strict in c(TRUE, FALSE)) {
-      s <- tryCatch(detectRibosomeShifts(rfp, txdb, txNames = txNames, tx = tx, accepted.lengths = accepted_lengths,
+      s <- tryCatch(detect(rfp, txdb, txNames = txNames, tx = tx, accepted.lengths = accepted_lengths,
                                          strict.fft = strict), error = function(e) NULL)
       if (!is.null(s) && nrow(s) > 0) return(list(status = if (strict) "strict" else "weak", shifts = s))
     }
