@@ -737,13 +737,16 @@ make_additional_formats_internal <- function(df, libtype_df_ref =
   return(invisible(NULL))
 }
 
-#' bigWig of a one-library master from its covRle, forward and reverse strand written concurrently
+#' bigWig of a master from its covRle; one-library masters write forward and reverse strand concurrently,
+#' multi-library experiments (group tracks) go through convert_to_bigWig()
 #'
 #' Same files as \code{convert_to_bigWig(df, in_files = filepath(df, "cov"))}: <lib>_forward.bigWig and
 #' <lib>_reverse.bigWig for stranded data, <lib>.bigWig otherwise.
 #' @noRd
 master_bigwig <- function(df, parallel = TRUE) {
   in_file <- filepath(df, "cov")
+  # Group tracks (all_cell_lines etc.) hold several libraries: use the general converter (pre-e20ccd4 path)
+  if (length(in_file) != 1) return(convert_to_bigWig(df, in_files = in_file))
   out_dir <- file.path(libFolder(df), "bigwig"); dir.create(out_dir, showWarnings = FALSE)
   file <- file.path(out_dir, ORFik:::remove.file_ext(basename(in_file)))
   x <- fimport(in_file)
