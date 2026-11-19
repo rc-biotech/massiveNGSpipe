@@ -388,8 +388,8 @@ remove_sample_flags <- function(config, steps, exps, runs = NULL) {
   dirs <- unlist(lapply(c(steps, paste0(steps, "_unique")), function(s) vapply(exps, function(e) sample_flag_dir(config, s, e), "")))
   dirs <- dirs[dir.exists(dirs)]
   if (!is.null(runs)) {
-    files <- unlist(lapply(dirs, function(d) file.path(d, paste0(runs, ".rds"))))
-    unlink(files[file.exists(files)])
+    files <- as.character(unlist(lapply(dirs, function(d) file.path(d, paste0(runs, ".rds")))))
+    if (length(files)) unlink(files[file.exists(files)])   # no marker folders (e.g. Valen imports): nothing to remove
     if (length(files)) message("- Removed per-sample markers of ", length(runs), " runs in ", length(dirs), " step/experiment folders")
     return(invisible(dirs))
   }

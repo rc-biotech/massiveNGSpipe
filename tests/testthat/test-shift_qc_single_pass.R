@@ -95,3 +95,8 @@ test_that("qc_hitmap() equals ORFik::windowPerReadLength() (identical)", {
   wt <- qc_window_table(cds, mrna, 5, 20)
   expect_identical(qc_hitmap(qc_read_ofst(f), wt, 5), old)
 })
+
+test_that("remove_sample_flags with runs works when no sample-marker folders exist", {
+  cfg <- list(); local_mocked_bindings(sample_flag_dir = function(config, step, exp) file.path(tempdir(), "no_such_dir", step, exp))
+  expect_no_error(remove_sample_flags(cfg, c("pshifted", "covrle"), "STUDY-homo_sapiens", runs = c("SRR1", "SRR2")))
+})
