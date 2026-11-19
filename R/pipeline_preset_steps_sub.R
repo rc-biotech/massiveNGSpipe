@@ -1168,9 +1168,19 @@ save_pshifted_length_distributions <- function(df) {
     pshifted_paths <- filepath(df, "pshifted")
     run_ids <- runIDs(df)
     out_dir <- file.path(dirname(pshifted_paths[1]), "read_length_distribution")
+    dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
     for (i in seq_along(pshifted_paths)) {
       if (file.exists(pshifted_paths[i])) {
-        save_read_length_distribution(pshifted_paths[i], out_dir, run_ids[i])
+        # reuse the distribution computed by the single-read shift QC when it is at least as new as the file, else one
+        # plain fst read (no GRanges); same numbers as read_length_distribution()
+        cached <- tryCatch(shift_qc_cache_paths(df[i, ])$lendist, error = function(e) NA_character_)
+        if (!is.na(cached) && file.exists(cached) &&
+            file.info(cached)$mtime >= file.info(pshifted_paths[i])$mtime) {
+          file.copy(cached, file.path(out_dir, paste0(run_ids[i], ".csv")), overwrite = TRUE)
+        } else if (grepl("\\.ofst$", pshifted_paths[i])) {
+          data.table::fwrite(qc_length_distribution(qc_read_ofst(pshifted_paths[i])),
+                             file.path(out_dir, paste0(run_ids[i], ".csv")))
+        } else save_read_length_distribution(pshifted_paths[i], out_dir, run_ids[i])
       }
     }
     aggregate_read_length_distribution(out_dir)

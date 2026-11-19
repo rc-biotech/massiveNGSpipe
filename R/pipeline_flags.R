@@ -380,11 +380,19 @@ add_step_to_pipeline <- function(config, short_name, FUN, group_name = name_of_f
 #' @param config pipeline config
 #' @param steps step ids
 #' @param exps experiment names
+#' @param runs character or NULL (default). NULL deletes the whole marker folders (every sample); a vector of run IDs
+#' deletes only those samples' markers (\code{<run>.rds}), so a reshift of a few libraries reprocesses only those
 #' @return character, the deleted marker directories (invisibly)
 #' @noRd
-remove_sample_flags <- function(config, steps, exps) {
+remove_sample_flags <- function(config, steps, exps, runs = NULL) {
   dirs <- unlist(lapply(c(steps, paste0(steps, "_unique")), function(s) vapply(exps, function(e) sample_flag_dir(config, s, e), "")))
   dirs <- dirs[dir.exists(dirs)]
+  if (!is.null(runs)) {
+    files <- unlist(lapply(dirs, function(d) file.path(d, paste0(runs, ".rds"))))
+    unlink(files[file.exists(files)])
+    if (length(files)) message("- Removed per-sample markers of ", length(runs), " runs in ", length(dirs), " step/experiment folders")
+    return(invisible(dirs))
+  }
   unlink(dirs, recursive = TRUE)
   if (length(dirs)) message("- Removed per-sample markers: ", length(dirs), " step/experiment folders")
   invisible(dirs)

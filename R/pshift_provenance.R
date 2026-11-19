@@ -41,13 +41,20 @@ pshift_atomic_record <- function(value, path) {
   invisible(NULL)
 }
 
-pshift_table_entry <- function(raw, table_path) {
+pshift_table_entry <- function(raw, table_path, index = NULL) {
+  # index: result of pshift_table_index(table_path), so a loop over many libraries reads and normalizes the table ONCE
+  # instead of once per library (O(n^2) for n = 884 libraries)
+  if (is.null(index)) index <- pshift_table_index(table_path)
+  if (is.null(index)) return(NULL)
+  hit <- which(index$keys == normalizePath(raw, mustWork = FALSE))
+  if (length(hit) != 1L) return(NULL)
+  pshift_canonical_offsets(index$tab[[hit]])
+}
+
+pshift_table_index <- function(table_path) {
   if (!file.exists(table_path)) return(NULL)
   tab <- readRDS(table_path)
-  keys <- normalizePath(names(tab), mustWork = FALSE)
-  hit <- which(keys == normalizePath(raw, mustWork = FALSE))
-  if (length(hit) != 1L) return(NULL)
-  pshift_canonical_offsets(tab[[hit]])
+  list(tab = tab, keys = normalizePath(names(tab), mustWork = FALSE))
 }
 
 # Called before an offset-table edit. A crash between marker and table write is
@@ -147,12 +154,15 @@ pshift_offset_binding_valid <- function(df_one_row) {
 # Called only after the native shifting writer succeeds. Pending requests are
 # cleared only for existing products whose saved offsets match the request.
 pshift_record_applied_offsets <- function(df, recipe = NULL) {
+  index_cache <- list()
   for (i in seq_len(nrow(df))) {
     one <- df[i, ]; raw <- ofst_filepath(one); shifted <- pshifted_filepath(one)
     paths <- pshift_offset_record_paths(raw, shifted)
     pending <- if (file.exists(paths$pending)) readRDS(paths$pending) else NULL
     table_path <- file.path(dirname(shifted), "shifting_table.rds")
-    current <- pshift_table_entry(raw, table_path)
+    if (is.null(index_cache[[table_path]]))
+      index_cache[[table_path]] <- pshift_table_index(table_path) %||% FALSE
+    current <- pshift_table_entry(raw, table_path, index = if (isFALSE(index_cache[[table_path]])) list(tab = list(), keys = character()) else index_cache[[table_path]])
     if (!file.exists(raw) || !file.exists(shifted) || is.null(current)) {
       if (!is.null(pending)) stop("Requested P-site output or saved table missing: ", raw)
       next

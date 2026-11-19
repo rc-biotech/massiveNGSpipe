@@ -41,7 +41,7 @@ test_that("manual_reshift() writes the marker, clears downstream flags, sets psh
   expect_identical(shift_calls[["save"]]$shifts, shift_calls[["shift"]])
   expect_true(shift_calls[["pending"]])
   expect_true(shift_calls[["applied"]])
-  expect_true(shift_calls[["plots"]])
+  expect_null(shift_calls[["plots"]]) # no explicit all-library shiftPlots(): shift_qc() makes the picture
   expect_true(shift_calls[["qc"]])
   expect_true(shift_calls[["dist"]])
 

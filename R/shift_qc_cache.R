@@ -51,13 +51,14 @@ shift_qc_cache_dir <- function(df) {
 
 #' The cache file paths for one sample (one row of df)
 #' @param df_one_row an ORFik experiment subset to exactly one row
-#' @return list(hitmap = character, frames = character)
+#' @return list(hitmap = character, frames = character, lendist = character; the length distribution is optional)
 #' @noRd
 shift_qc_cache_paths <- function(df_one_row) {
   run_id <- ORFik::runIDs(df_one_row)
   cache_dir <- shift_qc_cache_dir(df_one_row)
   list(hitmap = file.path(cache_dir, paste0(run_id, "_hitmap.rds")),
-       frames = file.path(cache_dir, paste0(run_id, "_frames.csv")))
+       frames = file.path(cache_dir, paste0(run_id, "_frames.csv")),
+       lendist = file.path(cache_dir, paste0(run_id, "_lendist.csv")))
 }
 
 #' Resolve the expected P-site ofst path without raw-library fallback
@@ -84,10 +85,12 @@ pshifted_filepath <- function(df_one_row) {
 #' @param df_one_row an ORFik experiment subset to exactly one row
 #' @return logical
 #' @noRd
-shift_qc_cache_valid <- function(df_one_row) {
+shift_qc_cache_valid <- function(df_one_row, need_hitmap = TRUE) {
   pshifted_path <- pshifted_filepath(df_one_row)
   if (!file.exists(pshifted_path)) return(FALSE)
-  paths <- unlist(shift_qc_cache_paths(df_one_row))
+  # the length distribution is optional (older caches lack it); the hitMap (shift-barplot data) is only needed for the
+  # (at most 39) plotted libraries, so the other libraries are never required to carry it
+  paths <- unlist(shift_qc_cache_paths(df_one_row)[c(if (need_hitmap) "hitmap", "frames")])
   if (!all(file.exists(paths))) return(FALSE)
   cache_mtime <- min(file.info(paths)$mtime)
   cache_mtime >= file.info(pshifted_path)$mtime
@@ -114,11 +117,33 @@ shift_qc_cache_valid <- function(df_one_row) {
 #' never treat a failure as if the sample had zero reads.
 #' @noRd
 shift_qc_one_sample <- function(df_one_row, cds, mrna, upstream, downstream, weight = "score",
-                                plot_cds = cds, plot_mrna = mrna, name_short = NULL) {
+                                plot_cds = cds, plot_mrna = mrna, name_short = NULL,
+                                exons = NULL, need_hitmap = TRUE, win = NULL) {
   tryCatch({
-    style <- seqinfo(df_one_row)
-    lib <- ORFik::fimport(pshifted_filepath(df_one_row), style)
+    path <- pshifted_filepath(df_one_row)
     if (is.null(name_short)) name_short <- ORFik::bamVarName(df_one_row, skip.experiment = TRUE)
+    if (!is.null(exons) && identical(weight, "score")) {
+      # single-pass path (R/shift_qc_single_pass.R): ONE plain fst read; frame table and length distribution come from
+      # that read; the GRanges (fimport) is only built when the shift-barplot data is needed for this library
+      dt <- qc_read_ofst(path)
+      frames <- qc_frame_sums(dt, exons)
+      lendist <- qc_length_distribution(dt)
+      hitmap <- NULL
+      if (need_hitmap) {
+        hitmap <- if (!is.null(win)) qc_hitmap(dt, win, upstream) else {   # win: TIS-window table, see qc_window_table()
+          lib <- ORFik::fimport(path, seqinfo(df_one_row))
+          ORFik::windowPerReadLength(plot_cds, plot_mrna, lib, upstream = upstream, downstream = downstream)
+        }
+        hitmap[, frame := position %% 3]
+      }
+      if (nrow(frames) > 0) {
+        frames[, length := fraction]
+        frames[, fraction := rep(sub("^RFP_", "", name_short), nrow(frames))]
+      }
+      return(list(hitmap = hitmap, frames = frames, lendist = lendist, name_short = name_short))
+    }
+    style <- seqinfo(df_one_row)
+    lib <- ORFik::fimport(path, style)
 
     hitmap <- ORFik::windowPerReadLength(plot_cds, plot_mrna, lib, upstream = upstream, downstream = downstream)
     hitmap[, frame := position %% 3]
@@ -146,7 +171,8 @@ shift_qc_one_sample <- function(df_one_row, cds, mrna, upstream, downstream, wei
 write_shift_qc_cache <- function(df_one_row, result) {
   paths <- shift_qc_cache_paths(df_one_row)
   dir.create(dirname(paths$hitmap), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(result$hitmap, paths$hitmap)
+  if (!is.null(result$hitmap)) saveRDS(result$hitmap, paths$hitmap) else suppressWarnings(file.remove(paths$hitmap))
+  if (!is.null(result$lendist)) data.table::fwrite(result$lendist, paths$lendist)
   data.table::fwrite(result$frames, paths$frames)
   invisible(NULL)
 }
@@ -155,9 +181,12 @@ write_shift_qc_cache <- function(df_one_row, result) {
 #' @param df_one_row an ORFik experiment subset to exactly one row
 #' @return list(hitmap = data.table, frames = data.table)
 #' @noRd
-read_shift_qc_cache <- function(df_one_row) {
+read_shift_qc_cache <- function(df_one_row, what = c("hitmap", "frames")) {
   paths <- shift_qc_cache_paths(df_one_row)
-  list(hitmap = readRDS(paths$hitmap), frames = data.table::fread(paths$frames))
+  out <- list()
+  if ("hitmap" %in% what) out$hitmap <- readRDS(paths$hitmap)
+  if ("frames" %in% what) out$frames <- data.table::fread(paths$frames)
+  out
 }
 
 #' Cached, per-sample replacement for \code{shift_qc()}
@@ -221,7 +250,9 @@ shift_qc_output_dir <- function(df) {
 shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct = 80) {
   subset <- if (nrow(df) >= 40) seq(39) else seq(nrow(df))
 
-  needs_compute <- !vapply(seq_len(nrow(df)), function(i) shift_qc_cache_valid(df[i, ]), logical(1))
+  # hitMaps (shift-barplot data) are only needed for the plotted subset (first 39 libraries)
+  need_hitmap <- seq_len(nrow(df)) %in% subset
+  needs_compute <- !vapply(seq_len(nrow(df)), function(i) shift_qc_cache_valid(df[i, ], need_hitmap[i]), logical(1))
 
   if (any(needs_compute)) {
     # Annotation (transcript filtering, cds/mrna) is only ever needed
@@ -235,11 +266,17 @@ shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct 
     plot_cds <- if (is.null(ctx$plot_cds)) cds else ctx$plot_cds
     plot_mrna <- if (is.null(ctx$plot_mrna)) mrna else ctx$plot_mrna
     sample_names <- ctx$sample_names
+    # flat CDS exon table, built ONCE for all libraries (shared by the workers)
+    exons <- if (isTRUE(getOption("massiveNGSpipe.shift_qc_single_pass", TRUE)))
+      tryCatch(qc_cds_exon_table(cds), error = function(e) NULL) else NULL
+    win <- if (!is.null(exons) && any(needs_compute & need_hitmap))
+      tryCatch(qc_window_table(plot_cds, plot_mrna, upstream, downstream), error = function(e) NULL) else NULL
     idx <- which(needs_compute)
-    results <- BiocParallel::bplapply(idx, function(i, df, cds, mrna, upstream, downstream, plot_cds, plot_mrna, sample_names) {
+    results <- BiocParallel::bplapply(idx, function(i, df, cds, mrna, upstream, downstream, plot_cds, plot_mrna, sample_names, exons, need_hitmap, win) {
       res <- shift_qc_one_sample(df[i, ], cds, mrna, upstream, downstream,
                                  plot_cds = plot_cds, plot_mrna = plot_mrna,
-                                 name_short = if (is.null(sample_names)) NULL else sample_names[i])
+                                 name_short = if (is.null(sample_names)) NULL else sample_names[i],
+                                 exons = exons, need_hitmap = need_hitmap[i], win = win)
       # Write AS SOON AS this one sample finishes, inside the worker,
       # instead of returning it to the master for a deferred write
       # after the WHOLE batch completes. Each sample's cache files are
@@ -256,7 +293,8 @@ shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct 
       if (!inherits(res, "shift_qc_sample_error")) write_shift_qc_cache(df[i, ], res)
       res
     }, df = df, cds = cds, mrna = mrna, upstream = upstream, downstream = downstream,
-       plot_cds = plot_cds, plot_mrna = plot_mrna, sample_names = sample_names, BPPARAM = BPPARAM)
+       plot_cds = plot_cds, plot_mrna = plot_mrna, sample_names = sample_names,
+       exons = exons, need_hitmap = need_hitmap, win = win, BPPARAM = BPPARAM)
     for (j in seq_along(idx)) {
       res <- results[[j]]
       if (inherits(res, "shift_qc_sample_error")) {
@@ -266,7 +304,7 @@ shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct 
     }
   }
 
-  ok <- vapply(seq_len(nrow(df)), function(i) shift_qc_cache_valid(df[i, ]), logical(1))
+  ok <- vapply(seq_len(nrow(df)), function(i) shift_qc_cache_valid(df[i, ], need_hitmap[i]), logical(1))
   QCFolder <- shift_qc_output_dir(df)
   if (!all(ok)) {
     failed <- ORFik::runIDs(df[which(!ok), ])
@@ -276,7 +314,7 @@ shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct 
   }
   dir.create(QCFolder, recursive = TRUE, showWarnings = FALSE)
   ok_idx <- which(ok)
-  cached <- lapply(ok_idx, function(i) read_shift_qc_cache(df[i, ]))
+  cached <- lapply(ok_idx, function(i) read_shift_qc_cache(df[i, ], what = "frames"))
 
   # fill = TRUE: a sample whose frames table came back with ZERO rows
   # (e.g. no periodicity-covered regions at all) never goes through
@@ -313,7 +351,13 @@ shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct 
   # options(massiveNGSpipe.shift_qc_plot = FALSE) skips the combined QC picture (~1.5 min per 48-sample study); frame tables
   # and the verdict are still computed. A stale picture is removed so it cannot be mistaken for the current shifts.
   if (length(plot_idx) > 0) {
-    if (isTRUE(getOption("massiveNGSpipe.shift_qc_plot", TRUE))) {
+    png_path <- file.path(shift_qc_output_dir(df), "pshifts_barplots.png")
+    hitmaps <- vapply(plot_idx, function(i) shift_qc_cache_paths(df[i, ])$hitmap, "")
+    plot_is_current <- !any(needs_compute[plot_idx]) && all(file.exists(c(png_path, paste0(png_path, ".fst"), hitmaps))) &&
+      file.info(png_path)$mtime >= max(file.info(hitmaps)$mtime)
+    if (isTRUE(getOption("massiveNGSpipe.shift_qc_plot", TRUE)) && plot_is_current) {
+      message("P-shift QC plot is current (no plotted library recomputed), not rebuilt: ", png_path)
+    } else if (isTRUE(getOption("massiveNGSpipe.shift_qc_plot", TRUE))) {
       shift_qc_plot_guarded(df, plot_idx)
     } else {
       output <- file.path(shift_qc_output_dir(df), "pshifts_barplots.png")
@@ -391,7 +435,7 @@ shift_qc_plot_guarded <- function(df, plot_idx, max_gb = getOption("mngsp.shift_
 shift_qc_build_combined_plot <- function(df, plot_idx) {
   lib_names <- ORFik::bamVarName(df[plot_idx, ], skip.experiment = TRUE)
   plots <- lapply(seq_along(plot_idx), function(x) {
-    hitmap <- read_shift_qc_cache(df[plot_idx[x], ])$hitmap
+    hitmap <- read_shift_qc_cache(df[plot_idx[x], ], what = "hitmap")$hitmap
     miniTitle <- gsub("_", " ", lib_names[x])
     p <- ORFik::pSitePlot(hitmap, scoring = "transcriptNormalized",
                           facet = TRUE, frameSum = TRUE, title = miniTitle)

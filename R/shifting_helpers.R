@@ -103,6 +103,11 @@ fft_strength_files <- function(df) {
 }
 
 shift_qc <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct = 80) {
+  # Default: the per-sample single-read implementation (R/shift_qc_cache.R + shift_qc_single_pass.R: each library read
+  # once, frame/length tables from that read, hitMaps only for the plotted 39, per-sample cache, parallel over libraries).
+  # Same output files and numbers as the code below; options(massiveNGSpipe.shift_qc_legacy = TRUE) runs the old code.
+  if (!isTRUE(getOption("massiveNGSpipe.shift_qc_legacy", FALSE)))
+    return(shift_qc_cached(df, BPPARAM = BPPARAM, max_no_adapter_removed_pct = max_no_adapter_removed_pct))
   # Plot max 39 libraries!
   subset <- if (nrow(df) >= 40) {seq(39)} else {seq(nrow(df))}
   has_leaders <- length(filterTranscripts(df, 5, 0, 0, stopOnEmpty = FALSE))
