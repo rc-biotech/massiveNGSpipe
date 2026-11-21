@@ -185,3 +185,36 @@ test_that("pipeline_convert_bigwig() drives convert_per_sample() with bigwig ste
   expect_identical(unlist(calls), c("bigwig", "bigwig_unique"))
   expect_true(step_is_done(config, "bigwig", name(stub)))
 })
+
+
+test_that("conversion workers honor exact, base-mode and fallback budgets", {
+  config <- fake_config()
+  config$threads$default <- 8L
+  config$threads$covrle <- 1L
+  seen <- character()
+  local_mocked_bindings(bpparam_from_config = function(config, step, ...) {
+    seen <<- c(seen, step)
+    config$threads[[step]]
+  }, .package = "massiveNGSpipe")
+  expect_identical(conversion_step_bpparam(config, "covrle"), 1L)
+  expect_identical(conversion_step_bpparam(config, "covrle_unique"), 1L)
+  config$threads$covrle_unique <- 2L
+  expect_identical(conversion_step_bpparam(config, "covrle_unique"), 2L)
+  expect_identical(conversion_step_bpparam(config, "bigwig"), 8L)
+  expect_identical(seen, c("covrle", "covrle", "covrle_unique", "default"))
+})
+
+test_that("per-sample dispatch uses a coverage cap rather than default workers", {
+  config <- fake_config()
+  config$threads$default <- 8L
+  config$threads$covrle <- 1L
+  stub <- fake_experiment_stub(run_ids = c("SRR001", "SRR002"))
+  selected <- NULL
+  local_mocked_bindings(bpparam_from_config = function(config, step, ...) {
+    selected <<- step
+    BiocParallel::SerialParam()
+  }, .package = "massiveNGSpipe")
+  convert_per_sample(stub, config, "covrle_unique", function(x) invisible(NULL))
+  expect_identical(selected, "covrle")
+  expect_setequal(samples_done(config, "covrle_unique", name(stub)), c("SRR001", "SRR002"))
+})

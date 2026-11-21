@@ -113,6 +113,10 @@
 #'  list): \code{config$ram_reserve_gb} (memory an alignment must leave available; default the shared budget's
 #'  reserve_gb from open_workspace/agent_mail/resources/policy.json, else 0) and \code{config$ram_recheck_seconds}
 #'  (default 300; deferred samples are re-checked once before a study is left for the next round).
+#'  Optional \code{config$bam_sort_memory_gb} caps the per-job BAM-sort budget even when the host has more free RAM.
+#'  Estimates above this cap select the external Rsamtools sorter (requires an ORFik with \code{bam.sort});
+#'  its budget is the smaller of this cap and \code{config$external_bam_sort_gb} (default16GB).
+#'  The genome index and R workers require additional memory in the total job reservation.
 #' @param compress_raw_data logical, default FALSE. If TRUE, will compress raw fastq files.
 #' @param stop_downloading_new_data_at_drive_usage integer, default 92,
 #' percentage value where the drive will stop downloading new data. Set to 101 to

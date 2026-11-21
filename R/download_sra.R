@@ -142,14 +142,18 @@ download_sra_ebi <- function(accession, outdir, compress) {
   message("Using ebi fallback")
   # R's default 60 s download timeout cut every large EBI file at ~1 GB (2026-10-29), so the slow fastq-dump ran instead
   old_timeout <- options(timeout = max(getOption("timeout"), 24 * 3600)); on.exit(options(old_timeout), add = TRUE)
-  res <- try(ORFik::download.SRA(accession, outdir, rename = FALSE))
+  # One accession has at most two mates; avoid inheriting a study-level
+  # MulticoreParam inside this already-isolated subprocess.
+  res <- try(ORFik::download.SRA(accession, outdir, rename = FALSE,
+                                 BPPARAM = BiocParallel::SerialParam()))
   if (is(res, "try-error")) {
     # partial EBI files next to fastq-dump's output made validate_fastq_download() reject the run
     partial <- list.files(outdir, paste0("^", accession, "(_[12])?\\.fastq\\.gz$"), full.names = TRUE)
     if (length(partial)) { message("Removing partial EBI downloads: ", paste(basename(partial), collapse = ", ")); file.remove(partial) }
     message("Using fastq-dump fallback")
     res <- ORFik::download.SRA(accession, outdir, use.ebi.ftp = FALSE,
-                               rename = FALSE, compress = compress)
+                               rename = FALSE, compress = compress,
+                               BPPARAM = BiocParallel::SerialParam())
   } else {
     if (!compress) {
       lapply(res, function(fastq) R.utils::gunzip(fastq, overwrite = TRUE))
@@ -203,6 +207,19 @@ sra_to_fastq <- function(accession, outdir, compress = TRUE,
                    "--outdir", fasterq_temp_dir)
   )
 
+  # Some SINGLE archives contain a zero-length technical mate: --split-files then writes only RUN_1.fastq (and maybe an
+  # empty RUN_2.fastq) although there is one biological read. Normalize to RUN.fastq before the copy/compress steps.
+  # A non-empty RUN_2.fastq (two real reads per spot) is left to the rule below and validate_fastq_download().
+  if (ret == 0 && !PAIRED_END) {
+    numbered <- paste0(temp_path, "_1.fastq")
+    second <- paste0(temp_path, "_2.fastq")
+    unnumbered <- paste0(temp_path, ".fastq")
+    second_empty <- !file.exists(second) || isTRUE(file.info(second)$size == 0)
+    if (!file.exists(unnumbered) && file.exists(numbered) && second_empty) {
+      if (file.exists(second)) file.remove(second)
+      if (!file.rename(numbered, unnumbered)) stop("Could not normalize single-end FASTQ name")
+    }
+  }
   out_file_temp <- paste0(temp_path, if(PAIRED_END) c("_1", "_2"), ".fastq")
   # a run labelled SINGLE can hold two reads per spot (--split-files then writes _1/_2): take what was written,
   # validate_fastq_download() keeps read 1
@@ -211,7 +228,9 @@ sra_to_fastq <- function(accession, outdir, compress = TRUE,
   out_suffix <- substring(out_file_temp, nchar(temp_path) + 1)
 
   if (ret != 0) {
-    rm_files <- c(out_file_temp, temp_path)
+    # Keep the cached archive when extraction used the output drive.
+    # Only a private scratch copy belongs to this failed extraction.
+    rm_files <- c(out_file_temp, if (using_temp_dir) temp_path)
     file.remove(rm_files[file.exists(rm_files)])
     stop("Fasterq dump failed!")
   }

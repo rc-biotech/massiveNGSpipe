@@ -44,10 +44,15 @@ pipeline_download <- function(pipeline, config, pipelines = list(pipeline)) {
         if (nrow(info) > 0) {
           run_experiment_subprocess(
             func = function(info, outdir, compress, config, experiment) {
-              download_sra(
+              download_args <- list(
                 info, outdir, compress = compress,
                 after_run = function(run) set_sample_flag(config, "fetch", experiment, run)
               )
+              # An opt-in immutable toolkit can be validated without replacing
+              # the binary used by another live pipeline session.
+              toolkit <- config[["sratoolkit_path", exact = TRUE]]
+              if (!is.null(toolkit)) download_args$sratoolkit_path <- toolkit
+              do.call(download_sra, download_args)
             },
             args = list(info = info, outdir = conf["fastq"],
                         compress = config$compress_raw_data, config = config, experiment = experiment),
@@ -532,7 +537,8 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
             }, error = function(e) {
               exact <- estimate_bam_sort_ram_from_error(conditionMessage(e))
               if (is.na(exact) || sort_plan$sorter != "STAR") stop(e) # not a STAR sort memory error -- propagate unchanged
-              decision2 <- bam_sort_ram_decision(exact, reserve_gb = ram_reserve_gb(config))
+              retry_plan <- bam_sort_plan(exact, config)
+              decision2 <- retry_plan$decision
               if (decision2$decision == "crash") {
                 stop(sprintf(
                   "Sample %s needs %.1fGB for BAM sorting (STAR's own exact figure), exceeding this machine's safe usable total (%.1fGB) -- cannot be aligned here without a configuration change.",
@@ -551,7 +557,7 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
               # "proceed": free memory changed since the proactive check
               # (e.g. something else just finished) -- retry once more
               # with STAR's own exact value instead of the rough estimate.
-              align_attempt(file1, file2, output_dir, exact)
+              align_attempt(file1, file2, output_dir, retry_plan$limit_bytes, sorter = retry_plan$sorter)
               "done"
             })
             if (identical(retry_result, "deferred")) next
@@ -980,11 +986,12 @@ pipeline_create_experiment <- function(pipeline, config) {
 #' \code{convert_bam_to_ofst()}/\code{convert_to_covRleList()}/
 #' \code{convert_to_bigWig()} (the last one wrapped to also supply its
 #' \code{in_files} argument per-row)
-#' @param BPPARAM BiocParallel param, default \code{bpparam_from_config(config, "default")}
+#' @param BPPARAM BiocParallel param; defaults to this step's configured budget.
+#' Mapper-specific budgets override the base step, then default is the fallback.
 #' @return invisible(NULL)
 #' @noRd
 convert_per_sample <- function(df, config, step_id, convert_fun,
-                               BPPARAM = bpparam_from_config(config, "default")) {
+                               BPPARAM = conversion_step_bpparam(config, step_id)) {
   experiment <- name(df)
   run_ids <- runIDs(df)
   done <- samples_done(config, step_id, experiment)
@@ -995,6 +1002,17 @@ convert_per_sample <- function(df, config, step_id, convert_fun,
   }, df = df, convert_fun = convert_fun, config = config, step_id = step_id,
      experiment = experiment, run_ids = run_ids, BPPARAM = BPPARAM)
   invisible(NULL)
+}
+
+# Honor the exact step budget, then its base mapper mode, then default.
+# Using default unconditionally ignored threads$covrle=1 and could launch eight
+# high-memory coverage conversions despite an explicit per-step cap.
+conversion_step_bpparam <- function(config, step_id) {
+  choices <- unique(c(step_id, sub("_unique$", "", step_id), "default"))
+  available <- vapply(choices, function(x)
+    !is.null(config$threads[[x, exact = TRUE]]), logical(1))
+  if (!any(available)) stop("No configured worker budget for conversion step: ", step_id)
+  bpparam_from_config(config, choices[which(available)[1L]])
 }
 
 # Dedicated sample budget, leaving other pipeline stages at their existing
