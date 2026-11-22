@@ -1,6 +1,6 @@
 # Unit tests for R/pipeline_collapse.R -- memory_safe_worker_count()'s
 # pure logic, and pipeline_collapse()'s per-sample resume behavior.
-# ORFik::collapse.fastq() itself (real fastq I/O) is mocked throughout;
+# ORFik::collapse.fastq() and fast_collapse_fastq() (real fastq I/O) are mocked throughout;
 # these tests cover massiveNGSpipe's own orchestration.
 
 test_that("memory_safe_worker_count defers to max_workers when everything fits comfortably in memory", {
@@ -75,8 +75,17 @@ test_that("pipeline_collapse() skips a sample already marked done, collapsing on
   set_sample_flag(config, "collapsed", exp_name, "SRR001")
 
   collapsed_runs <- character()
+  # the collapse worker sets this option in-process here (run_experiment_subprocess is mocked)
+  withr::local_options(massiveNGSpipe.fast_trim = getOption("massiveNGSpipe.fast_trim"))
+  # Since 2250521 the default collapse path is the trimcollapse binary (fast_collapse_fastq), which bypasses
+  # ORFik::collapse.fastq; mock both paths so the test covers orchestration only.
   testthat::local_mocked_bindings(
-    run_experiment_subprocess = function(func, args, ...) do.call(func, args)
+    run_experiment_subprocess = function(func, args, ...) do.call(func, args),
+    fast_collapse_enabled = function(file) TRUE,
+    fast_collapse_fastq = function(file, outdir, ...) {
+      collapsed_runs <<- c(collapsed_runs, basename(file))
+      invisible(NULL)
+    }
   )
   testthat::local_mocked_bindings(
     collapse.fastq = function(filename, outdir, ...) {
@@ -109,7 +118,8 @@ test_that("pipeline_collapse() does nothing (no error) when every sample is alre
 
   called <- FALSE
   testthat::local_mocked_bindings(
-    run_experiment_subprocess = function(func, args, ...) do.call(func, args)
+    run_experiment_subprocess = function(func, args, ...) do.call(func, args),
+    fast_collapse_fastq = function(...) { called <<- TRUE }
   )
   testthat::local_mocked_bindings(
     collapse.fastq = function(...) { called <<- TRUE }, .package = "ORFik"

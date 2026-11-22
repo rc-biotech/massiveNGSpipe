@@ -440,9 +440,12 @@ test_that("missing P-sites cannot be satisfied by filepath's raw-library fallbac
   dir.create(file.path(root, "ofst"), recursive = TRUE)
   raw <- file.path(root, "ofst", "SRR123.ofst")
   file.create(raw)
+  # Offset provenance (42babab, 436f9c4: a legacy output without a shifting_table.rds entry is not trusted) is
+  # tested in test-pshift_provenance.R; bypass it here so this test checks only the path resolution.
   testthat::local_mocked_bindings(
     ofst_filepath = function(df) raw,
-    libFolder = function(df) root
+    libFolder = function(df) root,
+    pshift_offset_binding_valid = function(df_one_row) TRUE
   )
   testthat::local_mocked_bindings(filepath = function(df, type) raw, .package = "ORFik")
   expect_false(pshift_sample_valid(NULL))

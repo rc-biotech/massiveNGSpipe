@@ -343,11 +343,24 @@ test_that("resolve_adapter_for_trim() passes a concrete adapter through unchange
   expect_false(result$polyN_adapter)
 })
 
-test_that("resolve_adapter_for_trim() falls back to disable when adapter detection errored (try-error)", {
+test_that("resolve_adapter_for_trim() falls back to a read scan when adapter detection errored (try-error)", {
+  # Since 5907392 a FastQC failure on fastq input no longer disables trimming:
+  # adapter_scan_reads() scans the reads instead.
   bad_adapter <- try(stop("adapter detection failed"), silent = TRUE)
-  result <- resolve_adapter_for_trim("some/path/reads.fastq", tempdir(), adapter = bad_adapter)
-  expect_identical(result$adapter, "disable")
+  d <- tempfile("resolve_scan_"); dir.create(d); on.exit(unlink(d, recursive = TRUE), add = TRUE)
+  set.seed(1)
+  ins <- vapply(1:200, function(i) paste(sample(c("A", "C", "G", "T"), 30, TRUE), collapse = ""), "")
+  write_fq <- function(s, path) {
+    writeLines(as.vector(rbind(paste0("@r", seq_along(s)), s, "+", strrep("I", nchar(s)))), path)
+    path
+  }
+  with_adapter <- write_fq(substr(paste0(ins, "AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC"), 1, 50),
+                           file.path(d, "adapter.fastq"))
+  expect_message(result <- resolve_adapter_for_trim(with_adapter, tempdir(), adapter = bad_adapter),
+                 "FastQC adapter detection failed")
+  expect_true(grepl("^AGATCGGAAGAG", unname(result$adapter)))
   expect_false(result$polyN_adapter)
+  expect_identical(result$tempfile, with_adapter)
 })
 
 test_that("resolve_adapter_for_trim() strips a polyN tail and switches to a fixed adapter", {
