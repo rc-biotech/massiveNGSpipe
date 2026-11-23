@@ -507,14 +507,17 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
     reads_dup <- tryCatch(as.character(readDNAStringSet(file_trim, format = "fastq", nrec = 3e5, use.names = FALSE)),
                           error = function(e) character())
     if (guarded) {
-      # Sequence evidence only (2026-11-23 review): cut = fixed run + random UMI, both measured on the reads
-      # (end_barcode_call()). Change point calls on fastp's or the tail-anchored curves never cut, at either end:
-      # raw 5' quality-curve calls cut 3 footprint nt in GSE73553 and the z-score retry cut 6 nt in SRR5766466.
+      # Sequence evidence only (2026-11-23 reviews): cut = fixed run + non-templated (random) run, both measured on
+      # the reads (end_barcode_call(): top-base share and templating kappa). Change point calls on fastp's or the
+      # tail-anchored curves never cut, at either end: raw 5' quality-curve calls cut 3 footprint nt in GSE73553 and
+      # the z-score retry cut 6 nt in SRR5766466. Reads of full cycle length (no adapter found) have no molecule 3'
+      # end and are left out of the 3' test.
       e5 <- end_barcode_call(reads_dup, "5p", max_k = max_barcode_left_size, sample = sample)
-      e3 <- end_barcode_call(reads_dup, "3p", max_k = max_barcode_right_size, sample = sample)
+      e3 <- end_barcode_call(reads_dup, "3p", max_k = max_barcode_right_size, full_length = max_size_before,
+                             sample = sample)
       barcode5p_size <- sum(e5); barcode3p_size <- sum(e3)
-      message("-- Barcode from reads: 5' ", barcode5p_size, " nt (fixed ", e5[["fixed"]], " + UMI ", e5[["umi"]],
-              "), 3' ", barcode3p_size, " nt (fixed ", e3[["fixed"]], " + UMI ", e3[["umi"]], ")")
+      message("-- Barcode from reads: 5' ", barcode5p_size, " nt (fixed ", e5[["fixed"]], " + random ", e5[["umi"]],
+              "), 3' ", barcode3p_size, " nt (fixed ", e3[["fixed"]], " + random ", e3[["umi"]], ")")
     } else {
       # Legacy detector (options(massiveNGSpipe.barcode_detector = "legacy")), unchanged from 1914c90 + UMI calls.
       # 5' and 3' use different curve sources (see barcode_change_point_5p()/_3p()'s own docs for why), so each side
@@ -546,10 +549,15 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
       barcode5p_size <- max(barcode5p_size, umi5); barcode3p_size <- max(barcode3p_size, umi3)
     }
 
+    # Guarded: every cut position is sequence-supported, so the size check uses the 90th percentile read length rather
+    # than the mean (short contaminant reads pulled the mean of McGlincy libraries, 2 + footprint + 10 nt, to 36 and
+    # rejected their real 3' cut), and the length guard only reports (a contaminant length mode rejected the real 2 + 5
+    # nt cut of SRR26984481).
+    size_for_check <- if (guarded && length(reads_dup)) unname(stats::quantile(nchar(reads_dup), 0.9)) else max_size_after
     barcode_sizes <- constrain_barcode_sizes(barcode5p_size, barcode3p_size,
-                                             max_size_after, minimum_size, clip = !guarded)
+                                             size_for_check, minimum_size, clip = !guarded)
     if (guarded && is_ribo_library(study_sample))
-      barcode_sizes <- post_trim_length_guard(reads_dup, barcode_sizes, accepted_lengths, sample)
+      barcode_sizes <- post_trim_length_guard(reads_dup, barcode_sizes, accepted_lengths, sample, reject = FALSE)
     barcode5p_size <- barcode_sizes["barcode5p_size"]
     barcode3p_size <- barcode_sizes["barcode3p_size"]
 
@@ -791,7 +799,7 @@ constrain_barcode_sizes <- function(barcode5p_size, barcode3p_size, max_size_aft
 #' \code{options(massiveNGSpipe.barcode_detector = "legacy")} restores the detector as it was from 1914c90
 #' (2026-09-29) to this change: curve change point calls (raw, then z-score retry) plus duplication UMI calls, calls
 #' clipped to \code{minimum_size}, no length guard and no poly(A) fallback. Default "guarded": cuts only on sequence
-#' evidence (\code{\link{end_barcode_call}}: fixed run + UMI), rejects instead of clipping
+#' evidence (\code{\link{end_barcode_call}}: fixed run + non-templated run), rejects instead of clipping
 #' (\code{\link{constrain_barcode_sizes}}), \code{\link{post_trim_length_guard}} and \code{\link{polyA_tail_fraction}}.
 #' @return "guarded" or "legacy"
 #' @noRd
@@ -802,107 +810,193 @@ barcode_detector_mode <- function() {
   mode
 }
 
-#' Barcode at one read end from sequence evidence: fixed run + random UMI
+#' Barcode at one read end from sequence evidence: fixed run + non-templated (random) run
 #'
-#' The guarded detector's only cutter (curve change points never cut). On adapter-trimmed reads, counted from the read
-#' end of \code{side} (fixed part: reads of at least \code{max_k + min_fixed_rest} nt; UMI part: \code{max_k +
-#' min_rest} nt):
+#' The guarded detector's only cutter (curve change points never cut). On distinct adapter-trimmed reads of at least
+#' \code{max_k + min_fixed_rest} nt, each position from the read end of \code{side} is
 #' \itemize{
-#'  \item fixed part: positions from the end with top-base share >= \code{fixed_share}, measured on distinct reads
-#'  (one abundant contaminant cannot fake a barcode), needing \code{min_fixed_reads} distinct reads. A run of one base
-#'  of \code{min_homopolymer} nt or more is a tail (poly(A) etc.), not a barcode: no cut, manual review.
-#'  \item UMI part: merge fractions after the fixed part (merge[k] = share of distinct reads that become identical when
-#'  base k is trimmed too; random UMI bases make copies of one footprint merge, see
-#'  \code{\link{umi_length_from_duplication}}). The UMI ends at the first k where the next merge fraction drops below
-#'  \code{collapse} x the largest so far; accepted when that largest is >= \code{umi_min_peak}, merge[k] >=
-#'  \code{umi_min_last} and the UMI is >= \code{umi_min_len} nt. Needs \code{min_reads} reads.
-#'  \item soft UMI end: when a collapse is seen but the end is not clean (merge[k] below \code{umi_min_last}, e.g. a
-#'  two-step drop), the run from the peak with merge >= half the peak is used if the next fraction is below
-#'  \code{soft_ratio} x the peak (\code{\link{umi_end_from_merge}}; SRR28976196 3': 0.18, 0.23, 0.22 then 0.04 = 6 nt,
-#'  the shortest end the reads support), with a manual review line. Otherwise ambiguous signal = no UMI cut plus a
-#'  manual review line.
+#'  \item fixed: top-base share >= \code{fixed_share} on distinct reads (one abundant contaminant cannot fake a
+#'  barcode), needing \code{min_fixed_reads} distinct reads;
+#'  \item non-templated: templating kappa <= \code{kappa_cut} with at least \code{min_pairs} read pairs
+#'  (\code{\link{end_templating_profile}}): reads that share the adjacent \code{anchor} nt do not share this base, so it
+#'  was not copied from the RNA (random UMI, random adapter or primer N bases, template-switch bases). Unlike
+#'  composition (entropy) or PCR duplicates (merge fractions) this needs neither a base bias nor copies of a molecule;
+#'  \item templated: kappa above \code{kappa_cut}; or untestable (fewer pairs).
 #' }
-#' 2026-11-23 reads (1M-read ENA prefixes): SRR16039918 5' 3 (UMI) / 3' 5 fixed AGCTA + 5 UMI; SRR38141702 5' 2 / 3'
-#' 5 fixed + 5 UMI; SRR34280150 5' 5 / 3' 4 (UMIs); SRR2535267 and SRR6904861 0 / 0; SRR5766466 5' 2 (fixed CC) / 3' 0;
-#' SRR34874063 (PRJNA1301971 read 2, GAT + 5 nt UMI) 5' 3 fixed + 5 UMI: its merge peak is 0.043 (then 0.0003), hence
-#' \code{umi_min_peak} 0.03 rather than 0.05.
+#' The cut ends at a boundary: a fixed or non-templated position followed by a templated one (untestable positions in
+#' between are allowed and reported). No position outside the boundary may be templated (kappa above
+#' \code{kappa_partial}) when tested against the boundary's insert anchor (their own anchors contain random bases, which
+#' inflates their kappa). With
+#' several boundaries the innermost supported one wins.
+#'
+#' No cut, with a manual review line, when: the leading fixed run is one base of \code{min_homopolymer} nt or more
+#' (a tail such as poly(A), not a barcode), or no templated position is found within \code{max_k} (flank length
+#' unknown). Only the fixed run is cut, with a review line, when no position is testable. A review line without a
+#' change to the cut: untestable positions at the boundary (the cut may be short), an unsupported boundary, or a partly
+#' non-templated position after the cut (kappa in (\code{kappa_cut}, \code{kappa_partial}], e.g. a base added to part
+#' of the reads); such positions are left to the aligner's soft clipping, since cutting them would remove a footprint
+#' base from the other reads.
+#'
+#' Thresholds from the 2026-11-23 panel (pshift_regression_20261122/RANDOM_FLANK_REVIEW_20261123.md: 1M-read ENA
+#' prefixes of Ribo-seq libraries, truth from soft clips of a local alignment to CDS windows).
 #' @param seqs character, adapter-trimmed reads
 #' @param side "5p" or "3p"
-#' @param max_k largest barcode length tested
+#' @param max_k largest flank length tested
+#' @param min_fixed_rest reads must keep at least this many nt after \code{max_k}
+#' @param anchor,cap see \code{\link{end_templating_profile}}
+#' @param kappa_cut positions with kappa at or below this are non-templated (cut). Innermost random positions of the
+#' panel: median 0.05, up to 0.34 in libraries with many PCR copies (copies of one molecule agree at its UMI);
+#' first footprint positions: 0.51 or more
+#' @param kappa_partial a position after the cut with kappa at or below this is reported (not cut)
+#' @param kappa_single a flank of a single non-fixed position is cut only when its kappa is at or below this; NULL: 0.1
+#' at the 5' end, 0.2 at the 3' end (a 5' over-cut moves the P-site anchor, a 3' over-cut only shortens the read). kappa
+#' is about the squared templated share, so a base added to 30-50\% of the reads (untemplated RT addition) reaches
+#' 0.1-0.3, while single random bases score about 0 (RealSeq SRR22990340 5': 0.01)
+#' @param min_pairs read pairs needed to test a position
+#' @param full_length integer or NA: for side "3p", reads of at least this length (the sequencing cycle count: no
+#' adapter found, the read stops inside the insert) are left out unless they are most of the reads
+#' @param max_reads distinct reads used at most (the first ones)
 #' @param sample run id for review lines
-#' @return named integer c(fixed, umi); attributes "merge", "top" and "review" (character, empty when clean)
+#' @return named integer c(fixed, umi): the leading fixed run and the flank after it (random bases plus any inner fixed
+#' bases); attributes "kappa", "pairs", "top", "kappa_outer" (outer positions against the boundary's anchor) and
+#' "review" (character, empty when clean)
 #' @noRd
-end_barcode_call <- function(seqs, side = c("5p", "3p"), max_k = 18L, min_rest = 18L, min_fixed_rest = 10L, fixed_share = 0.8,
-                             min_fixed_reads = 200L, min_homopolymer = 4L, umi_min_peak = 0.03, umi_min_last = 0.03,
-                             collapse = 0.1, umi_min_len = 2L, soft_ratio = 0.25, min_reads = 20000L, sample = "") {
+end_barcode_call <- function(seqs, side = c("5p", "3p"), max_k = 18L, min_fixed_rest = 10L, fixed_share = 0.8,
+                             min_fixed_reads = 200L, min_homopolymer = 4L, anchor = 12L, cap = 20L, kappa_cut = 0.35,
+                             kappa_partial = 0.75, kappa_single = NULL, min_pairs = 300, full_length = NA,
+                             max_reads = 3e5, sample = "") {
   side <- match.arg(side); max_k <- as.integer(max_k)
-  review <- character()
-  out <- function(f, k, m = numeric(), top = numeric()) {
+  if (is.null(kappa_single)) kappa_single <- if (side == "5p") 0.1 else 0.2
+  review <- character(); kappa <- pairs <- top <- kappa_outer <- numeric()
+  out <- function(f, k) {
     if (length(review)) message("-- MANUAL REVIEW ", sample, " ", side, ": ", paste(review, collapse = "; "))
-    structure(c(fixed = as.integer(f), umi = as.integer(k)), merge = round(m, 4), top = round(top, 3), review = review)
+    structure(c(fixed = as.integer(f), umi = as.integer(k)), kappa = round(kappa, 3), pairs = round(pairs),
+              top = round(top, 3), kappa_outer = round(kappa_outer, 3), review = review)
+  }
+  if (side == "3p" && !is.na(full_length)) {
+    untrimmed <- nchar(seqs) >= full_length
+    if (any(untrimmed) && mean(untrimmed) < 0.5) seqs <- seqs[!untrimmed]
   }
   seqs <- seqs[nchar(seqs) >= max_k + min_fixed_rest]
   if (side == "3p") seqs <- as.character(Biostrings::reverse(Biostrings::BStringSet(seqs)))
   u <- unique(seqs)
-  seqs <- seqs[nchar(seqs) >= max_k + min_rest]               # the UMI test needs min_rest nt after max_k
-  f <- 0L; top <- numeric()
-  if (length(u) >= min_fixed_reads) {
-    cm <- Biostrings::consensusMatrix(Biostrings::DNAStringSet(substr(u, 1, max_k)), as.prob = TRUE)
-    cm <- cm[c("A", "C", "G", "T"), , drop = FALSE]
-    top <- MatrixGenerics::colMaxs(cm, useNames = FALSE)
-    while (f < max_k && top[f + 1L] >= fixed_share) f <- f + 1L
-    if (f >= min_homopolymer) {
-      bases <- rownames(cm)[apply(cm[, seq_len(f), drop = FALSE], 2, which.max)]
-      if (length(unique(bases)) == 1L) {
-        review <- c(review, paste0(f, " nt ", bases[1], " run at the read end is a tail, not a barcode: not cut"))
-        return(out(0L, 0L, top = top))
-      }
+  if (length(u) > max_reads) u <- u[seq_len(max_reads)]
+  if (length(u) < min_fixed_reads) return(out(0L, 0L))
+  cm <- Biostrings::consensusMatrix(Biostrings::DNAStringSet(substr(u, 1, max_k)), as.prob = TRUE)
+  cm <- cm[c("A", "C", "G", "T"), , drop = FALSE]
+  top <- MatrixGenerics::colMaxs(cm, useNames = FALSE)
+  prof <- end_templating_profile(u, max_k, anchor, cap)
+  kappa <- prof$kappa; pairs <- prof$pairs
+  testable <- !is.na(kappa) & pairs >= min_pairs
+  # a base bias is not a barcode when the base is clearly copied from the RNA (E. coli SRR13362463 5' position 5:
+  # top share 0.86, kappa 0.96); true barcode bases have kappa near 0 or chance near 1 (kappa undefined)
+  fixed <- top >= fixed_share & !(testable & prof$chance < 0.9 & kappa > 0.9)
+  flank <- fixed | (testable & kappa <= kappa_cut)
+  templated <- testable & !flank
+  f <- 0L; while (f < max_k && fixed[f + 1L]) f <- f + 1L
+  if (f >= min_homopolymer) {
+    bases <- rownames(cm)[apply(cm[, seq_len(f), drop = FALSE], 2, which.max)]
+    if (length(unique(bases)) == 1L) {
+      review <- c(review, paste0(f, " nt ", bases[1], " run at the read end is a tail, not a barcode: not cut"))
+      return(out(0L, 0L))
     }
   }
-  if (length(seqs) < min_reads || f >= max_k - 1L) return(out(f, 0L, top = top))
-  n <- vapply(0:max_k, function(k) length(unique(substring(seqs, k + 1L))), numeric(1))
-  m <- (n[-length(n)] - n[-1]) / n[-length(n)]                    # m[k]: share merged by trimming base k too
-  K <- 0L; ambiguous <- FALSE
-  for (k in (f + 1L):(max_k - 1L)) {
-    peak <- max(m[(f + 1L):k])
-    if (peak >= umi_min_peak && m[k + 1L] < collapse * peak) {
-      if (m[k] >= umi_min_last && k - f >= umi_min_len) K <- k - f else ambiguous <- TRUE
+  if (!any(testable)) {
+    review <- c(review, paste0("too few read pairs to test templating (max ", round(max(pairs)), "): only the fixed run is cut"))
+    return(out(f, 0L))
+  }
+  if (!any(templated)) {
+    review <- c(review, paste0("no templated position within ", max_k, " nt: flank length unknown, not cut"))
+    return(out(0L, 0L))
+  }
+  # Boundaries: a flank position followed by a templated one (untestable positions in between allowed). The anchor of
+  # the innermost flank position lies in the insert, so its kappa is unbiased; the outer flank positions have random
+  # bases in their own anchor, which groups copies of one molecule and inflates their kappa (ERR4467418 5': 0.50 at
+  # position 1 of a 7 nt random flank). They are therefore re-tested against the insert anchor of the boundary.
+  known <- which(flank | templated)
+  cand <- integer(); gap <- integer()
+  for (j in which(templated)) {
+    i <- known[known < j]; if (!length(i)) next
+    i <- max(i); if (flank[i]) { cand <- c(cand, i); gap <- c(gap, j - i - 1L) }
+  }
+  k <- f
+  for (ci in rev(seq_along(cand))) {
+    b <- cand[ci]
+    outer <- end_templating_profile(u, b, anchor, cap, anchor_start = b + 1L)
+    ok <- fixed[seq_len(b)] | (!is.na(outer$kappa) & outer$pairs >= min_pairs & outer$kappa <= kappa_partial)
+    if (all(ok)) {
+      k <- max(b, f); kappa_outer <- outer$kappa
+      if (gap[ci] > 0)
+        review <- c(review, paste0("position(s) ", b + 1L, "-", b + gap[ci], " untestable (read pairs ",
+                                   paste(round(pairs[b + seq_len(gap[ci])]), collapse = "/"), "): cut may be short"))
       break
     }
+    review <- c(review, paste0("flank boundary at ", b, " not supported by the outer positions (kappa against the insert ",
+                               paste(round(outer$kappa, 2), collapse = " "), ")"))
   }
-  if (K == 0L && !ambiguous && max(m[(f + 1L):max_k]) >= umi_min_peak) ambiguous <- TRUE   # merging, no collapse
-  if (ambiguous) {
-    after <- m[(f + 1L):length(m)]
-    soft <- umi_end_from_merge(after, upto = length(after) - 1L, min_peak = umi_min_peak, drop_ratio = soft_ratio)
-    if (soft >= umi_min_len) {
-      K <- soft
-      review <- c(review, paste0("soft UMI end ", soft, " nt (merge ", paste(round(after[seq_len(soft + 2L)], 3),
-                                 collapse = " "), "): the shortest UMI the reads support"))
-    } else review <- c(review, paste0("UMI signal without a clear end (merge after the fixed part: ",
-                                      paste(round(utils::head(after, 12), 3), collapse = " "), "): no UMI cut"))
+  if (k - f == 1L && !fixed[k] && kappa[k] > kappa_single) {
+    review <- c(review, paste0("single non-templated position ", k, " (kappa ", round(kappa[k], 2), " > ", kappa_single,
+                               "): a base added to part of the reads, not cut"))
+    k <- f
   }
-  out(f, K, m, top)
+  nxt <- k + 1L
+  if (nxt <= max_k && testable[nxt] && !flank[nxt] && kappa[nxt] <= kappa_partial)
+    review <- c(review, paste0("position ", nxt, " is non-templated in part of the reads (kappa ", round(kappa[nxt], 2),
+                               "): not cut, left to soft clipping"))
+  out(f, k - f)
 }
 
-#' Soft random UMI end from duplication merge fractions (two-step collapse)
+#' Templating profile of a read end: is the base at each end position copied from the RNA?
 #'
-#' Used by \code{\link{end_barcode_call}} when the strict collapse rule finds no clean UMI end. The UMI end is the last
-#' position of the run from the peak with merge fractions of at least half of the peak, provided the peak is at least
-#' \code{min_peak}, lies after position 1 (ragged footprint ends merge most at the first base) and the next fraction
-#' falls below \code{drop_ratio} x the peak. Only positions up to \code{upto} are considered.
-#' @param merge numeric, merge fractions (merge[k]: share merged by trimming base k)
-#' @param upto integer, last position considered
-#' @return integer, UMI length or 0
+#' For end position i (1 = terminal base), distinct reads are grouped by their \code{anchor} nt just inside of it
+#' (positions i + 1 .. i + anchor). A base copied from the RNA is the same in all reads of a group: the anchor fixes
+#' the place in the transcriptome, whatever the read's other end, length or copy number. A random base (UMI, adapter
+#' or primer N, untemplated addition) agrees only by chance. kappa = (concordance - chance) / (1 - chance), with
+#' concordance = share of read pairs within a group that agree (groups weighted by min(size, cap) - 1 so one abundant
+#' fragment cannot dominate) and chance = sum of squared base frequencies at i under the same weights. kappa is about
+#' the squared share of reads with a templated base at i: near 0 for random positions, near 1 for footprint positions,
+#' in between for a base added to part of the reads.
+#' It needs no PCR duplicates, only two distinct reads with the same end at the same place (rRNA and tRNA fragments and
+#' abundant mRNAs give hundreds of pairs in 3,000 reads). At fixed barcode positions chance is close to 1 and kappa is
+#' undefined; those are found by their top-base share.
+#' @param u character, distinct reads oriented with the tested end first
+#' @param max_k positions tested
+#' @param anchor anchor length (at most 15)
+#' @param cap largest group size counted in the weights
+#' @param anchor_start NULL (anchor next to each position) or one anchor start for all positions (positions 1 ..
+#' \code{max_k} tested against the same insert anchor)
+#' @return data.table: pos, kappa, concordance, chance, pairs (sum of group weights)
 #' @noRd
-umi_end_from_merge <- function(merge, upto, min_peak = 0.05, drop_ratio = 0.5) {
-  if (length(merge) < 3 || upto < 2) return(0L)
-  m <- merge[seq_len(min(upto, length(merge) - 1L))]
-  peak <- which.max(m)
-  if (m[peak] < min_peak || peak == 1L) return(0L)
-  end <- peak
-  while (end < length(m) && m[end + 1L] >= m[peak] / 2) end <- end + 1L
-  if (merge[end + 1L] >= drop_ratio * m[peak]) return(0L)   # no clear drop after the run
-  as.integer(end)
+end_templating_profile <- function(u, max_k = 18L, anchor = 12L, cap = 20L, anchor_start = NULL) {
+  stopifnot(anchor <= 15L)
+  max_k <- as.integer(max_k); anchor <- as.integer(anchor)
+  w <- if (is.null(anchor_start)) max_k + anchor else max(max_k, anchor_start + anchor - 1L)
+  u <- u[nchar(u) >= 1L + anchor]
+  res <- matrix(c(NA, NA, NA, 0), 4, max_k)
+  if (length(u) >= 2L) {
+    x <- substr(paste0(u, strrep("N", w)), 1L, w)                       # N: unknown base or past the read end
+    lut <- rep(NA_integer_, 256L); lut[utf8ToInt("ACGT")] <- 0:3
+    M <- matrix(lut[utf8ToInt(paste(x, collapse = ""))], ncol = w, byrow = TRUE)
+    pw <- 4^((anchor - 1L):0)
+    for (i in seq_len(max_k)) {
+      st <- if (is.null(anchor_start)) i + 1L else anchor_start
+      a <- as.vector(M[, st:(st + anchor - 1L), drop = FALSE] %*% pw)   # anchor code, NA when it holds an N
+      b <- M[, i]
+      ok <- !is.na(a) & !is.na(b)
+      if (sum(ok) < 2L) next
+      r <- rle(sort(a[ok] * 4 + b[ok]))                                 # distinct (anchor, base) with counts
+      a <- r$values %/% 4; b <- r$values %% 4 + 1; N <- r$lengths
+      g <- cumsum(c(TRUE, a[-1L] != a[-length(a)]))                     # anchor group index
+      ng <- as.vector(rowsum(N, g, reorder = FALSE)); keep <- ng >= 2
+      if (!any(keep)) next
+      agree <- as.vector(rowsum(N * (N - 1), g, reorder = FALSE))
+      wt <- pmin(ng, cap) - 1
+      conc <- sum((wt * agree / (ng * (ng - 1)))[keep]) / sum(wt[keep])
+      kr <- keep[g]; p <- as.vector(rowsum((wt[g] * N / ng[g])[kr], b[kr])); p <- p / sum(p); chance <- sum(p^2)
+      res[, i] <- c(if (chance < 1) (conc - chance) / (1 - chance) else NA, conc, chance, sum(wt[keep]))
+    }
+  }
+  data.table::data.table(pos = seq_len(max_k), kappa = res[1, ], concordance = res[2, ], chance = res[3, ], pairs = res[4, ])
 }
 
 #' Is this run a Ribo-seq (footprint) library?
@@ -925,9 +1019,10 @@ is_ribo_library <- function(study_sample) {
 #' @param barcode_sizes named numeric, \code{barcode5p_size}, \code{barcode3p_size}
 #' @param accepted_lengths integer, accepted Ribo-seq read lengths
 #' @param sample character, run id for the warning
+#' @param reject logical: FALSE only warns (the guarded detector, whose cuts are all sequence-supported)
 #' @return \code{barcode_sizes}, possibly set to 0
 #' @noRd
-post_trim_length_guard <- function(seqs, barcode_sizes, accepted_lengths, sample = "") {
+post_trim_length_guard <- function(seqs, barcode_sizes, accepted_lengths, sample = "", reject = TRUE) {
   cut <- sum(barcode_sizes)
   if (cut == 0 || length(seqs) == 0 || length(accepted_lengths) == 0) return(barcode_sizes)
   w <- nchar(seqs)
@@ -937,7 +1032,9 @@ post_trim_length_guard <- function(seqs, barcode_sizes, accepted_lengths, sample
     return(barcode_sizes)
   warning(sample, ": barcode cut 5' ", barcode_sizes[["barcode5p_size"]], " + 3' ", barcode_sizes[["barcode3p_size"]],
           " nt would move the read length mode from ", mode_before, " to ", mode_after,
-          " nt, outside accepted_lengths_rpf: cut rejected", call. = FALSE)
+          " nt, outside accepted_lengths_rpf: ", if (reject) "cut rejected" else "kept (sequence-supported cut), MANUAL REVIEW",
+          call. = FALSE)
+  if (!reject) return(barcode_sizes)
   barcode_sizes[] <- 0
   barcode_sizes
 }

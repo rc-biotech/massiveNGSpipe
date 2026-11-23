@@ -64,48 +64,75 @@ test_that("constrain_barcode_sizes rejects (does not clip) a call that leaves fe
   expect_identical(unname(constrain_barcode_sizes(4, 4, 36, 26, clip = TRUE)), c(4, 4))
 })
 
-test_that("umi_end_from_merge finds a two-step UMI collapse and ignores ragged or flat merge curves", {
-  srr28976196 <- c(0.0167, 0.0462, 0.1027, 0.1793, 0.2267, 0.2199, 0.0401, 0.0327, 0.0280, 0.0190, 0.0037)
-  expect_equal(umi_end_from_merge(srr28976196, upto = 9), 6L)
-  expect_equal(umi_end_from_merge(c(0.0222, 0.0037, 0.0044, 0.0042, 0.0046, 0.0048), upto = 5), 0L)  # ragged end
-  expect_equal(umi_end_from_merge(c(0.0049, 0.0046, 0.0039, 0.0041, 0.0027, 0.0039, 0.0053, 0.0056, 0.0076), 8), 0L)
-  expect_equal(umi_end_from_merge(c(0.02, 0.1, 0.2, 0.2, 0.2, 0.2), upto = 3), 0L)    # still merging past the range
-  expect_equal(umi_end_from_merge(numeric(), 5), 0L)
-  expect_equal(umi_end_from_merge(srr28976196, upto = 10, drop_ratio = 0.1), 0L)       # stricter drop: no end
-})
-
 read_end_fixture <- function(run, side)
   readLines(testthat::test_path("fixtures", "barcode_regression", paste0(run, "_", side, ".txt.gz")))
+read_fixture_reads <- function(run)
+  readLines(testthat::test_path("fixtures", "barcode_regression", paste0(run, "_reads.txt.gz")))
+end_call <- function(seqs, side, ...) {
+  x <- suppressMessages(end_barcode_call(seqs, side, ...))
+  c(fixed = x[["fixed"]], umi = x[["umi"]])
+}
 
-test_that("end_barcode_call on real reads: fixed run + UMI, nothing from curves", {
-  # Adapter-trimmed reads of 1M-read ENA prefixes, subsampled by duplication family (merge fractions kept), so the
-  # UMI test runs on 12k instead of 20k+ reads.
-  call <- function(run, side) {
-    x <- suppressMessages(end_barcode_call(read_end_fixture(run, side), side, min_reads = 10000L, sample = run))
-    c(fixed = x[["fixed"]], umi = x[["umi"]])
-  }
-  # GSE73553: master cut 5' 3 (fastp quality curve) + 3' 4 (clipped z-score call); the reads show neither
-  expect_equal(call("SRR2535267", "5p"), c(fixed = 0L, umi = 0L))
-  expect_equal(call("SRR2535267", "3p"), c(fixed = 0L, umi = 0L))
-  # 5' 2 nt UMI (master: 5 from a curve tie); 3' fixed AGATC + 5 nt UMI
-  expect_equal(call("SRR38141702", "5p"), c(fixed = 0L, umi = 2L))
-  expect_equal(call("SRR38141702", "3p"), c(fixed = 5L, umi = 5L))
-  # 3' fixed AGCTA + 5 nt UMI behind it (master cut only the fixed 5); 5' 3 nt UMI (master: 5)
-  expect_equal(call("SRR16039918", "3p"), c(fixed = 5L, umi = 5L))
-  expect_equal(call("SRR16039918", "5p"), c(fixed = 0L, umi = 3L))
-  # RiboLace: UMIs at both ends, 5 and 4 nt (master 3': 17 clipped to 11)
-  expect_equal(call("SRR34280150", "5p"), c(fixed = 0L, umi = 5L))
-  expect_equal(call("SRR34280150", "3p"), c(fixed = 0L, umi = 4L))
-  # PRJNA1301971 read 2: GAT + 5 nt UMI (merge peak only 0.043, then 0.0003)
-  expect_equal(call("SRR34874063", "5p"), c(fixed = 3L, umi = 5L))
-  # SRR28976196: 5' 5 nt UMI; 3' UMI with a two-step collapse, 6-9 nt (soft end 6 on the full sample)
-  expect_equal(call("SRR28976196", "5p"), c(fixed = 0L, umi = 5L))
-  u3 <- call("SRR28976196", "3p")
-  expect_equal(u3[["fixed"]], 0L)
-  expect_true(u3[["umi"]] >= 6L && u3[["umi"]] <= 9L)
+test_that("end_templating_profile: kappa near 0 at random positions, near 1 at templated ones", {
+  set.seed(31)
+  fp <- rnd_var(sample(28:34, 3000, replace = TRUE))
+  ins <- sample(fp, 20000, replace = TRUE)
+  ins <- substr(ins, sample(0:2, 20000, replace = TRUE) + 1, 40)            # ragged 5' ends: distinct reads
+  p <- end_templating_profile(paste0(rnd_seqs(20000, 3), ins), max_k = 8)
+  expect_true(all(p$kappa[3] < 0.2))                                          # innermost random position
+  expect_true(all(p$kappa[4:8] > 0.9))                                        # insert
+  q <- end_templating_profile(paste0(rnd_seqs(20000, 3), ins), max_k = 3, anchor_start = 4L)
+  expect_true(all(q$kappa < 0.2))                                             # outer positions against the insert anchor
+  expect_true(all(is.na(end_templating_profile(character(), 5)$kappa)))
 })
 
-test_that("end_barcode_call: synthetic fixed + UMI, homopolymer tails, ambiguous signal and few reads", {
+test_that("end_barcode_call on real reads (12k-read samples of 1M-read ENA prefixes): calls match the soft-clip truth", {
+  # GSE73553: master cut 5' 3 (fastp quality curve) + 3' 4 (clipped z-score call); nothing at either end
+  expect_equal(end_call(read_end_fixture("SRR2535267", "5p"), "5p"), c(fixed = 0L, umi = 0L))
+  expect_equal(end_call(read_end_fixture("SRR2535267", "3p"), "3p"), c(fixed = 0L, umi = 0L))
+  # McGlincy & Ingolia 2017: 5' NN from the RT primer; 3' fixed AGATC + 5 nt UMI (master: 5' 5 from a curve tie)
+  expect_equal(end_call(read_end_fixture("SRR38141702", "5p"), "5p"), c(fixed = 0L, umi = 2L))
+  expect_equal(end_call(read_end_fixture("SRR38141702", "3p"), "3p"), c(fixed = 5L, umi = 5L))
+  expect_equal(end_call(read_end_fixture("SRR16039918", "3p"), "3p"), c(fixed = 5L, umi = 5L))
+  expect_equal(end_call(read_end_fixture("SRR16039918", "5p"), "5p"), c(fixed = 0L, umi = 2L))
+  # RiboLace: random 5 / 4 nt (master 3': 17 clipped to 11)
+  expect_equal(end_call(read_end_fixture("SRR34280150", "5p"), "5p"), c(fixed = 0L, umi = 5L))
+  expect_equal(end_call(read_end_fixture("SRR34280150", "3p"), "3p"), c(fixed = 0L, umi = 4L))
+  # PRJNA1301971 read 2: GAT + 5 nt UMI
+  expect_equal(end_call(read_end_fixture("SRR34874063", "5p"), "5p"), c(fixed = 3L, umi = 5L))
+  # SRR28976196: 4 random 5' nt (position 5 random in ~30% of reads only: reported, not cut), 6 random 3' nt
+  expect_message(end_barcode_call(read_end_fixture("SRR28976196", "5p"), "5p", sample = "t"), "part of the reads")
+  expect_equal(end_call(read_end_fixture("SRR28976196", "5p"), "5p"), c(fixed = 0L, umi = 4L))
+  expect_equal(end_call(read_end_fixture("SRR28976196", "3p"), "3p"), c(fixed = 0L, umi = 6L))
+  # Random flanks without many PCR copies, missed by the duplication (merge) test of cbbd61a:
+  # OTTR 5' NNNNN + Y + C (7 nt), 3' none
+  ottr <- read_fixture_reads("SRR23242339")
+  expect_equal(sum(end_call(ottr, "5p")), 7L)
+  expect_equal(sum(end_call(ottr, "3p")), 0L)
+  # 7 random nt at both ends (TruSeq-based adapters with N7): outer positions have inflated kappa against their own
+  # (random) anchor and are re-tested against the insert anchor
+  n7 <- read_fixture_reads("ERR4467418")
+  expect_equal(end_call(n7, "5p"), c(fixed = 0L, umi = 7L))
+  expect_equal(end_call(n7, "3p"), c(fixed = 0L, umi = 7L))
+  # NEXTflex 4N + 4N; and a library described as Ingolia 2012 whose reads carry 4N + 4N as well
+  expect_equal(sum(end_call(read_fixture_reads("SRR24083061"), "5p")), 4L)
+  expect_equal(sum(end_call(read_fixture_reads("SRR24083061"), "3p")), 4L)
+  expect_equal(sum(end_call(read_fixture_reads("SRR12407385"), "5p")), 4L)
+  expect_equal(sum(end_call(read_fixture_reads("SRR12407385"), "3p")), 4L)
+  # one non-templated 5' base (RealSeq-AC), nothing at 3'
+  expect_equal(sum(end_call(read_fixture_reads("SRR22990340"), "5p")), 1L)
+  expect_equal(sum(end_call(read_fixture_reads("SRR22990340"), "3p")), 0L)
+})
+
+test_that("end_barcode_call finds random flanks in shallow samples (3,000 reads)", {
+  set.seed(5)
+  s <- read_end_fixture("SRR34280150", "5p"); s <- s[sample(length(s), 3000)]
+  expect_equal(sum(end_call(s, "5p")), 5L)
+  s <- read_fixture_reads("SRR23242339"); s <- s[sample(length(s), 3000)]
+  expect_equal(sum(end_call(s, "5p")), 7L)
+})
+
+test_that("end_barcode_call: synthetic fixed + random, deduplicated random flanks, tails, partial additions, few reads", {
   set.seed(21)
   fp <- rnd_var(sample(28:32, 4000, replace = TRUE))
   copies <- sample(fp, 40000, replace = TRUE)
@@ -113,15 +140,34 @@ test_that("end_barcode_call: synthetic fixed + UMI, homopolymer tails, ambiguous
   x <- suppressMessages(end_barcode_call(s, "3p"))
   expect_equal(c(x[["fixed"]], x[["umi"]]), c(5L, 4L))
   expect_length(attr(x, "review"), 0)
+  # one read per insert (no copy of any molecule; ragged footprint ends) with 3 random nt on each end: still found
+  ins <- unique(substr(copies, sample(0:3, 40000, replace = TRUE) + 1, nchar(copies) - sample(0:3, 40000, replace = TRUE)))
+  d <- paste0(rnd_seqs(length(ins), 3), ins, rnd_seqs(length(ins), 3))
+  expect_equal(end_call(d, "5p"), c(fixed = 0L, umi = 3L))
+  expect_equal(end_call(d, "3p"), c(fixed = 0L, umi = 3L))
+  # a random base added to 30% of the reads of a real library without flanks: not cut (soft clipping handles it)
+  real <- read_end_fixture("SRR2535267", "5p")
+  part <- paste0(ifelse(runif(length(real)) < 0.3, rnd_seqs(length(real), 1), ""), real)
+  expect_equal(sum(end_call(part, "5p")), 0L)
+  # ... and to 50% of the reads (kappa 0.15-0.3: either the single-position guard or the partial band keeps it uncut)
+  part <- paste0(ifelse(runif(length(real)) < 0.5, rnd_seqs(length(real), 1), ""), real)
+  expect_message(p <- end_barcode_call(part, "5p", sample = "t"), "MANUAL REVIEW")
+  expect_equal(sum(p), 0L)
+  expect_equal(sum(suppressMessages(end_barcode_call(part, "5p", kappa_cut = 0.35))), 0L)
   # a 6 nt A run is a tail, not a barcode: no cut and a review line
   expect_message(y <- end_barcode_call(paste0(copies, "AAAAAA"), "3p", sample = "t"), "MANUAL REVIEW")
   expect_equal(sum(y), 0L)
-  # no barcode, no duplication: nothing
-  z <- end_barcode_call(rnd_var(sample(36:40, 25000, replace = TRUE)), "5p")
-  expect_equal(sum(z), 0L)
-  # fewer reads than min_reads: fixed part still found, no UMI search
-  w <- end_barcode_call(paste0("CC", rnd_var(sample(36:40, 3000, replace = TRUE))), "5p")
+  # no flank: nothing
+  expect_equal(sum(end_call(ins, "5p")), 0L)
+  expect_equal(sum(end_call(ins, "3p")), 0L)
+  # random reads (nothing testable): only a fixed run is cut, with a review line
+  w <- suppressMessages(end_barcode_call(paste0("CC", rnd_var(sample(36:40, 3000, replace = TRUE))), "5p"))
   expect_equal(c(w[["fixed"]], w[["umi"]]), c(2L, 0L))
+  expect_match(attr(w, "review"), "too few read pairs")
+  # untrimmed reads (full cycle length, no molecule 3' end) are left out of the 3' test
+  long <- substr(paste0(sample(fp, 30000, replace = TRUE), strrep("G", 20)), 1, 36)
+  mix <- c(paste0(sample(ins, 20000, replace = TRUE), rnd_seqs(20000, 4)), long[1:8000])
+  expect_equal(sum(end_call(unique(mix), "3p", full_length = 36)), 4L)
 })
 
 test_that("post_trim_length_guard rejects cuts that move the footprint mode out of the accepted lengths", {
@@ -130,6 +176,9 @@ test_that("post_trim_length_guard rejects cuts that move the footprint mode out 
   bs <- c(barcode5p_size = 0, barcode3p_size = 6)
   expect_warning(out <- post_trim_length_guard(reads, bs, acc, "SRRtest"), "outside accepted_lengths_rpf")
   expect_identical(unname(out), c(0, 0))
+  # reject = FALSE (guarded detector): warn, keep the cut
+  expect_warning(kept <- post_trim_length_guard(reads, bs, acc, "SRRtest", reject = FALSE), "MANUAL REVIEW")
+  expect_identical(kept, bs)
   # a cut that keeps the mode inside is kept
   expect_identical(post_trim_length_guard(reads, c(barcode5p_size = 2, barcode3p_size = 1), acc), c(barcode5p_size = 2, barcode3p_size = 1))
   # untrimmed mode outside (real 4 + 4 UMIs around 29 nt footprints): the lengths cannot judge, call kept
