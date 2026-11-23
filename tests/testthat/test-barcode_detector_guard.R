@@ -236,7 +236,8 @@ test_that("synthetic library without barcode: no cut", {
 test_that("synthetic poly(A)-tailed library: poly(A) adapter, no cut", {
   skip_without_trim()
   set.seed(13)
-  ins <- paste0(rnd_var(sample(25:29, 30000, replace = TRUE)), "G")
+  # varying non-A last base: a constant one is a real fixed 1-nt barcode, which guarded mode now sees on every library
+  ins <- paste0(rnd_var(sample(25:29, 30000, replace = TRUE)), sample(c("C", "G", "T"), 30000, replace = TRUE))
   reads <- substr(paste0(ins, strrep("A", 30)), 1, 35)
   f <- write_fastq_lines(reads, tempfile(fileext = ".fastq"))
   new <- run_detector(f, "SRR0000003")
@@ -270,4 +271,18 @@ test_that("REGRESSION SRR449467 (GSE36892 poly(A)-tailed): poly(A) adapter inste
   old <- run_detector(fixture("SRR449467"), "SRR449467", mode = "legacy")
   expect_identical(old$adapter, "passed")
   expect_gt(old$barcode3p_size, 0)
+})
+
+test_that("guarded mode runs the detector on every Ribo-seq library (no mean-length trigger)", {
+  f <- formals(barcode_detector_single)$check_at_mean_size
+  withr::with_options(list(massiveNGSpipe.barcode_detector = "guarded"), expect_equal(eval(f), 0))
+  withr::with_options(list(massiveNGSpipe.barcode_detector = "legacy"), expect_equal(eval(f), 33))
+})
+
+test_that("REGRESSION QIAseq short inserts (mean < 33) are detected now that guarded mode always runs", {
+  skip_without_trim()
+  skip_if_not(file.exists(fixture("SRR16633408")), "no QIAseq fixture")
+  set.seed(1)
+  new <- run_detector(fixture("SRR16633408"), "SRR16633408")
+  expect_equal(c(new$barcode5p_size, new$barcode3p_size), c(4, 4), ignore_attr = TRUE)
 })

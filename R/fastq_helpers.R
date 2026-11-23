@@ -376,7 +376,8 @@ barcode_detector_pipeline <- function(pipeline, redownload_raw_if_needed = TRUE)
 #' #                                         fastq_dir, output_dir, trim_dir,
 #' #                                         redownload_raw_if_needed = FALSE)
 barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimmed_dir,
-                                    redownload_raw_if_needed = TRUE, check_at_mean_size = 33,
+                                    redownload_raw_if_needed = TRUE,
+                                    check_at_mean_size = if (barcode_detector_mode() == "guarded") 0 else 33,
                                     minimum_size = 26, max_barcode_left_size = 18,
                                     max_barcode_right_size = 18, detect_reads_to_process = 0,
                                     accepted_lengths = getOption("massiveNGSpipe.accepted_lengths_rpf",
