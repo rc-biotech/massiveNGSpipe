@@ -395,10 +395,14 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
     dt_barcode <- fread(manual_specified_barcodes_file)
     stopifnot(ncol(dt_barcode) == 3 &&
                 all(colnames(dt_barcode) == c("Run", "barcode5p_size", "barcode3p_size")))
-    stopifnot(sample %in% dt_barcode$Run)
-    barcode_sizes <- unlist(dt_barcode[Run == sample, 2:3], use.names = TRUE)
-    barcode5p_size <- barcode_sizes["barcode5p_size"]
-    barcode3p_size <- barcode_sizes["barcode3p_size"]
+    if (sample %in% dt_barcode$Run) {
+      barcode_sizes <- unlist(dt_barcode[Run == sample, 2:3], use.names = TRUE)
+      barcode5p_size <- barcode_sizes["barcode5p_size"]
+      barcode3p_size <- barcode_sizes["barcode3p_size"]
+    } else { # table exists for other runs of the study (one-off fixes): detect this run instead of stopping
+      message("barcodes_manual.csv has no row for ", sample, ": running the detector for this run")
+      manual_specified_barcodes_exists <- FALSE
+    }
   }
 
   json_file <- grep(sample, dir(trimmed_dir, "\\.json$", full.names = TRUE), value = TRUE)

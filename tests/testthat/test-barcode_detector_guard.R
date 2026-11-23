@@ -286,3 +286,19 @@ test_that("REGRESSION QIAseq short inserts (mean < 33) are detected now that gua
   new <- run_detector(fixture("SRR16633408"), "SRR16633408")
   expect_equal(c(new$barcode5p_size, new$barcode3p_size), c(4, 4), ignore_attr = TRUE)
 })
+
+test_that("a run missing from an existing barcodes_manual.csv falls back to detection (no stop)", {
+  skip_without_trim()
+  d <- tempfile("bcman_"); dir.create(file.path(d, "fq"), recursive = TRUE); dir.create(file.path(d, "trim"))
+  set.seed(5)
+  write_fastq_lines(rnd_var(sample(28:32, 5000, replace = TRUE)), file.path(d, "fq", "SRR0000009.fastq"))
+  data.table::fwrite(data.table::data.table(Run = "SRR_OTHER", barcode5p_size = 3, barcode3p_size = 0),
+                     file.path(d, "trim", "barcodes_manual.csv"))
+  ss <- data.table::data.table(Run = "SRR0000009", LibraryLayout = "SINGLE", LIBRARYTYPE = "RFP")
+  out <- NULL
+  invisible(capture.output(suppressMessages(suppressWarnings(
+    out <- barcode_detector_single(ss, file.path(d, "fq"), d, file.path(d, "trim"),
+                                   redownload_raw_if_needed = FALSE, detect_reads_to_process = 1e6)))))
+  expect_false(is.null(out))
+  expect_equal(c(out$barcode5p_size, out$barcode3p_size), c(0, 0), ignore_attr = TRUE)
+})
