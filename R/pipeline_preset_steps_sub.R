@@ -119,10 +119,14 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
 
         if (nrow(runs) > 0) {
           run_experiment_subprocess(
-            func = function(all_files, runs, mode, target_dir, trimmed_dir, source_dir, config, experiment) {
+            func = function(all_files, runs, mode, target_dir, trimmed_dir, source_dir, config, experiment,
+                            barcode_detector = "guarded") {
               # fast single-pass trim + collapse for single-end data (pipeline_config(fast_trim), R/trimcollapse.R)
               options(massiveNGSpipe.fast_trim = !isFALSE(config$fast_trim),
-                      massiveNGSpipe.adapter_detection = if (is.null(config$adapter_detection)) "scan" else config$adapter_detection)
+                      massiveNGSpipe.adapter_detection = if (is.null(config$adapter_detection)) "scan" else config$adapter_detection,
+                      # barcode detector ("guarded"/"legacy") and the lengths its post-trim guard accepts
+                      massiveNGSpipe.barcode_detector = barcode_detector,
+                      massiveNGSpipe.accepted_lengths_rpf = config$accepted_lengths_rpf)
               lapply(seq_len(nrow(runs)), function(i) {
                 study_sample <- runs[i]
                 run <- study_sample$Run
@@ -188,7 +192,9 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
             },
             args = list(all_files = all_files, runs = runs, mode = config$mode,
                         target_dir = target_dir, trimmed_dir = trimmed_dir,
-                        source_dir = source_dir, config = config, experiment = experiment),
+                        source_dir = source_dir, config = config, experiment = experiment,
+                        # the subprocess does not see this session's options: pass the detector choice on
+                        barcode_detector = if (is.null(config$barcode_detector)) barcode_detector_mode() else config$barcode_detector),
             logfile_out = file.path(pipeline_log_base(config), "console", "trim", paste0(experiment, ".out.log")),
             logfile_err = file.path(pipeline_log_base(config), "console", "trim", paste0(experiment, ".err.log")),
             on_poll = function() pipeline_checklist(pipelines, config)

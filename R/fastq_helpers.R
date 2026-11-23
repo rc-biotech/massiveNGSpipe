@@ -353,6 +353,10 @@ barcode_detector_pipeline <- function(pipeline, redownload_raw_if_needed = TRUE)
 #' \code{\link{run_barcode_detection_and_trim}} for the numbers). Passed
 #' by the pipeline-integrated caller; left at the default for the
 #' standalone \code{barcode_detector_pipeline()} use case.
+#' @param accepted_lengths integer, Ribo-seq read lengths that are P-shifted (\code{config$accepted_lengths_rpf},
+#' passed by the pipeline through \code{options(massiveNGSpipe.accepted_lengths_rpf)}); used by
+#' \code{\link{post_trim_length_guard}}. The detector itself is chosen with
+#' \code{options(massiveNGSpipe.barcode_detector)}, see \code{\link{barcode_detector_mode}}.
 #' @import Biostrings IRanges
 #' @noRd
 #' @examples
@@ -374,7 +378,9 @@ barcode_detector_pipeline <- function(pipeline, redownload_raw_if_needed = TRUE)
 barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimmed_dir,
                                     redownload_raw_if_needed = TRUE, check_at_mean_size = 33,
                                     minimum_size = 26, max_barcode_left_size = 18,
-                                    max_barcode_right_size = 18, detect_reads_to_process = 0) {
+                                    max_barcode_right_size = 18, detect_reads_to_process = 0,
+                                    accepted_lengths = getOption("massiveNGSpipe.accepted_lengths_rpf",
+                                                                 c(20, 21, 25:33))) {
   sample <- study_sample$Run
   message("-- ", sample)
   stopifnot(is(study_sample, "data.table") && nrow(study_sample) == 1)
@@ -454,11 +460,36 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
     file_trim <- run_files_organizer(study_sample, trimmed_dir)[[1]][1]
   }
 
-  json_file <- sub("/trimmed_", "/report_", sub("\\.fastq$", ".json", file_trim))
-  if (!file.exists(json_file)) stop("Json file from fastp does not exist: ", json_file)
-  a <- jsonlite::fromJSON(json_file)
+  read_trim_report <- function(file_trim) {
+    json_file <- sub("/trimmed_", "/report_", sub("\\.fastq$", ".json", file_trim))
+    if (!file.exists(json_file)) stop("Json file from fastp does not exist: ", json_file)
+    jsonlite::fromJSON(json_file)
+  }
+  a <- read_trim_report(file_trim)
   adapter <- a$adapter_cutting$read1_adapter_sequence
   if (is.null(adapter)) adapter <- "passed"
+
+  guarded <- barcode_detector_mode() == "guarded"
+  # Poly(A)-tailing libraries (e.g. GSE36892, 35 nt reads = footprint + poly(A)) have no ligated adapter, so adapter
+  # detection reports "passed" and the A tail was read as a 3' "barcode" (fixed 8 nt cut). When enough reads end in an
+  # A run after a footprint-sized insert, redo the detection sample with a poly(A) adapter (polyA_tail_fraction()).
+  if (guarded && identical(adapter, "passed") && raw_file_exists && !adapter_manually_specified(trimmed_dir, sample)) {
+    tail_reads <- tryCatch(as.character(readDNAStringSet(file_trim, format = "fastq", nrec = 2e5, use.names = FALSE)),
+                           error = function(e) character())
+    polyA_frac <- polyA_tail_fraction(tail_reads)
+    min_frac <- getOption("massiveNGSpipe.polyA_tail_min_fraction", 0.10)
+    if (length(tail_reads) > 0 && polyA_frac >= min_frac) {
+      polyA <- unname(adapter_list()[name == "polyA", value])
+      message("-- No adapter found, but ", round(100 * polyA_frac, 1), "% of reads end in a poly(A) run (>= ",
+              100 * min_frac, "%): using poly(A) adapter ", polyA)
+      polyA_dir <- file.path(trimmed_dir, "barcode_detect_sample", paste0(sample, "_polyA"))
+      file_trim <- fastp_detect_sample(file, polyA_dir, polyA,
+                                       if (detect_reads_to_process > 0) detect_reads_to_process else 1e6)
+      detect_dir <- c(detect_dir, polyA_dir)
+      a <- read_trim_report(file_trim)
+      adapter <- polyA
+    }
+  }
   adapter_trimmed_reads <- a$adapter_cutting$adapter_trimmed_reads
   if (is.null(adapter_trimmed_reads)) adapter_trimmed_reads <- NA
   reads_no_adapter_removed <- round(100 - (100* (adapter_trimmed_reads / a$summary$before_filtering$total_reads)), 1)
@@ -473,40 +504,52 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
 
   auto_detect_barcodes <- (max_size_after >= check_at_mean_size) & !manual_specified_barcodes_exists
   if (auto_detect_barcodes) {
-    # Detect them. 5' and 3' use different curve sources (see
-    # barcode_change_point_5p()/_3p()'s own docs for why), so each side
-    # is now retried independently on a failed (size-0) detection,
-    # rather than both being retried jointly as before.
-    curves <- a$read1_after_filtering[c("quality_curves", "content_curves")]
-    curves$content_curves$max <- MatrixGenerics::rowMaxs(as.matrix(setDT(curves$content_curves)), useNames = FALSE)
-
-    barcode5p_size <- barcode_change_point_5p(curves, max_barcode_left_size, max_size_after,
-                                              z_score_normalize = FALSE)
-    if (barcode5p_size == 0) {
-      barcode5p_size <- barcode_change_point_5p(curves, max_barcode_left_size, max_size_after,
-                                                z_score_normalize = TRUE)
-    }
-
-    curves_3p <- tail_anchored_3p_curves(file_trim, window = max_barcode_right_size)
-    barcode3p_size <- barcode_change_point_3p(curves_3p, max_barcode_right_size,
-                                              z_score_normalize = FALSE)
-    if (barcode3p_size == 0) {
-      barcode3p_size <- barcode_change_point_3p(curves_3p, max_barcode_right_size,
-                                                z_score_normalize = TRUE)
-    }
-
-    # Random UMIs are invisible to the curves above (random UMI bases next to a random-looking insert); read
-    # duplication finds them (umi_length_from_duplication()). The larger call per side wins.
     reads_dup <- tryCatch(as.character(readDNAStringSet(file_trim, format = "fastq", nrec = 3e5, use.names = FALSE)),
                           error = function(e) character())
-    umi5 <- umi_length_from_duplication(reads_dup, "5p", max_k = max_barcode_left_size)
-    umi3 <- umi_length_from_duplication(reads_dup, "3p", max_k = max_barcode_right_size)
-    if (umi5 > barcode5p_size || umi3 > barcode3p_size)
-      message("-- UMI from read duplication: 5' ", umi5, " nt (curves ", barcode5p_size, "), 3' ", umi3, " nt (curves ", barcode3p_size, ")")
-    barcode5p_size <- max(barcode5p_size, umi5); barcode3p_size <- max(barcode3p_size, umi3)
+    if (guarded) {
+      # Sequence evidence only (2026-11-23 review): cut = fixed run + random UMI, both measured on the reads
+      # (end_barcode_call()). Change point calls on fastp's or the tail-anchored curves never cut, at either end:
+      # raw 5' quality-curve calls cut 3 footprint nt in GSE73553 and the z-score retry cut 6 nt in SRR5766466.
+      e5 <- end_barcode_call(reads_dup, "5p", max_k = max_barcode_left_size, sample = sample)
+      e3 <- end_barcode_call(reads_dup, "3p", max_k = max_barcode_right_size, sample = sample)
+      barcode5p_size <- sum(e5); barcode3p_size <- sum(e3)
+      message("-- Barcode from reads: 5' ", barcode5p_size, " nt (fixed ", e5[["fixed"]], " + UMI ", e5[["umi"]],
+              "), 3' ", barcode3p_size, " nt (fixed ", e3[["fixed"]], " + UMI ", e3[["umi"]], ")")
+    } else {
+      # Legacy detector (options(massiveNGSpipe.barcode_detector = "legacy")), unchanged from 1914c90 + UMI calls.
+      # 5' and 3' use different curve sources (see barcode_change_point_5p()/_3p()'s own docs for why), so each side
+      # is retried independently on a failed (size-0) detection.
+      curves <- a$read1_after_filtering[c("quality_curves", "content_curves")]
+      curves$content_curves$max <- MatrixGenerics::rowMaxs(as.matrix(setDT(curves$content_curves)), useNames = FALSE)
+
+      barcode5p_size <- barcode_change_point_5p(curves, max_barcode_left_size, max_size_after,
+                                                z_score_normalize = FALSE)
+      if (barcode5p_size == 0) {
+        barcode5p_size <- barcode_change_point_5p(curves, max_barcode_left_size, max_size_after,
+                                                  z_score_normalize = TRUE)
+      }
+
+      curves_3p <- tail_anchored_3p_curves(file_trim, window = max_barcode_right_size)
+      barcode3p_size <- barcode_change_point_3p(curves_3p, max_barcode_right_size,
+                                                z_score_normalize = FALSE)
+      if (barcode3p_size == 0) {
+        barcode3p_size <- barcode_change_point_3p(curves_3p, max_barcode_right_size,
+                                                  z_score_normalize = TRUE)
+      }
+
+      # Random UMIs are invisible to the curves above (random UMI bases next to a random-looking insert); read
+      # duplication finds them (umi_length_from_duplication()). The larger call per side wins.
+      umi5 <- umi_length_from_duplication(reads_dup, "5p", max_k = max_barcode_left_size)
+      umi3 <- umi_length_from_duplication(reads_dup, "3p", max_k = max_barcode_right_size)
+      if (umi5 > barcode5p_size || umi3 > barcode3p_size)
+        message("-- UMI from read duplication: 5' ", umi5, " nt (curves ", barcode5p_size, "), 3' ", umi3, " nt (curves ", barcode3p_size, ")")
+      barcode5p_size <- max(barcode5p_size, umi5); barcode3p_size <- max(barcode3p_size, umi3)
+    }
 
     barcode_sizes <- constrain_barcode_sizes(barcode5p_size, barcode3p_size,
-                                             max_size_after, minimum_size)
+                                             max_size_after, minimum_size, clip = !guarded)
+    if (guarded && is_ribo_library(study_sample))
+      barcode_sizes <- post_trim_length_guard(reads_dup, barcode_sizes, accepted_lengths, sample)
     barcode5p_size <- barcode_sizes["barcode5p_size"]
     barcode3p_size <- barcode_sizes["barcode3p_size"]
 
@@ -717,10 +760,20 @@ tail_anchored_3p_curves <- function(file_trim, window = 18, n_reads = 1e5) {
 #' @param barcode5p_size,barcode3p_size numeric, as detected
 #' @param max_size_after numeric, read size after adapter removal
 #' @param minimum_size numeric, minimum acceptable trimmed read size
+#' @param clip logical, default FALSE: a call that would leave fewer than \code{minimum_size} nt is rejected (set to
+#' 0, 3' first, then 5'). TRUE is the legacy behaviour: shrink the call until \code{minimum_size} nt remain, which
+#' turned spurious calls into partial cuts (2026-11-22: 11 nt 3' call on SRR5766466 clipped to a 6 nt cut).
 #' @return named numeric vector: `barcode5p_size`, `barcode3p_size`
 #' @noRd
-constrain_barcode_sizes <- function(barcode5p_size, barcode3p_size, max_size_after, minimum_size) {
+constrain_barcode_sizes <- function(barcode5p_size, barcode3p_size, max_size_after, minimum_size, clip = FALSE) {
   too_big <- (max_size_after - (barcode5p_size + barcode3p_size)) < minimum_size
+  if (too_big && !clip) {
+    message("-- Barcode call 5' ", barcode5p_size, " + 3' ", barcode3p_size, " nt would leave fewer than ",
+            minimum_size, " nt (mean read ", max_size_after, " nt): rejected")
+    barcode3p_size <- 0
+    if ((max_size_after - barcode5p_size) < minimum_size) barcode5p_size <- 0
+    return(c(barcode5p_size = barcode5p_size, barcode3p_size = barcode3p_size))
+  }
   if (too_big) { # Reduce 3p barcode size
     amount_too_big <- minimum_size - (max_size_after - (barcode5p_size + barcode3p_size))
     barcode3p_size <- max(barcode3p_size - amount_too_big, 0)
@@ -731,6 +784,195 @@ constrain_barcode_sizes <- function(barcode5p_size, barcode3p_size, max_size_aft
     }
   }
   c(barcode5p_size = barcode5p_size, barcode3p_size = barcode3p_size)
+}
+
+#' Which automatic barcode detector to use
+#'
+#' \code{options(massiveNGSpipe.barcode_detector = "legacy")} restores the detector as it was from 1914c90
+#' (2026-09-29) to this change: curve change point calls (raw, then z-score retry) plus duplication UMI calls, calls
+#' clipped to \code{minimum_size}, no length guard and no poly(A) fallback. Default "guarded": cuts only on sequence
+#' evidence (\code{\link{end_barcode_call}}: fixed run + UMI), rejects instead of clipping
+#' (\code{\link{constrain_barcode_sizes}}), \code{\link{post_trim_length_guard}} and \code{\link{polyA_tail_fraction}}.
+#' @return "guarded" or "legacy"
+#' @noRd
+barcode_detector_mode <- function() {
+  mode <- getOption("massiveNGSpipe.barcode_detector", "guarded")
+  if (!(length(mode) == 1 && mode %in% c("guarded", "legacy")))
+    stop("options(massiveNGSpipe.barcode_detector) must be \"guarded\" or \"legacy\", not: ", paste(mode, collapse = ", "))
+  mode
+}
+
+#' Barcode at one read end from sequence evidence: fixed run + random UMI
+#'
+#' The guarded detector's only cutter (curve change points never cut). On adapter-trimmed reads, counted from the read
+#' end of \code{side} (fixed part: reads of at least \code{max_k + min_fixed_rest} nt; UMI part: \code{max_k +
+#' min_rest} nt):
+#' \itemize{
+#'  \item fixed part: positions from the end with top-base share >= \code{fixed_share}, measured on distinct reads
+#'  (one abundant contaminant cannot fake a barcode), needing \code{min_fixed_reads} distinct reads. A run of one base
+#'  of \code{min_homopolymer} nt or more is a tail (poly(A) etc.), not a barcode: no cut, manual review.
+#'  \item UMI part: merge fractions after the fixed part (merge[k] = share of distinct reads that become identical when
+#'  base k is trimmed too; random UMI bases make copies of one footprint merge, see
+#'  \code{\link{umi_length_from_duplication}}). The UMI ends at the first k where the next merge fraction drops below
+#'  \code{collapse} x the largest so far; accepted when that largest is >= \code{umi_min_peak}, merge[k] >=
+#'  \code{umi_min_last} and the UMI is >= \code{umi_min_len} nt. Needs \code{min_reads} reads.
+#'  \item soft UMI end: when a collapse is seen but the end is not clean (merge[k] below \code{umi_min_last}, e.g. a
+#'  two-step drop), the run from the peak with merge >= half the peak is used if the next fraction is below
+#'  \code{soft_ratio} x the peak (\code{\link{umi_end_from_merge}}; SRR28976196 3': 0.18, 0.23, 0.22 then 0.04 = 6 nt,
+#'  the shortest end the reads support), with a manual review line. Otherwise ambiguous signal = no UMI cut plus a
+#'  manual review line.
+#' }
+#' 2026-11-23 reads (1M-read ENA prefixes): SRR16039918 5' 3 (UMI) / 3' 5 fixed AGCTA + 5 UMI; SRR38141702 5' 2 / 3'
+#' 5 fixed + 5 UMI; SRR34280150 5' 5 / 3' 4 (UMIs); SRR2535267 and SRR6904861 0 / 0; SRR5766466 5' 2 (fixed CC) / 3' 0;
+#' SRR34874063 (PRJNA1301971 read 2, GAT + 5 nt UMI) 5' 3 fixed + 5 UMI: its merge peak is 0.043 (then 0.0003), hence
+#' \code{umi_min_peak} 0.03 rather than 0.05.
+#' @param seqs character, adapter-trimmed reads
+#' @param side "5p" or "3p"
+#' @param max_k largest barcode length tested
+#' @param sample run id for review lines
+#' @return named integer c(fixed, umi); attributes "merge", "top" and "review" (character, empty when clean)
+#' @noRd
+end_barcode_call <- function(seqs, side = c("5p", "3p"), max_k = 18L, min_rest = 18L, min_fixed_rest = 10L, fixed_share = 0.8,
+                             min_fixed_reads = 200L, min_homopolymer = 4L, umi_min_peak = 0.03, umi_min_last = 0.03,
+                             collapse = 0.1, umi_min_len = 2L, soft_ratio = 0.25, min_reads = 20000L, sample = "") {
+  side <- match.arg(side); max_k <- as.integer(max_k)
+  review <- character()
+  out <- function(f, k, m = numeric(), top = numeric()) {
+    if (length(review)) message("-- MANUAL REVIEW ", sample, " ", side, ": ", paste(review, collapse = "; "))
+    structure(c(fixed = as.integer(f), umi = as.integer(k)), merge = round(m, 4), top = round(top, 3), review = review)
+  }
+  seqs <- seqs[nchar(seqs) >= max_k + min_fixed_rest]
+  if (side == "3p") seqs <- as.character(Biostrings::reverse(Biostrings::BStringSet(seqs)))
+  u <- unique(seqs)
+  seqs <- seqs[nchar(seqs) >= max_k + min_rest]               # the UMI test needs min_rest nt after max_k
+  f <- 0L; top <- numeric()
+  if (length(u) >= min_fixed_reads) {
+    cm <- Biostrings::consensusMatrix(Biostrings::DNAStringSet(substr(u, 1, max_k)), as.prob = TRUE)
+    cm <- cm[c("A", "C", "G", "T"), , drop = FALSE]
+    top <- MatrixGenerics::colMaxs(cm, useNames = FALSE)
+    while (f < max_k && top[f + 1L] >= fixed_share) f <- f + 1L
+    if (f >= min_homopolymer) {
+      bases <- rownames(cm)[apply(cm[, seq_len(f), drop = FALSE], 2, which.max)]
+      if (length(unique(bases)) == 1L) {
+        review <- c(review, paste0(f, " nt ", bases[1], " run at the read end is a tail, not a barcode: not cut"))
+        return(out(0L, 0L, top = top))
+      }
+    }
+  }
+  if (length(seqs) < min_reads || f >= max_k - 1L) return(out(f, 0L, top = top))
+  n <- vapply(0:max_k, function(k) length(unique(substring(seqs, k + 1L))), numeric(1))
+  m <- (n[-length(n)] - n[-1]) / n[-length(n)]                    # m[k]: share merged by trimming base k too
+  K <- 0L; ambiguous <- FALSE
+  for (k in (f + 1L):(max_k - 1L)) {
+    peak <- max(m[(f + 1L):k])
+    if (peak >= umi_min_peak && m[k + 1L] < collapse * peak) {
+      if (m[k] >= umi_min_last && k - f >= umi_min_len) K <- k - f else ambiguous <- TRUE
+      break
+    }
+  }
+  if (K == 0L && !ambiguous && max(m[(f + 1L):max_k]) >= umi_min_peak) ambiguous <- TRUE   # merging, no collapse
+  if (ambiguous) {
+    after <- m[(f + 1L):length(m)]
+    soft <- umi_end_from_merge(after, upto = length(after) - 1L, min_peak = umi_min_peak, drop_ratio = soft_ratio)
+    if (soft >= umi_min_len) {
+      K <- soft
+      review <- c(review, paste0("soft UMI end ", soft, " nt (merge ", paste(round(after[seq_len(soft + 2L)], 3),
+                                 collapse = " "), "): the shortest UMI the reads support"))
+    } else review <- c(review, paste0("UMI signal without a clear end (merge after the fixed part: ",
+                                      paste(round(utils::head(after, 12), 3), collapse = " "), "): no UMI cut"))
+  }
+  out(f, K, m, top)
+}
+
+#' Soft random UMI end from duplication merge fractions (two-step collapse)
+#'
+#' Used by \code{\link{end_barcode_call}} when the strict collapse rule finds no clean UMI end. The UMI end is the last
+#' position of the run from the peak with merge fractions of at least half of the peak, provided the peak is at least
+#' \code{min_peak}, lies after position 1 (ragged footprint ends merge most at the first base) and the next fraction
+#' falls below \code{drop_ratio} x the peak. Only positions up to \code{upto} are considered.
+#' @param merge numeric, merge fractions (merge[k]: share merged by trimming base k)
+#' @param upto integer, last position considered
+#' @return integer, UMI length or 0
+#' @noRd
+umi_end_from_merge <- function(merge, upto, min_peak = 0.05, drop_ratio = 0.5) {
+  if (length(merge) < 3 || upto < 2) return(0L)
+  m <- merge[seq_len(min(upto, length(merge) - 1L))]
+  peak <- which.max(m)
+  if (m[peak] < min_peak || peak == 1L) return(0L)
+  end <- peak
+  while (end < length(m) && m[end + 1L] >= m[peak] / 2) end <- end + 1L
+  if (merge[end + 1L] >= drop_ratio * m[peak]) return(0L)   # no clear drop after the run
+  as.integer(end)
+}
+
+#' Is this run a Ribo-seq (footprint) library?
+#'
+#' Runs without a \code{LIBRARYTYPE} column count as Ribo-seq: automatic barcode detection is only run for them.
+#' @noRd
+is_ribo_library <- function(study_sample) {
+  type <- study_sample$LIBRARYTYPE
+  is.null(type) || length(type) == 0 || is.na(type[1]) || identical(as.character(type[1]), "RFP")
+}
+
+#' Reject a barcode cut that moves Ribo-seq footprints out of the P-shifted lengths
+#'
+#' Predicts the post-trim read length mode from the sampled adapter-trimmed reads. When the cut moves the mode out of
+#' \code{accepted_lengths} (\code{config$accepted_lengths_rpf}) although the untrimmed mode is inside, the cut is
+#' rejected (both sides 0) with a warning. When the untrimmed mode is outside as well (long untrimmed inserts,
+#' organisms with short footprints, UMIs that make reads longer than any footprint) the lengths cannot tell a real cut
+#' from a spurious one and the call is kept.
+#' @param seqs character, adapter-trimmed reads
+#' @param barcode_sizes named numeric, \code{barcode5p_size}, \code{barcode3p_size}
+#' @param accepted_lengths integer, accepted Ribo-seq read lengths
+#' @param sample character, run id for the warning
+#' @return \code{barcode_sizes}, possibly set to 0
+#' @noRd
+post_trim_length_guard <- function(seqs, barcode_sizes, accepted_lengths, sample = "") {
+  cut <- sum(barcode_sizes)
+  if (cut == 0 || length(seqs) == 0 || length(accepted_lengths) == 0) return(barcode_sizes)
+  w <- nchar(seqs)
+  length_mode <- function(x) { x <- x[x > 0]; if (!length(x)) return(NA_integer_); as.integer(names(which.max(table(x)))) }
+  mode_before <- length_mode(w); mode_after <- length_mode(w - cut)
+  if (is.na(mode_after) || mode_after %in% accepted_lengths || !(mode_before %in% accepted_lengths))
+    return(barcode_sizes)
+  warning(sample, ": barcode cut 5' ", barcode_sizes[["barcode5p_size"]], " + 3' ", barcode_sizes[["barcode3p_size"]],
+          " nt would move the read length mode from ", mode_before, " to ", mode_after,
+          " nt, outside accepted_lengths_rpf: cut rejected", call. = FALSE)
+  barcode_sizes[] <- 0
+  barcode_sizes
+}
+
+#' Share of reads that end in a poly(A) run after a footprint-sized insert
+#'
+#' Poly(A)-tailing Ribo-seq protocols (e.g. GSE36892, 35-36 nt reads) read into the A tail before any adapter, so
+#' adapter detection finds nothing ("passed"). A read counts when it ends in at least \code{min_run} A after at least
+#' \code{min_insert} nt ending in a non-A base and holds no known adapter: pure A reads and reads running through the
+#' adapter into the flow cell poly(A) (P7 + A, e.g. PRJNA530200) are not poly(A) tails of footprints.
+#' Threshold (\code{options(massiveNGSpipe.polyA_tail_min_fraction)}, default 0.10), from 2026-11-23 scans: 0-6\%
+#' (99th percentile 0.4\%) in 583 Ribo-seq libraries with adapter "passed" (collapsed reads, 2 per study), 22\%
+#' (SRR449467) and 45\% (SRR449475) in GSE36892.
+#' @param seqs character, reads (adapter-trimmed sample)
+#' @return numeric share (0 for no reads)
+#' @noRd
+polyA_tail_fraction <- function(seqs, min_run = 8L, min_insert = 18L) {
+  if (length(seqs) == 0) return(0)
+  tail <- grepl(paste0("^[ACGTN]{", min_insert - 1L, ",}[CGTN]A{", min_run, ",}$"), seqs)
+  cand <- adapter_list()
+  real <- cand$value[!(cand$name %in% c("polyA", "polyT", "polyN"))]
+  if (any(tail)) {
+    with_adapter <- Reduce(`|`, lapply(real, function(a) grepl(a, seqs[tail], fixed = TRUE)))
+    tail[which(tail)[with_adapter]] <- FALSE
+  }
+  mean(tail)
+}
+
+#' Does adapters_manual.csv hold an adapter for this run?
+#' @noRd
+adapter_manually_specified <- function(trimmed_dir, run) {
+  f <- file.path(trimmed_dir, "adapters_manual.csv")
+  if (!file.exists(f)) return(FALSE)
+  m <- data.table::fread(f)
+  "Run" %in% names(m) && run %in% m$Run
 }
 
 #' Detect barcode sizes and trim them in the correct biological order

@@ -205,19 +205,19 @@ test_that("constrain_barcode_sizes leaves sizes untouched when well within minim
   expect_identical(unname(result), c(4, 4))
 })
 
-test_that("constrain_barcode_sizes shrinks the 3p size first when sizes are too big", {
+test_that("constrain_barcode_sizes (legacy clip) shrinks the 3p size first when sizes are too big", {
   # max_size_after - (5+10) = 15 < minimum_size 20 -- must shrink.
   result <- constrain_barcode_sizes(barcode5p_size = 5, barcode3p_size = 10,
-                                    max_size_after = 30, minimum_size = 20)
+                                    max_size_after = 30, minimum_size = 20, clip = TRUE)
   expect_equal(unname(result["barcode5p_size"]), 5)
   expect_equal(unname(result["barcode3p_size"]), 5) # shrunk by 5 to hit the 20 floor
 })
 
-test_that("constrain_barcode_sizes falls through to shrinking 5p once 3p hits zero", {
+test_that("constrain_barcode_sizes (legacy clip) falls through to shrinking 5p once 3p hits zero", {
   # Even after zeroing barcode3p_size, 30 - 25 = 5 < minimum_size 20 --
   # must shrink barcode5p_size too.
   result <- constrain_barcode_sizes(barcode5p_size = 25, barcode3p_size = 3,
-                                    max_size_after = 30, minimum_size = 20)
+                                    max_size_after = 30, minimum_size = 20, clip = TRUE)
   expect_equal(unname(result["barcode3p_size"]), 0)
   expect_equal(unname(result["barcode5p_size"]), 10)
 })
