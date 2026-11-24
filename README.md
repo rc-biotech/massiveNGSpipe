@@ -1,697 +1,358 @@
-
 ![](inst/images/massiveNGSpipe_overview.png)
 
-This package is under heavy development to include more features, API is not
-stable!
+# massiveNGSpipe
 
-### About
+massiveNGSpipe processes Ribo-seq, RNA-seq, disome and small-subunit (SSU) sequencing studies in bulk: thousands of
+samples from many studies and organisms in one run. It is built on [ORFik](https://github.com/Roleren/ORFik), and its
+output can be browsed directly in [RiboCrypt](https://github.com/m-swirski/RiboCrypt) ([ribocrypt.org](https://ribocrypt.org/)).
 
-massiveNGSpipe is a R package for full process integration of
-NGS studies, it can handle thousands of samples from multiple organisms
-in a single run.
+For each study and organism it:
 
-The pipelines flow is built on 4 steps:
+- finds and curates sample metadata (SRA/ENA/GEO run tables, or a CSV for local data), with optional Google sheet sync;
+- downloads the reference genome and annotation, and builds the STAR index;
+- downloads the reads (AWS, ENA, then fasterq-dump);
+- detects adapters, barcodes and UMIs, then trims and collapses the reads;
+- aligns with STAR and builds an ORFik experiment;
+- converts to ofst, P-shifts and validates footprints (Ribo-seq);
+- builds the study pool, coverage (covRle, bigWig) and count tables;
+- merges organism-wide tracks and collections for RiboCrypt.
 
-- 1. Set up pipeline config (What steps to do: download, trimming, alignmnets) (presets supported)
-- 2. Curate data (define which samples you want to run & metadata)
-- 3. Download organism annotations from linked metadata per study (set up pipeline objects)
-- 4. Run pipeline
+Every stage sets a flag, so a stopped or failed run resumes where it left off.
 
-It currently supports to set up easily a fail safe and fallback supported 
-pipeline that does the specific steps:
-- Find candidate accessions for studies you might be interested in
-- A clean way of helping with annotating samples using
-either google sheet integration or local csv files.
-- Automatic download of genome and gff for each organism (supports
-fixing malformed gffs, adding pseudo 5' UTRs, contamants etc)
-- Automatic download of samples with fallback options:
- 1. AWS (amazon, fastest), 2. ENA (fast), 3. fastq-dump (slowest)
-- Automatic detection of 3' adapters and trimming (fastp)
-- Collapsing of duplicated reads for faster processing
-- barcode / UMI detection / removal (To be implemented)
-- Autmoatic removal of contaminants: phix, rRNA, tRNA,..
-- Genome alignment with STAR (with QC)
-- Create ORFik.experiment object for easy analysis in R
-- Convert output files to any format: bigwig, wig, bed, ofst etc.
-- Merging of samples by type
+The API is still under development and can change.
 
-Ribo-seq specific:
-- automatic pshifting and quality validation
+## Install
 
-Visulization specific:
-Our data output is directly supported to be browsed by the
-RiboCrypt visuzliation tool which supports among others:
-- Both genomic and transciptomic view browser
-- Differential expression
-- Read length heatmaps
-- Codon usage
-- And much more
+Requirements:
 
-### Primary pipeline (Data from online repository)
+- Linux or macOS (on Windows, use WSL2);
+- R >= 4.4;
+- memory: 32 GB for large genomes such as human or mouse, 16 GB for small ones such as yeast or E. coli. Memory use
+  grows with the number of workers.
 
-Package is also available here on github
+```r
+if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
+remotes::install_github("rc-biotech/massiveNGSpipe", upgrade = "never")
+```
+
+The `Remotes` field points ORFik, RiboCrypt, fst and fstcore to their development sources, and pins data.table to one
+commit. `install_github()` installs these. `R CMD INSTALL` alone does not, so install them first in that case. To
+compare these forks with released versions, use a separate R library.
+
+ORFik decides where data is stored: `ORFik::config()` gives the fastq, bam (processed), reference and experiment
+folders. The pipeline's own metadata, flags and logs go in a project folder, by default `NGS_pipeline` next to them.
+
+## Quick start: command line
+
+The `mngsp` command runs the pipeline from the shell, so you do not need an R launcher script. To put it on your PATH:
+
+```bash
+Rscript -e 'massiveNGSpipe::install_cli()'   # symlinks mngsp into ~/.local/bin
+mngsp --help                                  # all commands
+mngsp run --help                              # options of one command
+```
+
+From an empty folder to a processed example study (PRJNA779948, a human Ribo-seq study: 4 HeLa libraries, 6.8 M reads):
+
+```bash
+mngsp init ~/mngsp_demo              # writes mngsp.conf (every setting, commented) and studies.txt
+cd ~/mngsp_demo
+mngsp preflight                      # open-file limit, data folders, disk, memory, barcode detector self-test
+mngsp curate studies.txt --organism "Homo sapiens"   # metadata into the FINAL list
+mngsp plan studies.txt               # dry run: experiments, references, flags, next step
+mngsp run studies.txt --apply --download-references --threads 16
+mngsp status studies.txt             # stage table per experiment (mngsp status: last session checklist)
+mngsp errors                         # error records of the last session, with hints
+mngsp retry PRJNA779948-homo_sapiens # clear the record after fixing the cause
+mngsp run studies.txt --apply --reset    # re-trim from scratch: clears flags, outputs and errors
+```
+
+If validation fails, curation stops. Edit `project/next_round_manual.csv` (`KEEP`, `LIBRARYTYPE`, `CONDITION`,
+`REPLICATE`, ...), then run `mngsp curate studies.txt --validate-only`.
+
+### Commands
+
+| Command | Purpose |
+| --- | --- |
+| `init <dir>` | Create a project folder with `mngsp.conf` and an example `studies.txt`. |
+| `curate <list>` | Download metadata and validate it into the FINAL list (no Google sheet unless `--google-sheet <url>`). |
+| `plan <list>` | Dry run. It writes only `<project>/mngsp_plan_<list>.csv`. |
+| `run <list>` | The same as `plan` without `--apply`. With `--apply`, it runs the pipeline. Exit status: 0 done, 2 finished with error records, 1 failed. |
+| `status [<list>]` | Without a list: the checklist of the last session. With a list: flags done, next step and errors per experiment. |
+| `errors` | Error records of a session (`--session n`), and the event log (`--events n`). |
+| `retry <exp>... \| --all` | Clear error records. A running pipeline retries those experiments on its next round. |
+| `preflight` | System checks and the barcode detector self-test. |
+| `config [<list>]` | Every resolved setting and where it came from. |
+
+A study list holds one accession per line: a BioProject, GEO series or SRA study in online mode, or a folder name in
+local mode. Lines starting with `#` are comments.
+
+Main `run` options:
+
+| Option | Effect |
+| --- | --- |
+| `--apply` | Run. Without it, `run` is a dry run. |
+| `--reset` | Full restart: clears flags, per-sample markers, errors, the study folder and the experiment CSV. It has no effect without `--apply`. |
+| `--keep <file>` | Studies that are never reset or run. |
+| `--trim <file>` | Manual trim table (`BioProject, adapter, barcode5p_size, barcode3p_size, mate, reverse, status`). Status `apply` is used before trimming; `hold` skips the study. |
+| `--manual-dir <dir>` | Per-experiment `barcodes_manual.csv`, `adapters_manual.csv` and `mate_override_manual.csv`, copied into `<experiment>/trim/`. |
+| `--organisms <csv>` | `BioProject,ScientificName`: only these experiments of studies with several organisms. |
+| `--exclude-runs <csv>` | Runs that are never processed (`Run` column). |
+| `--skip-failed <n\|date>` | Skip studies that failed in the last n sessions, or since a date. |
+| `--download-references` | Fetch missing genomes and build missing STAR indices. By default, studies without a complete reference are skipped. |
+| `--no-preflight` | Skip the barcode detector self-test, which runs by default for Ribo-seq, disome and SSU. |
+| `--threads <n>`, `--threads-<step> <n>`, `--blas-cap <n>` | Workers per stage, workers for one step (`trim`, `collapse`, `pshifted`, `pcounts`, ...), and BLAS threads. |
+| `--ram-reserve-gb`, `--bam-sort-memory-gb`, `--max-ram-wait-minutes` | Memory caps for alignment. |
+
+All `pipeline_config()` arguments are available as options (`--preset`, `--mode`, `--project-dir`,
+`--split-unique-mappers`, `--delete-raw-files`, ...). Their defaults are the `pipeline_config()` defaults.
+
+### Settings files
+
+Settings are applied in this order, and later sources win:
+
+1. the `pipeline_config()` defaults;
+2. `mngsp.conf` in the study list's folder;
+3. `<list>.conf` next to the list;
+4. `#: key: value` lines inside the list;
+5. `--config <file>`;
+6. command-line flags.
+
+A settings file holds one `key: value` per line. Keys are the option names, written with dashes or underscores.
+Relative paths are relative to the file. `--apply` and `--reset` are accepted only on the command line.
+
+```
+# mngsp.conf
+preset: Ribo-seq
+mode: online
+split_unique_mappers: TRUE
+max_unprocessed_downloads: 60
+threads: 24
+threads_pcounts: 1
+ram_reserve_gb: 80
+exclude_runs: keep_false_runs.csv
+```
+
+Run `mngsp config studies.txt` to see each value and its source.
+
+### Batch runs
+
+A batch runner script with flags maps one-to-one onto `mngsp run`. For example, this call:
+
+```bash
+Rscript run_study_list_v5.R wave01.txt --apply --reset --organisms organisms.csv --manual-dir manual_tables \
+  --keep keep.txt --trim manual_trim.csv --skip-failed 1
+```
+
+becomes:
+
+```bash
+mngsp run wave01.txt --config batch.conf --apply --reset --organisms organisms.csv --manual-dir manual_tables \
+  --keep keep.txt --trim manual_trim.csv --skip-failed 1
+```
+
+`batch.conf` holds the settings that the script hard-coded (`delete_trimmed_files`, `split_unique_mappers`,
+`reuse_shifts_if_existing`, `exclude_runs`, ...). A `run --apply` writes these files:
+
+- the plan: `<project>/mngsp_plan_<list>.csv`;
+- the metadata subset: `subset_<list><subset_suffix>.csv`;
+- the pre-flight report: `mngsp_preflight_<list>.csv`;
+- provenance for each experiment: `<experiment>/trim/detector_provenance.csv` (versions, detector mode, pre-flight).
+
+### Shell environment
+
+The `mngsp` wrapper does three things before it starts R:
+
+- it unsets `LC_ALL` (the same as `env -u LC_ALL`);
+- it raises the open-file limit to 524288 (`MNGSP_NOFILE`), up to the hard limit. STAR needs many open files, and
+  `run --apply` stops below 65535;
+- it sets a 64 MB C stack.
+
+If `ulimit -Hn` is lower than the limit you need, ask your administrator. To run a source checkout instead of the
+installed package, set `MNGSP_DEV=<checkout>`. Start long runs in a job runner, `tmux` or `nohup`.
+
+## Quick start: R
+
 ```r
 library(massiveNGSpipe)
-## Setup
-config <- pipeline_config(preset = "Ribo-seq") # <- set up paths
-## Curate metadata
-accessions <- accessions_to_use("GSE152850", "Saccharomyces cerevisiae", FALSE)
-curate_metadata(accessions, config, "Saccharomyces cerevisiae")
-## Init pipeline and show current progress report
-pipelines <- pipeline_init_all(config) # Initialize pipeline configuration for all experiments
+config <- pipeline_config(preset = "Ribo-seq")              # paths, stages, workers
+accessions <- accessions_to_use("PRJNA779948", "Homo sapiens", massive_search = FALSE)
+curate_metadata(accessions, config, "Homo sapiens")         # metadata into the FINAL list
+pipelines <- pipeline_init_all(config)                       # references + one pipeline object per study
 progress_report(pipelines, config)
-# Start the pipeline (In RStudio start this step with the 'background jobs' tab)
-run_pipeline(pipelines, config, wait = 100, BPPARAM = bpparam())
-```  
-
-### Installation
-
-Package is currently only available here on github
-```r
-if (!requireNamespace("devtools", quietly=TRUE))
-    install.packages("devtools")
-devtools::install_github("rc-biotech/massiveNGSpipe", upgrade = "never")
-```  
-
-The `Remotes` field pins the data.table, fst, fstcore, and ORFik development
-dependencies used by this checkout. Install into a separate R library when
-comparing these forks with released versions, and use a fresh R session for
-each library. `R CMD INSTALL` alone does not install `Remotes`; install those
-dependencies first. The pinned ORFik commit provides the `filter_chunk_rows`
-argument used by the organism merge helpers; an older ORFik build can have the
-same package version without providing that API.
-
-### Requirements
-
-Software
-
-- R programming language
-- Unix OS (Linux or macOS), (or Windows Subsystem for Linux (WSL2))
-
-Hardware
-
-- Large genomes (like human, mouse, ...): (minimum 32GB memory)
-- For small genomes (Yeast, E.coli, ...): (minimum 16GB memory)
-
-Running with many cores will use more memory, we have seen
-cases of a 800 sample study using up to 120GB memory on a large server when using > 50 cores.
-
-### Local pipeline (Data from personal hard drive / local server)
-
-To run your local data, you run the pipeline, but skips the steps of 
-downloading. You also need to annotate the basic sample metadata yourself,
-since it does not exist online yet. 
-
-```r
-library(massiveNGSpipe)
-config_dirs <- ORFik::config() # Where all data is stored (all your pipelines)
-# -> project_dir specifies log, status and metadata folder for specific pipeline
-project_dir <- file.path(dirname(config_dirs)[1], "test_pipeline")
-mode <- "local" # Data already exists on your computer / server
-google_url <- NULL # Do not use google sheet for metadata storage
-preset <- "Ribo-seq" # What kind of pipeline (use Ribo-seq preset)
-
-# Init config (set up paths and pipeline settings)
-config <- pipeline_config(project_dir, config_dirs, mode = mode,
-                          preset = preset, google_url = google_url)
-
-# Now, for local data you need to define a data.table with local file metadata
-# Do this for each experiment (split experiment for each organism)
-name <- "local_mNGSp_run_test" # This is the folder name in the fastq folder
-organism <- "Homo sapiens"
-organism_caps <- gsub(" ", "_", trimws(tolower(organism)))
-path <-  paste(name, organism_caps, sep = "-")
-path_full <- file.path(config$config["fastq"], path)
-stopifnot(basename(path) == path) # relative path only!
-stopifnot(dir.exists(path_full)) # Must exist!
-
-save_file <- file.path(config[["metadata"]],
-                       paste0("SraRunInfo_", name, ".csv"))
-# Add all information needed here
-dt <- local_study_csv(path_full, name, organism = organism,
-                      paired = "SINGLE", AUTHOR = "Håkon",
-                      sample_title = c("WT_ribo_cycloheximide_rep1",
-                                       "WT_ribo_cycloheximide_rep2"))
-dir.create(dirname(save_file), FALSE, TRUE)
-fwrite(dt, save_file)
-
-# Now for all experimental directories, validate metadata
-# massiveNGSpipe requires a unique set of rows for metadata to be valid
-all_names <- c(name) # Add all here (here we did only 1)
-# Now run this, when you get to validation either open your csv and set
-# the KEEP column to TRUE, for sample you want to run.
-# Or do as bellow to run and update KEEP column in R
-curate_metadata(all_names, config)
-
-# data.table way of setting samples to run.
-temp <- fread(config$temp_metadata)
-temp$KEEP <- TRUE
-fwrite(temp, config$complete_metadata)
-curate_metadata(all_names, config)
-
-# Now init pipeline objects and run pipeline
-pipelines <- pipeline_init_all(config)
-
-run_pipeline(pipelines, config, wait = 20, BPPARAM = SerialParam())
+run_pipeline(pipelines["PRJNA779948"], config, wait = 20)    # e.g. as an RStudio background job
 ```
 
-### The flow of data through the pipeline (theory)
-
-The pipeline consists of several steps where the user can add their custom
-steps. Here we will walk through the 4 main steps:
-
-
-
-#### pipeline_config (Where should the pipeline save stuff, what functions to run, how to get data)
-
-pipeline_config is the first function you will call to init a new pipeline.
-
-It sets up 3 main steps:
-
-- Directories (for data and metadata (with google sheet integration))
-- Steps of action (function to be done, and how they are grouped), we call these
-'flags' and each flag has a function to implements the logic.
-- Setup for Parallel processing and how to log errors.
-
-Important to remember is that the pipeline has 2 main modes:
-- 'online': for online repository data
-- 'local': for local machine / server data
-
-Since the input steps are just a set of input function, you as a user can fully
-customize the pipeline. 
-
-#### curate_metadata (Which samples to run and what are they)
-
-curate_metadata is the function to set up and validate metadata.
-There are 3 main steps:
-
-For each study you have, per organism, we define a data structure:
-
-- Which samples to use: For online mode, samples are identified by Run ids (SRR, ERR, DRR,...) and study id will be the bioproject id, SRP, etc.,
-for local mode, samples are identified by relative file names, and studies are 
-folders (one folder per organism, if local study is multi-species).
-- Metadata extraction: When primary metadata is set up (where are the samples, which organism), we need to make sure we have a unique experimental identifier per sample. Like Ribo-seq Wild type cyclohexamide rep1. 
-- Automatic validation: We then run through a automatic validation
-of the metadata and the user will be informed if the information is not sufficient. 
-
-#### pipeline_init_all (Create pipeline objects (per study per organism), download genomes)
-
-When the curate_metadata step is complete and you have got a valid set of input data, you are good to go. This steps sets up the pipeline object: the object you actually feed into the main run. 
-
-It takes the config and the completed metadata table, it then sets up 3 important things:
-- Where should raw files, processed files and experiments be stored for this specific study?
-- Which genome and index does it use?
-- What is the metadata for this specific study?
-
-#### run_pipeline (Start processing)
-
-We advice you to always run this in a background job in RStudio, 
-to 
-run_pipeline uses the results from the parts:
-- pipeline_init_all object (all data needed per study/organism to run )
-- pipeline_config (the pipeline config, what to do etc.)
-
-It then runs each function in a safe wrapper that if it fails it stores
-error to a log and let's you know. It then continues to the next pipeline object.
-When all objects are done it will retry the ones that failed.
-
-You can also get a progress report of how long you have come. 
-
-### The flow of data through the pipeline (code examples)
-
-The pipeline consists of several steps where the user can add their custom
-steps. Here we will walk through the 4 main steps with code examples (theory described in section above):
-
-#### Running custom functions
-
-Template for new functions
-```r
-# If you want to work on finished ORFik experiments
-pipe_doX <- function(pipelines, config, step = "doX") {
-  for (pipeline in pipelines) { # Per pipeline object
-    try <- try({
-      # For each species in study
-      df_list <- lapply(experiments, function(e) read.experiment(e, validate = FALSE, output.env = new.env()))
-      # Your code here ---->
-      for (df in df_list) {
-        # First skip if step is done
-        if (!step_is_next_not_done(config, step, name(df))) next
-        # Do something
-        # Then set flag when done
-        set_flag(config, step, name(df))
-      }
-    })
-    if (is(try, "try-error"))
-      warning("Failed at step, ", step ,", study: ", pipeline$accession)
-  }
-}
-
-# If you want to work on pipeline objects
-pipe_count_reades <- function(pipelines, config, step = "countReads") {
-  for (pipeline in pipelines) { # Per pipeline object
-    try <- try({
-      conf <- pipeline$organisms[[organism]]$conf
-      if (!step_is_next_not_done(config, step, conf["exp"])) next
-      
-      index <- pipeline$organisms[[organism]]$index
-      source_dir <- conf["fastq"]
-      runs <- study[ScientificName == organism]
-      # Files to run (Single end / Paired end)
-      all_files <- massiveNGSpipe:::run_files_organizer(runs, source_dir)
-      lengths <- sapply(all_files, function(file) length(readDNAStringSet(file)))
-      saveRDS(file.path(source_dir, "count_reads.rds"))
-      }
-    })
-    if (is(try, "try-error"))
-      warning("Failed at step, ", step ,", study: ", pipeline$accession)
-  }
-}
-```
-
-Actuall example:
-```r
-library(massiveNGSpipe)
-
-# Setting up custom pipelines
-config_dirs <- ORFik::config() # Where all data is stored (all your pipelines)
-# -> project_dir specifies log, status and metadata folder for specific pipeline
-project_dir <- file.path(dirname(config_dirs)[1], "local_pipeline_ribo")
-mode <- "local" # Data already exists on your computer / server
-google_url <- NULL # Do not use google sheet for metadata storage
-preset <- "Ribo-seq" # What kind of pipeline (use Ribo-seq preset)
-# Init config (set up paths and pipeline settings)
-config <- pipeline_config(project_dir, config_dirs, mode = mode,
-                          preset = preset, google_url = google_url,
-                          keep_contaminants = TRUE,
-                          keep.unaligned.genome = TRUE)
-                          
-# Adding new step
-
-# 3 things: flag_id name, name of function, and the function itself
-
-#' Differential expression analysis on primary contrast
-#' @inheritParams run_pipeline
-#' @param step name_id of current step
-pipe_difexp <- function(pipelines, config, step = "difexp") {
-  for (pipeline in pipelines) { # Per pipeline object
-    try <- try({
-      # For each species in study
-      df_list <- lapply(experiments, function(e) read.experiment(e, validate = FALSE, output.env = new.env()))
-      # Your code here ---->
-      for (df in df_list) {
-        # First skip if step is done
-        if (!step_is_next_not_done(config, step, name(df))) next
-        DEG.analysis(df)
-        # Then set flag when done
-        set_flag(config, step, name(df))
-      }
-    })
-    if (is(try, "try-error"))
-      warning("Failed at step, ", step ,", study: ", pipeline$accession)
-  }
-}
-
-flag_id <- "difexp" # The id of the flag step
-# By default appends as last step, you can also set new steps to be appended in front.
-new_config <- add_step_to_pipeline(config, flag_id, function_name, FUN = pipe_difexp)
-pipeline_init_all(config)
-```
-
-# Overview of making metadata for massiveNGSpipe:
-
-
-## Metadata introduction
-Samples need to be structured be able to run through a pipeline.
-
-More specifically, we require a minimum set of datapoints, and 
-for each library (Run), the set of datapoints must be unique.
-
-### ENTREZ run summary
-
-The way we do this in is to use a csv file (a google sheet):
-
-It is structured in a following way:
-
-For each study we get the run summary, a csv file from the ENTREZ database:
-
-Each row in the run summary represents a run (a fastq file or a pair of fastq files in case of paired-end)
-
-These are the important columns:
-
-- Run number: SRR, ERR, DRR (Run)
-- Study accession (BioProject)
-- Single end or paired end (LibraryLayout)
-- Organism it came from (ScientificName)
-
-To gather what the sample is:
-
-- library type (e.g. Ribo-seq, RNA-seq)
-- condition (e.g. wild type, knock out or overexpression)
-- timepoint (e.g. 2 days post fertilization, 2 hours of drug treatment)
-- replicate (e.g. replicate 1, replicate 2, ...),
-
-We need to know where to find these datapoints.
-
-Here we order columns to look at in probability of finding useful information:
-
-- sample_title (Sample title given by author)
-- sample_source (Source of sample given by author)
-- LibraryName (Name of specific library, this is usually empty)
-
-If not existing there, then we sadly have not enough data, and need to do a manual check in the web-page for now:
-
-We advice using geo like this:
-
-https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM2664262
-
-Where GSM... in ?acc=GSM is the GSM id found in the SampleName column.
-
-## Automatic metadata detection with massiveNGSpipe
-
-When you start curating data, massiveNGSpipe will try to auto-guess some columns with 
-look up rules using regex and uniqueness of runs.
-
-These columns will be added:
-- LIBRARYTYPE	(RNA-seq, Ribo-seq, ..)
-- REPLICATE	(Minimum index seperator, rep1, rep2, rep3,..)
-- CONDITION	(WT (wild type), KO (knock out), mut (mutant),...)
-- INHIBITOR	(chx (cyclohexamide), harr (harringtonin), ...)
-- BATCH	(maximum index seperator, 1, 2, 3, ..) 
-- TIMEPOINT	(2h (2 hours), 1d (1 day), ...)
-- TISSUE	(kidney, liver, heart, ...)
-- CELL_LINE	(HEK293, HeLa, ...)
-- GENE		(RPL11, TOR, ATF4, ...)
-- FRACTION	(Remaining uniqueness seperator: cytosolic, nuclear, dmso, silvesterol, ...)
-
-The following is the goal of manual annotation:
-Per study, per organism: Get a unique set of the above columns.
-If 2 rows (Runs) are identical, the validation test should fail.
-
-
-Some additional rules:
-
-BATCH vs replicate:
-If there are technical replicates of biological replicates which are themselves grouped in batches, 
-then replicate should be what seperates them most down the line. 
-The replicate is technical replicate etc.
-
-How to use fraction column:
-When additional data-points are required to split data data, this should be put in the fraction column, seperated by underscores "_".
-
-## FAQ
-
-### What software does the preset pipelines use:
-These are the current presets
-
-#### Ribo-seq preset
-Config Call: preset = "Ribo-seq"
-
-- Fastq files are download with ORFik download.sra using a fallback system: Amazone
-- Adapter is detected with either fastqc (sequence detection) and falls back to fastp auto detection.
-- Reads are then trimmed with fastp
-- Read are collapsed (get the set of unique reads and put duplication count in read header)
-- Reads are aligned with the STAR aligner (using the wrapper in ORFik), that supports contamination removal. Settings:
-- genomic coordinates (to allow both genomic and transcriptomic coordinates) local alignment (to remove unknown flank effects)
-    minimum read size (20nt)
-- When all samples of study are aligned, an ORFik experiment is created that connects each sample to metadata (condition, inhibitor, fraction, replicate etc)
-- Bam files are then converted to ORFik ofst format
-- These ofst files are then pshifted
-- Faster formats are then created (bigwig and covRLE) for faster visualization
-- Count tables are made with ORFik as Summarized experiments objects, for fast count loading later.
-
-### Add unique mappers when multimappers already exist
-
-A problem currently, is that the user can decide to run samples through without splitting unique mappers, and later want to add them in. 
-The pipeline will then have the flag checked as done, but you want to reset it.
-
-Lets show an example to restart the yeast samples from the study autophagy_timecourse
-at the ofst step and run the unique mappers only
+`pipeline_init_all()` keys pipelines by `study_accession`, which is often a GEO series, not the BioProject. It also
+downloads missing references. To skip studies whose reference is incomplete instead, set
+`only_complete_genomes = TRUE, only_complete_indices = TRUE`. The functions behind the command line are
+`study_list_plan()`, `study_list_reset()` and `preflight_detector()`.
+
+### Local data
+
+In local mode (`mode = "local"`) there is no download step, and raw files are never deleted by default. Each study is
+a folder `<fastq>/<name>-<organism>/`. Describe its samples with `local_study_csv()` in
+`<project>/metadata/SraRunInfo_<name>.csv`, then run `curate_metadata(name, config)`. A FINAL list row needs
+`KEEP = TRUE` and a unique set of labels. See `?local_study_csv` and `?curate_metadata`.
+
+## Configuration
+
+`pipeline_config()` sets up the following. See `?pipeline_config` for every argument.
+
+- **Folders:** `project_dir` (FINAL list, flags, logs, errors) and the ORFik data folders (`config`). Keep one project
+  folder per modality (`NGS_pipeline`, `NGS_pipeline_RNA`, ...).
+- **Preset:** `"Ribo-seq"`, `"RNA-seq"`, `"disome"` or `"SSU"`. The preset decides the stages; see the next section.
+- **Mode:** `"online"` processes public studies and deletes raw, trimmed and collapsed files after use, because they
+  can be downloaded again. `"local"` processes your own FASTQ files and keeps everything.
+- **Mappers:** `all_mappers` and `split_unique_mappers` choose which outputs are made. All-mapper totals count every
+  alignment of a multi-mapping read, so use the unique-mapper outputs for depth.
+- **Workers:**
+  - `threads_default` is the number of workers per stage;
+  - `threads` overrides the count for one step, e.g. `config$threads$pcounts <- 1`;
+  - `threads_blas_cap` caps the BLAS threads of each worker, and the workers of the P-shift and count stages;
+  - `thread_type` selects multicore or serial.
+- **Memory:** an alignment waits until enough memory is free, for at most `max_ram_wait_minutes`. Optional fields on
+  the config list:
+  - `config$ram_reserve_gb`: memory to leave free for other users;
+  - `config$bam_sort_memory_gb`: a cap on the BAM sort;
+  - `config$external_bam_sort_gb`: the memory budget of the external sorter.
+- **Downloads:** `max_unprocessed_downloads` and `stop_downloading_new_data_at_drive_usage` pause new downloads.
+- **Google sheets:** `google_url` syncs the curated metadata. With `NULL`, local CSV files are used; the command line
+  never creates a sheet.
+
+## Stages, flags and status
+
+| Preset | Stages (flags) |
+| --- | --- |
+| Ribo-seq | start, fetch → trim, collapsed → aligned, cleanbam → exp, ofst → pshifted, valid_pshift → merged_lib → covrle, bigwig → pcounts |
+| RNA-seq | start, fetch → aligned, cleanbam → exp, ofst → cigar_collapse → merged_lib → covrle, bigwig → pcounts |
+| disome, SSU | as Ribo-seq, without the P-shift stages |
+
+`start` and `fetch` exist only in online mode. `demultiplex = TRUE` adds a demultiplexing stage first (see
+`?demultiplex`), and `contam = TRUE` adds contaminant depletion before alignment.
+
+**Flags.** Each finished stage writes `<project>/flags/<stage>/<experiment>.rds`. Per-sample markers let reruns skip
+finished samples. Removing flags triggers reprocessing:
+
+- `remove_flag_all_exp(config, steps, exps, samples = TRUE)` removes flags and per-sample markers;
+- `remove_flag_all_exp_from(config, from_step, exps)` removes the flag of one stage and every stage after it.
+
+After changing offsets or trimming, use `samples = TRUE`, or the coverage and counts stay stale.
+
+**Status.** To follow progress:
+
+- `mngsp status`, or `<project>/log_pipeline/checklist.txt`, shows each stage's progress and the system load;
+- `watch_pipeline_checklist(config)` follows it live;
+- `progress_report(pipelines, config)` gives a summary per study.
+
+## Trimming and barcode detection
+
+- **Adapters** are detected from the first 200k raw reads (`adapter_detection = "scan"`; `"fastqc"` is the older
+  method).
+- **Single-end reads** are trimmed and collapsed in one pass by a built-in C program (`fast_trim = TRUE`). Paired-end
+  reads use fastp.
+- **Paired footprint libraries** are processed from one mate (`auto_footprint_mate = TRUE`).
+
+The barcode/UMI detector runs in `"guarded"` mode by default:
+
+- it cuts only on sequence evidence, where a fixed run plus non-templated (random) bases mark the barcode;
+- it rejects calls instead of clipping them;
+- it guards the read length after trimming, and falls back to poly(A) detection.
+
+`options(massiveNGSpipe.barcode_detector = "legacy")` restores the older change-point detector.
+`preflight_detector()`, also run by `mngsp preflight` and `mngsp run`, checks the detector on a synthetic library with
+a random 4-nt 5' flank.
+
+For each experiment, `<experiment>/trim/adapter_barcode_table.csv` records what was detected. To override detection,
+put a manual table in the experiment's `trim/` folder: `adapters_manual.csv`, `barcodes_manual.csv` or
+`mate_override_manual.csv`. Then:
+
+- `apply_trim_fix_to_sample(exp, run, config, barcode5p_size =, barcode3p_size =, adapter =, note =)` fixes one
+  sample and resets only that sample's markers;
+- `apply_trim_fix_and_rerun()` also reruns the study and checks that no sibling sample changed;
+- to re-trim whole studies, use `mngsp run --apply --reset --trim <table>` or `--manual-dir <dir>`.
+
+## P-shifting
+
+For Ribo-seq, ORFik detects the P-site offset of each read length (`accepted_lengths_rpf`), first strict, then weak.
+With `pshift_per_library = TRUE`, a study-wide failure falls back to per-library detection. Mitoribosome libraries
+(FRACTION `mito`) are shifted on mitochondrial CDSs.
+
+The results are in `aligned/pshifted/`: `shifting_table.rds` with its provenance, and the weighted read-length
+distributions. `valid_pshift` marks that the QC was computed, not that it passed.
+
+For review and repair:
+
+- `pshift_triage(exp, config)` collects the QC verdict, frame table and length distributions (read-only);
+- `manual_reshift(exp, offsets, config, note)` applies explicit offsets, resets the downstream stages and logs the
+  change;
+- `pshift_add_extra_lengths()` adds read lengths;
+- `psite_reshift_app()` is an interactive review app.
+
+## Outputs
+
+For each experiment `<study>-<organism>`, in the bam folder of `ORFik::config()`:
+
+| Path | Content |
+| --- | --- |
+| `trim/` | Trim reports, detected and manual adapter/barcode tables, provenance. |
+| `aligned/*.bam`, `aligned/LOGS_*` | STAR alignments and logs. |
+| `aligned/ofst/`, `aligned/pshifted/` | Collapsed alignments (ofst; `score` = read count) and P-shifted reads. |
+| `aligned/cov_RLE*/`, `aligned/bigwig/` | Coverage for fast loading and genome browsers. |
+| `aligned/QC_STATS/` | Count tables (`countTable_<mrna\|cds\|leaders\|trailers>.qs`), STAR and frame QC. |
+| `aligned/unique_mappers/` | The same products for unique mappers (with `split_unique_mappers`). |
+
+The ORFik experiment CSV (`<exp folder>/<experiment>.csv`) ties samples to their labels. Load it with
+`ORFik::read.experiment()`.
+
+## Merged tracks and collections
+
+When studies are done (`pcounts`), you can build organism-wide products:
+
+- `pipeline_merge_org(config)`: merged masters for each organism, plus subsets such as one inhibitor;
+- `pipeline_collection_org()` and `pipeline_collection_master()`: indexed collections for RiboCrypt's MegaBrowser
+  and UMAP;
+- `docker_copy_done_experiments(config)`: publishes experiment CSVs to a RiboCrypt app's experiment folder,
+  rewriting paths.
+
+Building tracks, exposing them in an app and uploading a release are separate steps.
+
+## Troubleshooting
+
+- **A study failed.**
+  1. Run `mngsp errors`, or `pipeline_errors(config)` in R. Error records are in
+     `<project>/error_logs/<session>/<experiment>.rds`, and stage loops skip studies that have one.
+  2. Fix the cause, then run `mngsp retry <experiment>` (`clear_pipeline_error()`). A running pipeline picks the
+     study up again; otherwise start `mngsp run <list> --apply`.
+  3. To leave known failures out of a restart, use `--skip-failed 1`.
+
+  All events go to `error_logs/events.jsonl`, and run-level crashes to `session_logs/<session>/crash_*.rds`.
+- **Wrong trimming or offsets.** For a full restart, run `mngsp run <list> --apply --reset`. For one sample, use
+  `apply_trim_fix_to_sample()`. For a later stage, use `remove_flag_all_exp_from()`.
+- **"Too many open files", or STAR stops.** Raise `ulimit -n`. `mngsp preflight` shows the current limit.
+- **"C stack usage too close to the limit".** Start R with `ulimit -s 65536`; the `mngsp` wrapper does this.
+- **"unable to fork" or zombie processes.** Long runs mix callr and forked workers. The stage loops reap their own
+  zombie children automatically, so update the package if this still happens. Stop a run by its whole process tree,
+  because STAR, fastp and fasterq-dump run in their own sessions.
+- **Genome download failed.** Run `get_annotation(organism)` to see why. Otherwise, place the FASTA and GTF yourself:
+  `get_annotation(organism, GTF = <gtf>, genome = <fasta>)`. Some organisms need a pinned assembly
+  (`reference_assembly()`).
+- **Temp space.** SRA extraction uses `tempdir()` only when `tmp_space_claim()` grants the space. `tmp_cleanup_stale()`
+  removes stale `Rtmp*` folders left by dead sessions.
+- **RNA strand.** See [RNA_STRAND.md](RNA_STRAND.md).
+
+## Development and tests
+
+Use `devtools::load_all()` on a checkout, or `MNGSP_DEV=<checkout> mngsp ...` for the command line. To add a custom
+stage, use `add_step_to_pipeline(config, short_name, FUN)`.
 
 ```r
-library(massiveNGSpipe)
-config <- pipeline_config(mode = "local", preset = "Ribo-seq",
-                          split_unique_mappers = TRUE, all_mappers = FALSE)
-pipelines <- pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = FALSE)
-
-exp_flag <- "autophagy_timecourse-saccharomyces_cerevisiae"
-remove_flag_all_exp_from(config, "ofst", exp_flag)
-# Run only autophagy, to ignore other unfinished studies.
-exp <- "autophagy_timecourse"
-run_pipeline(pipelines[exp], config, wait = 20)
+devtools::test(filter = "cli")   # one test file
+devtools::test()                 # full suite
 ```
 
-### The genome download failed
+The tests use temporary folders and mock data; they need no network or references.
 
-If this happens, it means genome could not be automatically fetched 
-from ensembl.
+## Authors and license
 
-Luckily there is a way to either manually fix this problem.
-
-To fix, run get_annotation("Homo sapiens") <- replace with your organism, and see what the problem is.
-
-If the problem is deeper try, some info is needed:
-When init_pipelines_all is run, it checks per organism for a file
-called ouputs.rds in the organism reference folder.
-If this file exists the step will pass.
-
-- Find your gtf and fasta genome file and put manually in folder.
-- Call:
-
-get_annotation(organism, GTF = path_to_gtf, genome = path_to_genome, gene_symbols = FALSE)
-
-This should now work. If it still fails, contact us on github.
-
-### P-shift QC completion and mapper-specific reports
-
-`valid_pshift` records that every sample completed its QC computation; it does
-not imply that every footprint passed biological quality thresholds. Inspect
-`good.rds`, `warning.rds` and the frame tables separately. Empty but successfully
-computed frame tables are reported as no CDS signal rather than computation
-errors. A failed or missing per-sample cache now blocks study QC completion and
-lists the affected Run IDs. Successful sample caches remain available, so a
-retry recomputes only incomplete samples.
-
-Cached QC writes all-mapper aggregate tables, plots and verdicts under
-`aligned/QC_STATS/`; unique-mapper reports go under
-`aligned/unique_mappers/QC_STATS/`. ORFik's `QCfolder()` can return a shared
-folder for both modes, so the cached writer explicitly separates these outputs.
-The existing per-sample cache namespace remains unchanged for resume support.
-
-Failure records under the running session's `error_logs/<session>/` block
-study dispatch. Diagnose and correct the cause, archive the exact failure
-record, then remove it to allow the next polling cycle to retry. Do not clear
-records indiscriminately. Some early stages use accession-only error names,
-while later stages use study-organism names. Code changes in already loaded
-stage workers require restarting the runner; changing a file or removing an
-error record alone does not reload R functions.
-
-### Study fails to p-shift
-
-The pipeline uses ORFik read length and offset calculation. 
-Most likely reasons this can fail:
-
-1. A sample in the study is RNA-seq, not Ribo-seq (misclassified)
-2. The automatic barcode / adapter detector failed -- see "Trimming / adapter / barcode detection failures" below
-for how to inspect and fix this.
-
-### Trimming / adapter / barcode detection failures
-
-Every study's adapter/barcode detection result is recorded in
-`processed_data/<study-organism>/trim/adapter_barcode_table.csv`, one row per
-sample: `id, adapter, barcode_detected, max_length_raw, mean_length_raw,
-mean_length_adapter_filtered, mean_length_adapter_barcode_filtered,
-barcode5p_size, barcode3p_size, reads_no_adapter_removed fastp(%),
-reads_no_adapter_removed ORFik(%), consensus_string_5p, consensus_string_3p`.
-A proper Ribo-seq sample should have total adapter + barcode trimming shrink
-the average read down to a normal footprint length (roughly 25-33nt).
-`mean_length_adapter_filtered` much longer than that, with
-`barcode_detected == FALSE`, usually means a real barcode was never actually
-removed.
-
-A common pattern: a 20-sample study where 18 samples detect their barcode
-correctly and 2 don't -- inspecting those 2 outliers against their own
-study's siblings (not against some fixed global rule) is usually the fastest
-way to tell a real detection failure from a sample that genuinely has no
-barcode.
-
-**A known detector limitation to check for first:** the detector has an
-early-exit -- if a sample already has a trimming report on disk showing
-`trim_mean_length <= 33` (the default threshold), it returns immediately
-*without ever running barcode detection*, reporting `barcode_detected = FALSE`
-purely from that shortcut, not a real negative. A sample whose
-`mean_length_adapter_filtered` sits at or near exactly 33 is the
-characteristic signature of this -- it is worth forcing a real detection
-pass rather than trusting the stored value (call
-`barcode_detector_single(..., check_at_mean_size = 0)` directly to bypass
-the shortcut and confirm either way).
-
-**Fixing one sample once you know the correct adapter/barcode:** write
-(or update) that sample's row in `barcodes_manual.csv`/`adapters_manual.csv`
-in the study's `trim/` folder -- any sample present in one of these files
-skips auto-detection entirely and uses the given value instead. Do this with
-`apply_trim_fix_to_sample()` rather than editing the CSV by hand: it upserts
-the row (every other sample's existing override is preserved), clears this
-one sample's per-sample progress markers for every per-sample-tracked step
-(`trim`, `collapsed`, `aligned`, `ofst`, `covrle`, `bigwig`), and clears the
-experiment-level flags from `trim` onward so the next pipeline run re-enters
-every stage -- per-sample-tracked stages then skip every already-correct
-sibling and reprocess *only* this one sample; stages with no per-sample
-granularity (`pshift`, `pcounts`, `merged_lib`, etc, since they build one
-object across every sample at once) necessarily redo the whole study, which
-is expected, not a bug.
-
-```r
-library(massiveNGSpipe)
-config <- pipeline_config() # same config the study was originally processed with
-
-apply_trim_fix_to_sample(
-  exp = "PRJNA1071171-homo_sapiens", run = "SRR27790697", config = config,
-  barcode5p_size = 5, barcode3p_size = 2,
-  note = "undetected barcode -- confirmed via forced redetection, insert was 27nt not 33nt"
-)
-
-# Then just run the pipeline again as normal for that experiment --
-# only SRR27790697 gets retrimmed/recollapsed/realigned/reconverted;
-# whole-study steps (pshift, pcounts, ...) redo the full study.
-pipelines <- pipeline_init_all(config, gene_symbols = FALSE)
-run_pipeline(pipelines["PRJNA1071171"], config, wait = 20)
-```
-
-If you only have an adapter correction (no barcode-size correction), pass
-just `adapter = "..."` and leave the barcode arguments out -- the two
-corrections are independent, and either (or both) can be given.
-
-### Automating the redetect/fix/rerun cycle (`R/ai_trim_fix_workflow.R`)
-
-Fixing one sample by hand is: find a candidate, force-redetect its real
-adapter/barcode parameters, sanity-check that result against its siblings'
-own `adapter_barcode_table.csv` (not just a study-wide summary number -- a
-study can mix several different barcode sizes across sub-batches), apply
-the fix, rerun the pipeline for just that study, and confirm no sibling's
-own files changed. Doing each step by hand, one at a time, is slow and
-easy to get wrong in exactly the ways this package's own history shows
-(see the fixes to `pipeline_trim()`/`pipeline_collapse()`/`pipeline_align()`/
-`pipeline_cleanup()` for the real bugs this surfaced). The functions below
-collapse that into fewer calls, and are what an automated/AI-driven fix
-session should use instead of reimplementing each step from scratch.
-
-- **`barcode_fix_candidates(config, outliers_per_sample_path)`** -- ranks
-  candidates by sibling-majority confidence (what fraction of a study's
-  other samples DID detect a barcode), automatically excluding any sample
-  already present in `manual_trim_fix_log.csv` (so a sample already fixed,
-  or already investigated and intentionally declined, is never
-  re-suggested), anything currently being processed by something else
-  (`sample_currently_processing()`), and optionally anything touched more
-  recently than `min_days_untouched` days (`last_real_touch()`, which
-  already excludes this package's own diagnostic-only file writes --
-  read-length distributions, reshift markers, summary-statistics CSVs --
-  from counting as a "touch").
-- **`redetect_barcode_for_sample(exp, run, config)`** -- the actual
-  `barcode_detector_single(..., check_at_mean_size = 0,
-  redownload_raw_if_needed = TRUE)` call, wrapped. Still just evidence: read
-  the result's consensus strings against the sample's own siblings before
-  deciding it's correct, exactly as the manual workflow above does.
-- **`apply_trim_fix_and_rerun(exp, run, config, barcode5p_size =,
-  barcode3p_size =, adapter =, note =)`** -- the big one: refuses to run if
-  `sample_currently_processing(exp)` is TRUE, calls
-  `apply_trim_fix_to_sample()`, builds a config/pipelines pair scoped to
-  ONLY this study's accession, calls `run_pipeline()`, and then compares
-  every OTHER sample's own files' modification times from before to after
-  -- any change there means something touched a sibling it shouldn't have,
-  and is treated as a failure even if every flag came back done. Writes its
-  result to `<config$project>/ai_fix_status/<exp>.rds` (and returns it), so
-  checking back later is one cheap `readRDS()` instead of re-deriving flags
-  or tailing a multi-hundred-line pipeline log.
-
-```r
-library(massiveNGSpipe)
-config <- pipeline_config()
-outliers_path <- "~/livemount/shared_scripts/massiveNGSpipe_scripts/aa_fix_scripts/barcode_adapter_outliers_per_sample.csv"
-
-candidates <- barcode_fix_candidates(config, outliers_path, min_majority_frac = 0.5)
-ev <- redetect_barcode_for_sample(candidates$exp[1], candidates$run[1], config)
-# ... inspect ev against the sibling table yourself before trusting it ...
-
-result <- apply_trim_fix_and_rerun(candidates$exp[1], candidates$run[1], config,
-                                   barcode5p_size = ev$barcode5p_size,
-                                   barcode3p_size = ev$barcode3p_size,
-                                   note = "redetected, confirmed against siblings")
-result$success           # TRUE only if every flag is done AND no sibling file changed
-result$touched_sibling_files  # should be character(0)
-```
-
-### Tempdrive optimization for .sra -> .fastq extraction
-
-During download of .sra files, the extraction to .fastq is very hard drive intensive, we therefor implemented a tempdrive system to only run this step on the tempdrive (which is usually a scratch ssd on servers, i.e. much faster I/O).
-A potential crash that can happen is that the temp is filed by another user during the extraction, if so, restart the pipeline. 
-
-### Post-adapter tail barcodes (2026-10-12)
-
-A fastp fixed tail cut happens **before** adapter removal. Applying a detected
-3-prime barcode length together with a sequencing-adapter cut can therefore
-remove sequencing-adapter bases while leaving the biological barcode/UMI.
-The Ribo-seq trimming wrapper now streams an adapter/front pass into a second,
-adapter-disabled tail pass for nonzero tail barcodes. This keeps one disk read
-and final write without a large intermediate FASTQ. Front-only and
-adapter-disabled cases retain their single-pass path. Both stage reports are
-kept under `trim/trim_order_metrics/`; the canonical JSON combines original
-input statistics with final insert statistics and records the trim order.
-The canonical HTML describes the second stage; use the adapter-stage HTML for
-original-input plots. A failed stage blocks completion through `pipefail`.
-
-Pipeline barcode detection uses a bounded raw-derived adapter-only sample,
-rather than re-detecting barcodes in a previous final or partial output. An
-existing trimmed FASTQ without its JSON is not a valid detection cache.
-
-The correction was established by exact raw/trimmed comparisons and matched
-alignment pilots on PRJNA933910. Its GEO protocol specifies a 16-base front
-and a 10-base biological tail; a pilot arm previously labelled `tail15`
-actually removed 10 additional bases after an ineffective raw `tail5` cut.
-That label does **not** establish a 15-base biological tail. Existing products
-from a fused nonzero-tail trim need scoped provenance/sequence review before
-reprocessing; historical outputs and raw inputs should be preserved.
-
-### OFST conversion worker budget and in-memory diagnostics
-
-With ORFik's `convert_bam_to_ofst_modes()` available, standard OFST conversion
-reuses one BAM import for requested mapper modes and writes weighted read-length
-diagnostics from loaded alignments. Mode-specific completion flags and RNA
-orientation sidecars remain intact. Set `config$threads$ofst <- 8L` for a separate
-sample budget; the new path caps it by sample count and a conservative available
-memory estimate. Other stages retain their configured worker counts. Without
-this setting it uses `threads$default`. Set `config$ofst_shared_bam <- FALSE` to
-select the established converter; installations without the new ORFik API
-fall back automatically. A 12-library RNA benchmark on 2026-10-13 reduced OFST
-wall time from 98–101 s (four workers) to 68–70 s (eight workers), with identical
-OFST and diagnostic files. This is an OFST benchmark, not an end-to-end pipeline
-speedup estimate.
-### Mixed RNA input lengths and retention
-
-RNA alignment detects short-insert adapters for each Run and the actual selected
-mate. Decisions, including absence of adapter, are cached under
-`aligned/.inline_trim/<Run>_adapter.rds` with input path/size/mtime checks. A
-long-insert first library therefore cannot suppress trimming of fragmented
-small-RNA-kit inputs later in the study. No strand-classification threshold is
-relaxed by adapter selection. Alignment cleanup uses the actual input stage's
-retention setting: raw RNA inputs obey `delete_raw_files`, independently of
-`delete_collapsed_files`.
-
-### RNA orientation on coordinate-sorted BAMs
-
-The fast default detector reads a coordinate prefix. To adjudicate ambiguous or
-conflicting calls with a genome-wide sample, use the native per-Run option:
-
-```r
-config$rna_strand_by_run[["SRR_example"]] <- list(
-  sampling = "whole_bam_random", sampling_fraction = 0.1,
-  sampling_seed = 17L, max_records = 10000000L)
-```
-
-This scans the BAM with samtools, then classifies the entire deterministic
-random subset using the existing informative-read and strand-fraction thresholds.
-Fraction/seed and the original BAM signature are included in the decision cache.
-A sample exceeding `max_records` fails explicitly; it cannot become a biased
-prefix decision. The method requires a full BAM scan and is opt-in. Classification
-as unstranded describes the counting evidence, not certification of the library
-preparation protocol. Sparse libraries remain unresolved if they cannot meet the
-informative-read minimum.
+Håkon Tjeldnes and Michał Świrski, with contributions from Krzysztof Starecki. MIT license (see `LICENSE`).
