@@ -253,6 +253,8 @@ After changing offsets or trimming, use `samples = TRUE`, or the coverage and co
   reads use fastp.
 - **Paired footprint libraries** are processed from one mate (`auto_footprint_mate = TRUE`).
 
+The libraries of one experiment are trimmed several at a time (`trim_parallel = "staged"`, the default and fastest: a detection stage feeds a pool of trim/collapse workers, largest library first). The worker count is chosen from idle CPUs and free memory (about 8 GB per worker); set `trim_workers` (`--trim-workers` on the command line) to fix it, or `trim_parallel = "serial"` for one library at a time.
+
 The barcode/UMI detector runs in `"guarded"` mode by default:
 
 - it cuts only on sequence evidence, where a fixed run plus non-templated (random) bases mark the barcode;

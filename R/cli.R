@@ -98,6 +98,8 @@ cli_options <- function() {
     cli_opt("split_unique_mappers", "lgl", "Pipeline", PIPE, "also produce unique-mapper outputs", target = "pc"),
     cli_opt("all_mappers", "lgl", "Pipeline", PIPE, "produce all-mapper outputs", target = "pc"),
     cli_opt("fast_trim", "lgl", "Pipeline", PIPE, "single-pass C trim + collapse for single-end reads", target = "pc"),
+    cli_opt("trim_parallel", "choice", "Pipeline", PIPE, "trim stage: several libraries at once (staged = fastest) or one at a time", target = "pc", choices = c("staged", "naive", "serial")),
+    cli_opt("trim_workers", "int", "Resources", PIPE, "libraries trimmed at once (default: from idle CPUs and free memory)", target = "pc"),
     cli_opt("demultiplex", "lgl", "Pipeline", PIPE, "demultiplex pooled lanes first (see ?demultiplex)", target = "pc"),
     cli_opt("contam", "lgl", "Pipeline", PIPE, "contaminant depletion step", target = "pc"),
     cli_opt("adapter_detection", "choice", "Pipeline", PIPE, "adapter detection method", target = "pc", choices = c("scan", "fastqc")),
