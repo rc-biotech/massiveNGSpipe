@@ -264,8 +264,8 @@ cli_cmd_status <- function(r) {
             if (length(p$missing)) paste0("; not in the FINAL list: ", paste(p$missing, collapse = ", ")))
     return(invisible(0L))
   }
-  path <- get_checklist_path(config, v$session)
-  if (!file.exists(path)) {
+  path <- tryCatch(get_checklist_path(config, v$session), error = function(e) NA_character_)
+  if (is.na(path) || !file.exists(path)) {
     message("No checklist yet for session ", v$session, " in ", config$project,
             " (no run started; 'mngsp status <study list>' shows flags per experiment)")
     return(invisible(0L))
