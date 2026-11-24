@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# mngsp: command line interface of massiveNGSpipe. 'mngsp --help' lists the commands, 'mngsp <command> --help' the options.
+# Put it on the PATH with: Rscript -e 'massiveNGSpipe::install_cli()'
+# Environment:
+#   MNGSP_DEV=<checkout>   load a source checkout with devtools::load_all() instead of the installed package
+#   MNGSP_NOFILE=<n>       open-file limit to raise to (default 524288, capped at 'ulimit -Hn'); STAR needs many
+#   MNGSP_RSCRIPT=<path>   Rscript to use (default: Rscript on the PATH)
+unset LC_ALL   # a global LC_ALL overrides R's locale handling (same as 'env -u LC_ALL')
+want="${MNGSP_NOFILE:-524288}"
+cur="$(ulimit -n)"; hard="$(ulimit -Hn)"
+if [ "$cur" != "unlimited" ] && [ "$cur" -lt "$want" ] 2>/dev/null; then
+  target="$want"
+  if [ "$hard" != "unlimited" ] && [ "$hard" -lt "$want" ]; then target="$hard"; fi
+  ulimit -n "$target" 2>/dev/null || true
+fi
+ulimit -s 65536 2>/dev/null || true   # 64 MB C stack (run_pipeline died at the 8 MB default)
+rscript="${MNGSP_RSCRIPT:-Rscript}"
+if [ -n "$MNGSP_DEV" ]; then
+  expr="suppressWarnings(suppressMessages(devtools::load_all(Sys.getenv('MNGSP_DEV'), quiet = TRUE, export_all = FALSE))); quit(save = 'no', status = massiveNGSpipe::mngsp_cli())"
+else
+  expr="quit(save = 'no', status = massiveNGSpipe::mngsp_cli())"
+fi
+exec "$rscript" -e "$expr" "$@"
