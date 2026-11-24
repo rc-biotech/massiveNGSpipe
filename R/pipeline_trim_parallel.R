@@ -48,13 +48,17 @@ trim_samples_run <- function(ctx, method = "serial", workers = NULL) {
   }
   run_fork_pool(n, list(detect = function(i) trim_sample_detect(ctx, i),
                         trim = function(i, det) trim_sample_finish(ctx, i, det)),
-                stages = c("detect", "trim"), slots = slots, run_ids = ctx$runs$Run, start_order = start_order)
+                stages = c("detect", "trim"), slots = slots, run_ids = ctx$runs$Run, start_order = start_order,
+                # at most 1.5 x workers jobs: trims first, new detections fill the rest
+                max_jobs = max(2L, as.integer(ceiling(1.5 * workers))))
 }
 
 #' Detection and trim slots of the staged trim pool for a number of parallel libraries
 #'
-#' Detection is mostly single-threaded R (~1 min per library, whatever its size), a trim pass ~5-6 cores for ~0.2-1.5
-#' min (scales with the file): \code{workers} detection slots and half as many trim slots (at least 1). A fixed
+#' Detection is mostly single-threaded R (~1 min per library, whatever its size), a trim pass ~5-6 cores for ~0.2-10
+#' min (scales with the file): \code{workers} detection slots and as many trim slots, so a detected library never waits
+#' for a trim slot (with half as many trim slots, two small libraries detected first held both slots and the largest
+#' library, whose trim pass sets the stage's wall time, waited 3 min for one). A fixed
 #' \code{config$trim_stage_slots} or \code{options(massiveNGSpipe.trim_stage_slots = c(detect = d, trim = t))} wins.
 #' @noRd
 trim_slots <- function(workers, config = list()) {
@@ -62,7 +66,7 @@ trim_slots <- function(workers, config = list()) {
   if (is.null(fixed)) fixed <- getOption("massiveNGSpipe.trim_stage_slots", NULL)
   if (!is.null(fixed)) return(c(detect = max(1L, as.integer(fixed[["detect"]])), trim = max(1L, as.integer(fixed[["trim"]]))))
   workers <- max(1L, as.integer(workers))
-  c(detect = workers, trim = max(1L, as.integer(ceiling(workers / 2))))
+  c(detect = workers, trim = workers)
 }
 
 #' Detection half of one library's trim: everything that only reads the start of the raw file
@@ -167,10 +171,11 @@ trim_sample_finish <- function(ctx, i, det) {
 #' @param run_ids labels for messages
 #' @param poll seconds between checks
 #' @param start_order order in which items enter the first stage (later stages: in order of readiness)
+#' @param max_jobs cap on running jobs over all stages (later stages are filled first)
 #' @return list of the last stage's results, by item
 #' @noRd
 run_fork_pool <- function(n, funs, stages = names(funs), slots, run_ids = as.character(seq_len(n)), poll = 0.5,
-                          start_order = seq_len(n)) {
+                          start_order = seq_len(n), max_jobs = Inf) {
   stage_of <- integer(n)                           # last finished stage per item (0 = none)
   value <- vector("list", n)
   running <- list()                                # each: list(job, i, stage)
@@ -215,7 +220,7 @@ run_fork_pool <- function(n, funs, stages = names(funs), slots, run_ids = as.cha
     if (!length(errors)) {
       for (k in rev(seq_along(stages))) {
         busy <- sum(vapply(running, function(r) r$stage == k, logical(1)))
-        free <- slots[[stages[k]]] - busy
+        free <- min(slots[[stages[k]]] - busy, max_jobs - length(running))
         if (free <= 0) next
         if (k == 1L) {
           while (free > 0 && next_item <= n) { start_job(start_order[next_item], 1L); next_item <- next_item + 1L; free <- free - 1L }
@@ -258,7 +263,8 @@ trim_workers_fixed <- function(config = list()) {
 #'
 #' A fixed \code{options(massiveNGSpipe.trim_workers = n)} (or \code{pipeline_config(trim_workers)}, passed in by the
 #' caller) wins. Otherwise: idle CPUs (cores minus the 1-min load average) at
-#' \code{massiveNGSpipe.trim_cores_per_worker} (default 4: a detection job plus half a trim pass of ~6 cores), capped
+#' \code{massiveNGSpipe.trim_cores_per_worker} (default 4: detection ~1.5 cores, a trim pass ~5-6 cores; one library is
+#' in one of the two at a time, and short detections overlap long trims), capped
 #' by free memory above the reserve (MemAvailable - \code{massiveNGSpipe.mem_reserve_gb}, default 80) at
 #' \code{massiveNGSpipe.trim_gb_per_worker} (default 8 GB: peak PSS 26-30 GB for 4 libraries at once, mostly the 1 M-read
 #' detection samples and their 8 adapter-search forks), with a floor of \code{massiveNGSpipe.trim_min_workers}

@@ -27,7 +27,7 @@ test_that("trim method, fixed workers and stage slots come from the config, else
   expect_null(trim_workers_fixed(list()))
   expect_identical(trim_workers_fixed(list(trim_workers = 4)), 4L)
   withr::with_options(list(massiveNGSpipe.trim_workers = 2), expect_identical(trim_workers_fixed(list()), 2L))
-  expect_identical(trim_slots(4), c(detect = 4L, trim = 2L))
+  expect_identical(trim_slots(4), c(detect = 4L, trim = 4L))
   expect_identical(trim_slots(1), c(detect = 1L, trim = 1L))
   expect_identical(trim_slots(6, list(trim_stage_slots = c(detect = 2, trim = 1))), c(detect = 2L, trim = 1L))
 })
@@ -42,6 +42,15 @@ test_that("run_fork_pool chains stages in order, respects slots and returns resu
   res <- run_fork_pool(6, funs, slots = c(a = 3, b = 2), run_ids = paste0("R", 1:6), poll = 0.05)
   expect_identical(vapply(res, `[[`, numeric(1), 1), c(11, 21, 31, 41, 51, 61))
   expect_true(max(vapply(res, `[[`, numeric(1), 2)) <= 2)              # never more than 2 jobs in stage b
+})
+
+test_that("run_fork_pool: max_jobs caps running jobs over all stages", {
+  skip_on_os("windows")
+  d <- tempfile("poolcap_"); dir.create(d)
+  job <- function(tag) function(i, prev = NULL) {
+    f <- file.path(d, paste0(tag, i)); file.create(f); Sys.sleep(0.3); n_now <- length(list.files(d)); unlink(f); n_now }
+  res <- run_fork_pool(6, list(a = job("a"), b = job("b")), slots = c(a = 3, b = 3), max_jobs = 3, poll = 0.05)
+  expect_true(max(unlist(res)) <= 3)
 })
 
 test_that("run_fork_pool starts items in start_order (largest library first)", {
