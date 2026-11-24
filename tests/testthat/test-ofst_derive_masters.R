@@ -71,3 +71,14 @@ test_that("ofst_derive path gives the same outputs as the separate steps (templa
     expect_identical(b, a, info = f)
   }
 })
+
+test_that("derive_threads_dynamic respects a fixed option and stays within 1..16", {
+  old <- options(ORFik.derive_threads = 3); on.exit(options(old))
+  expect_identical(massiveNGSpipe:::derive_threads_dynamic(), 3L)
+  options(ORFik.derive_threads = NULL)
+  th <- massiveNGSpipe:::derive_threads_dynamic()
+  expect_true(is.integer(th) && th >= 1L && th <= 16L)
+  options(massiveNGSpipe.mem_reserve_gb = 1e9)  # no free memory above the reserve -> 1 thread
+  expect_identical(massiveNGSpipe:::derive_threads_dynamic(), 1L)
+  options(massiveNGSpipe.mem_reserve_gb = NULL)
+})

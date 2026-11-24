@@ -748,8 +748,9 @@ make_additional_formats_internal <- function(df, libtype_df_ref =
 #' Calls ORFik's \code{ofst_derive_experiment()} (ORFik >= 1.29.17), which writes cov_RLE_List, cov_RLE,
 #' bigwig/<lib>_forward/_reverse.bigWig and QC_STATS/countTable_<region> from one read of the point OFST table:
 #' the same files as make_point_covrle() + master_bigwig() + countTable_regions(lib.type = "cov").
-#' Set \code{options(massiveNGSpipe.ofst_derive = FALSE)} to use the separate steps. Threads: option
-#' \code{ORFik.derive_threads} (default: data.table threads, at most 16).
+#' Set \code{options(massiveNGSpipe.ofst_derive = FALSE)} to use the separate steps. Threads: chosen per call
+#' by \code{derive_threads_dynamic()} from the idle CPUs and free memory (a fixed \code{ORFik.derive_threads}
+#' option overrides it).
 #' @param df a one-library ORFik experiment (merged master)
 #' @return TRUE if all files were written, FALSE when the caller must run the separate steps (option off, ORFik
 #'  without ofst_derive, several libraries, not sorted point data, unstranded, or an error)
@@ -758,15 +759,42 @@ derive_master_formats <- function(df) {
   if (!isTRUE(getOption("massiveNGSpipe.ofst_derive", TRUE)) || nrow(df) != 1) return(FALSE)
   derive <- tryCatch(utils::getFromNamespace("ofst_derive_experiment", "ORFik"), error = function(e) NULL)
   if (is.null(derive)) return(FALSE)
+  th <- derive_threads_dynamic()
+  old_opt <- options(ORFik.derive_threads = th); on.exit(options(old_opt), add = TRUE)
   t0 <- Sys.time()
   res <- tryCatch(derive(df), error = function(e) {
     warning("ofst_derive failed (", conditionMessage(e), "), using the separate steps", call. = FALSE)
     FALSE
   })
   if (isFALSE(res)) return(FALSE)
-  message("- covRle, covRleList, bigWig & count tables: one pass (ofst_derive, ",
+  message("- covRle, covRleList, bigWig & count tables: one pass (ofst_derive, ", th, " threads, ",
           round(as.numeric(difftime(Sys.time(), t0, units = "mins")), 1), " min)")
   TRUE
+}
+
+#' Thread count for ofst_derive that keeps the server responsive
+#'
+#' A fixed \code{options(ORFik.derive_threads = n)} wins. Otherwise: idle CPUs (cores minus the 1-min load
+#' average), capped by free memory above a reserve (MemAvailable - \code{massiveNGSpipe.mem_reserve_gb}, default 80,
+#' at \code{massiveNGSpipe.derive_gb_per_thread}, default 2 GB per thread; ~30 GB peak at 16 threads on human),
+#' with a floor of \code{massiveNGSpipe.derive_min_threads} (default 4) on a busy host unless memory is short,
+#' bounded to 1..16. Where /proc is unavailable it falls back to data.table's thread count.
+#' @return integer thread count
+#' @noRd
+derive_threads_dynamic <- function() {
+  fixed <- getOption("ORFik.derive_threads", NULL)
+  if (!is.null(fixed)) return(max(1L, as.integer(fixed)))
+  cores <- max(1L, parallel::detectCores(logical = TRUE), na.rm = TRUE)
+  load1 <- tryCatch(as.numeric(strsplit(readLines("/proc/loadavg", n = 1L), " ")[[1]][1]), error = function(e) NA_real_)
+  mem_gb <- tryCatch({
+    m <- grep("^MemAvailable:", readLines("/proc/meminfo"), value = TRUE)
+    as.numeric(gsub("[^0-9]", "", m)) / 1024^2
+  }, error = function(e) NA_real_)
+  if (is.na(load1) || is.na(mem_gb) || length(mem_gb) != 1) return(max(1L, min(16L, data.table::getDTthreads())))
+  by_cpu <- max(getOption("massiveNGSpipe.derive_min_threads", 4L), floor(cores - load1))  # busy host: modest floor
+  by_mem <- floor((mem_gb - getOption("massiveNGSpipe.mem_reserve_gb", 80)) /
+                    getOption("massiveNGSpipe.derive_gb_per_thread", 2))
+  as.integer(max(1L, min(16L, by_cpu, by_mem)))
 }
 
 #' bigWig of a master from its covRle; one-library masters write forward and reverse strand concurrently,
