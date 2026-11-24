@@ -726,6 +726,12 @@ make_additional_formats_internal <- function(df, libtype_df_ref =
   } else {
     message("- covRle & Bigwig method: full read")
   }
+  # One pass over the sorted P-site table (ORFik::ofst_derive): covRleList, covRle, bigWig and count tables, files
+  # identical to the separate steps below, which stay as the fallback (older ORFik, non-point data, option off)
+  if (libtype_df_ref && derive_master_formats(df)) {
+    suppressWarnings(remove.experiments(df))
+    return(invisible(NULL))
+  }
   if (!(libtype_df_ref && make_point_covrle(df))) convert_to_covRleList(df)
   # bigWig and the count tables only read the covRle: run them concurrently (outputs identical to the serial order)
   run_forked(list(bigwig = function() master_bigwig(df, parallel = parallel),
@@ -735,6 +741,32 @@ make_additional_formats_internal <- function(df, libtype_df_ref =
              parallel = parallel)
   suppressWarnings(remove.experiments(df))
   return(invisible(NULL))
+}
+
+#' All derived formats of a one-library P-site master in one pass
+#'
+#' Calls ORFik's \code{ofst_derive_experiment()} (ORFik >= 1.29.17), which writes cov_RLE_List, cov_RLE,
+#' bigwig/<lib>_forward/_reverse.bigWig and QC_STATS/countTable_<region> from one read of the point OFST table:
+#' the same files as make_point_covrle() + master_bigwig() + countTable_regions(lib.type = "cov").
+#' Set \code{options(massiveNGSpipe.ofst_derive = FALSE)} to use the separate steps. Threads: option
+#' \code{ORFik.derive_threads} (default: data.table threads, at most 16).
+#' @param df a one-library ORFik experiment (merged master)
+#' @return TRUE if all files were written, FALSE when the caller must run the separate steps (option off, ORFik
+#'  without ofst_derive, several libraries, not sorted point data, unstranded, or an error)
+#' @noRd
+derive_master_formats <- function(df) {
+  if (!isTRUE(getOption("massiveNGSpipe.ofst_derive", TRUE)) || nrow(df) != 1) return(FALSE)
+  derive <- tryCatch(utils::getFromNamespace("ofst_derive_experiment", "ORFik"), error = function(e) NULL)
+  if (is.null(derive)) return(FALSE)
+  t0 <- Sys.time()
+  res <- tryCatch(derive(df), error = function(e) {
+    warning("ofst_derive failed (", conditionMessage(e), "), using the separate steps", call. = FALSE)
+    FALSE
+  })
+  if (isFALSE(res)) return(FALSE)
+  message("- covRle, covRleList, bigWig & count tables: one pass (ofst_derive, ",
+          round(as.numeric(difftime(Sys.time(), t0, units = "mins")), 1), " min)")
+  TRUE
 }
 
 #' bigWig of a master from its covRle; one-library masters write forward and reverse strand concurrently,
