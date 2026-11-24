@@ -27,6 +27,14 @@
   None of these differing fields is read by massiveNGSpipe or ORFik (they use summary, adapter_cutting sequence/reads,
   total_cycles and the after-filtering curves).
 
+## Determinism (2026-11-24)
+- `--fastq-out` (the 1 M-read barcode detection sample) is written in input order: before, blocks were written in
+  worker completion order, so with 4 threads the read order changed from run to run and the detector (which reads the
+  first 1e5 / 2e5 / 3e5 reads of the sample) saw different reads (seen as a different 5' consensus string for one
+  library between two identical runs).
+- Collapsed fasta: equal counts are ordered by sequence (total order), so `seq<i>_x<count>` names no longer depend on
+  thread timing. With a fixed thread count (pigz uses the same count) the .fasta.gz is byte-identical between runs.
+
 ## Design
 reader thread (ISA-L igzip inflate, zlib fallback; multi-member gzip; record-aligned 8 MB blocks) -> N workers
 (parse, fastp statistics, trim, filter; hash each passing read) -> 8 collapse shards (one hash table per thread, no

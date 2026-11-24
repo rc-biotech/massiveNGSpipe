@@ -147,3 +147,18 @@ test_that("fast_collapse_fastq expands a '~' output directory (the binary writes
   expect_true(file.exists(out))
   expect_false(grepl("~", out, fixed = TRUE))
 })
+
+test_that("output does not depend on thread timing (detection sample in input order, collapsed ties by sequence)", {
+  skip_if(Sys.which("cc") == "", "no C compiler")
+  d <- file.path(tempdir(), "tc_determinism"); dir.create(d, showWarnings = FALSE)
+  f <- make_reads(file.path(d, "S9.fastq.gz"), n = 60000, seed = 9)    # several 8 MB input blocks
+  fq <- function(w, k) trimcollapse_run(f, d, "AGATCGGAAGAG", min.length = 20, quality_filtering = TRUE, reads_to_process = 50000,
+                                        fastq_out = file.path(d, paste0("s_", w, "_", k, ".fastq")),
+                                        json = file.path(d, paste0("s_", w, "_", k, ".json")), threads = w)
+  ref <- readLines(fq(1, 1))
+  for (k in 1:3) expect_identical(readLines(fq(4, k)), ref)           # same reads in the same (input) order
+  col <- function(w, k) { out <- trimcollapse_run(f, file.path(d, paste0("c_", w, "_", k)), "AGATCGGAAGAG", threads = w)
+                          readLines(gzfile(out)) }
+  ref <- col(1, 1)
+  for (k in 1:2) expect_identical(col(4, k), ref)                     # same names (seq<i>_x<count>) and order
+})

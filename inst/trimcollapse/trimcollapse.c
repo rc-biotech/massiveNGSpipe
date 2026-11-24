@@ -85,7 +85,13 @@ static void tadd(table *t, const char *s, uint32_t len, uint64_t h) {
   while (t->T[i].s) { if (t->T[i].h == h && t->T[i].len == len && !memcmp(t->T[i].s, s, len)) { t->T[i].n++; return; } i = (i + 1) & (t->cap - 1); }
   t->T[i].s = xmalloc(len); memcpy(t->T[i].s, s, len); t->T[i].len = len; t->T[i].n = 1; t->T[i].h = h; t->n++;
 }
-static int cmp_count(const void *a, const void *b) { const entry *x = a, *y = b; return (x->n < y->n) - (x->n > y->n); }
+/* by count (descending), ties by sequence: a total order, so the output does not depend on thread timing */
+static int cmp_count(const void *a, const void *b) {
+  const entry *x = a, *y = b;
+  if (x->n != y->n) return (x->n < y->n) - (x->n > y->n);
+  int c = memcmp(x->s, y->s, x->len < y->len ? x->len : y->len);
+  return c ? c : (x->len > y->len) - (x->len < y->len);
+}
 
 /* ---------------- fastp algorithms ---------------- */
 /* PolyX::trimPolyG (fastp): scan from the 3' end; one mismatch allowed per 8 bases, at most 5 */
@@ -197,7 +203,7 @@ static void json_summary(FILE *f, const char *name, stats_t *s, int last) {
 static int cmp_ac(const void *a, const void *b) { const acount *x = a, *y = b; return (x->n < y->n) - (x->n > y->n); }
 
 /* ---------------- block queue ---------------- */
-typedef struct block { char *buf; size_t len; struct block *next; } block;
+typedef struct block { char *buf; size_t len; uint64_t seq; struct block *next; } block;   /* seq: input order */
 typedef struct { block *head, *tail; int n, max, closed; pthread_mutex_t m; pthread_cond_t c_put, c_get; } queue;
 static void q_init(queue *q, int max) { memset(q, 0, sizeof *q); q->max = max; pthread_mutex_init(&q->m, NULL); pthread_cond_init(&q->c_put, NULL); pthread_cond_init(&q->c_get, NULL); }
 static void q_put(queue *q, block *b) {
@@ -261,7 +267,7 @@ static void *reader(void *arg) {
     if (inflateInit2(&r.zs, 15 + 32) != Z_OK) die("zlib init");
 #endif
   }
-  char *carry = NULL; size_t clen = 0; long long reads = 0; int lines_mod = 0, done = 0;
+  char *carry = NULL; size_t clen = 0; long long reads = 0; int lines_mod = 0, done = 0; uint64_t nblock = 0;
   while (!done) {
     char *buf = xmalloc(BLOCK + MAXLEN * 4); size_t len = 0;
     if (clen) { memcpy(buf, carry, clen); len = clen; free(carry); carry = NULL; clen = 0; }
@@ -279,7 +285,7 @@ static void *reader(void *arg) {
     reads += rec;
     if (!first_header[0] && cut) { size_t e = 0; while (e < cut && buf[e] != '\n' && e < MAXLEN - 1) e++; memcpy(first_header, buf, e); first_header[e] = 0; }
     if (!cut) { free(buf); continue; }
-    block *b = xmalloc(sizeof(block)); b->buf = buf; b->len = cut; q_put(&QIN, b);
+    block *b = xmalloc(sizeof(block)); b->buf = buf; b->len = cut; b->seq = nblock++; q_put(&QIN, b);
   }
   free(carry); fclose(r.f); q_close(&QIN); return NULL;
 }
@@ -409,7 +415,14 @@ int main(int argc, char **argv) {
   pthread_t closer; CLOSE_WT = wt; CLOSE_N = o.workers;
   pthread_create(&closer, NULL, close_fn, NULL);
   block *b;
-  if (fq) while ((b = q_get(&QOUT))) { fwrite(b->buf, 1, b->len, fq); free(b->buf); free(b); }
+  /* --fastq-out: write blocks in input order (workers finish out of order); later blocks wait in a sorted list */
+  if (fq) { block *pend = NULL; uint64_t next = 0;
+    while ((b = q_get(&QOUT))) {
+      block **pp = &pend; while (*pp && (*pp)->seq < b->seq) pp = &(*pp)->next; b->next = *pp; *pp = b;
+      while (pend && pend->seq == next) { block *w = pend; pend = w->next; fwrite(w->buf, 1, w->len, fq); free(w->buf); free(w); next++; }
+    }
+    if (pend) die("fastq output: missing block");
+  }
   pthread_join(closer, NULL); pthread_join(rt, NULL); if (fq) fclose(fq);
   if (!o.fastq_out) for (int k = 0; k < NSHARD; k++) pthread_join(ct[k], NULL);
   size_t tn = 0; for (int k = 0; k < NSHARD; k++) tn += TS[k].n;
