@@ -300,7 +300,7 @@ megafst_validate_pages <- function(pages, runs, tombstones = character()) {
 #' @noRd
 megafst_stream_libraries <- function(lib, pages, op, batch_size, compress, BPPARAM,
                                      covrle_memory_ratio = 11, keep_free_gb = 32,
-                                     timeout_minutes = 120, workers = BiocParallel::bpnworkers(BPPARAM)) {
+                                     timeout_minutes = 120, workers = resource_threads("collection", BiocParallel::bpnworkers(BPPARAM))) {
   if (!nrow(lib)) return(invisible(NULL))
   batches <- split(seq_len(nrow(lib)), ceiling(seq_len(nrow(lib)) / batch_size))
   max_page_rows <- max(pages$end - pages$start + 1)
@@ -530,7 +530,7 @@ megacovrle_update <- function(runs, cov_paths, file_paths, force = FALSE, covrle
     stopifnot(identical(names(strand_list), lib$Run))
     attr(strand_list, "strand") <- c("+", "-")[s]
     tmp <- paste0(file_paths[s], ".tmp")
-    qs2::qs_save(strand_list, tmp, nthreads = 5)
+    qs2::qs_save(strand_list, tmp, nthreads = resource_threads("io", 5))
     stopifnot(file.rename(tmp, file_paths[s]))
     rm(strand_list); gc(FALSE)
   }

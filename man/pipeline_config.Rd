@@ -58,7 +58,8 @@ pipeline_config(
     min(threads_default, 8), collapse = min(threads_default, 16), pshifted =
     min(threads_default, threads_blas_cap), valid_pshift = min(threads_default,
     threads_blas_cap), pcounts = min(threads_default, threads_blas_cap)),
-  count_cache = FALSE
+  count_cache = FALSE,
+  dynamic_thread_count = getOption("massiveNGSpipe.dynamic_thread_count", TRUE)
 )
 }
 \arguments{
@@ -174,16 +175,21 @@ Only continuous waiting counts (2026-10-22): a sample not re-checked for longer 
 \code{config$ram_wait_gap_minutes} (default 30) starts a new wait. Related optional fields (set on the config
 list): \code{config$ram_reserve_gb} (memory an alignment must leave available; default the shared budget's
 reserve_gb from open_workspace/agent_mail/resources/policy.json, else 0) and \code{config$ram_recheck_seconds}
-(default 300; deferred samples are re-checked once before a study is left for the next round).}
+(default 300; deferred samples are re-checked once before a study is left for the next round).
+Optional \code{config$bam_sort_memory_gb} caps the per-job BAM-sort budget even when the host has more free RAM.
+Estimates above this cap select the external Rsamtools sorter (requires an ORFik with \code{bam.sort});
+its budget is the smaller of this cap and \code{config$external_bam_sort_gb} (default16GB).
+The genome index and R workers require additional memory in the total job reservation.}
 
 \item{skip_failed_sessions}{integer vector, default 0 (off). Studies with an error record in these previous
 sessions are left out of \code{run_pipeline()}: 1 = the last session, 2 = the second last, c(1, 2) = both (session
 index as in \code{\link{pipeline_errors}}, newest first), or a start time ("2026-10-25" / POSIXct) = every session
 started at or after it. Avoids re-failing known errors on restart; clear or fix them and set 0 to retry.}
 
-\item{auto_footprint_mate}{logical, default TRUE. For paired-end Ribo-seq, detect runs whose read 1 has no insert
-(one fixed prefix in most reads) and trim + collapse read 2 instead, reverse-complemented (R/mate_override.R).
-Runs with a usable read 1 are unchanged.}
+\item{auto_footprint_mate}{logical, default TRUE. Paired-end footprint libraries (RFP, disome, SSU) are processed from
+one mate only, as single-end: read 1, or read 2 (reverse-complemented) when read 1 has no insert (one fixed prefix in
+most reads). Both mates cover the same footprint, so aligning them as a pair only lost reads (R/mate_override.R).
+FALSE restores the previous paired processing.}
 
 \item{adapter_detection}{character, default "scan": adapter detection from the first 200k raw reads without FastQC
 (known adapters, the upstream-most junction, poly(A)-tailing protocols, de novo 12-mer; 3-7x faster than FastQC and
@@ -230,8 +236,6 @@ relative toexperiment)}
 
 \item{split_unique_mappers}{logical, default FALSE.
 Run for unique mappers only, split out into seperate directory.}
-
-\item{count_cache}{logical, default FALSE. Reuse validated per-sample coverage counts.}
 
 \item{all_mappers}{logical, default TRUE. Run for all mappers}
 
@@ -308,6 +312,14 @@ R/pipeline_collapse.R) since collapsing large fastq files is memory-
 heavy per worker. \code{pshifted}/\code{valid_pshift}/\code{pcounts}
 default to \code{min(threads_default, threads_blas_cap)} for the
 same kind of reason, see \code{threads_blas_cap}'s own roxygen.}
+
+\item{count_cache}{logical, default FALSE. Reuse validated per-sample coverage counts.}
+
+\item{dynamic_thread_count}{logical, default TRUE (option \code{massiveNGSpipe.dynamic_thread_count}). Every
+thread / worker count (\code{threads}, \code{threads_blas_cap}, STAR, trim, collapse, ...) is a MAXIMUM: the
+count used is load-based (idle CPUs and MemAvailable above the reserve, \code{\link{resource_threads}}) and capped
+further by the server-wide resource mode file when one is active (\code{\link{resource_mode_set}}). FALSE: the
+configured values exactly, ignoring load and the mode file.}
 
 \item{BPPARAM_MAIN}{BiocParallel::MulticoreParam(length(pipeline_steps))
 The main parallel backend for pipeline, specifying logging behavoir etc.}

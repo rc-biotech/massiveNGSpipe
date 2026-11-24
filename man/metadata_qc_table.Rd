@@ -11,7 +11,7 @@ metadata_qc_table(
   cache_dir = file.path(config$project, "qc_cache"),
   terminal_bias_dir = "~/livemount/shared_projects/QC/data/terminal_bias_results_joanna",
   organisms = NULL,
-  workers = 16
+  workers = resource_threads("qc_table", 16L)
 )
 }
 \arguments{

@@ -439,7 +439,7 @@ detect_strand_mode <- function(R1, R2,
                                genomeDir = "~/livemount/Bio_data/references/homo_sapiens/STAR_index/genomeDir/",
                                nreads = 1e6,
                                tx = loadRegion(list.files(dirname(dirname(genomeDir)), ".db$", full.names = TRUE)[1], "tx"),
-                               td = tempdir(), threads = 20, star = STAR.install(),
+                               td = tempdir(), threads = resource_threads("star", 20L), star = STAR.install(),
                                keepGenomeLoaded = c("LoadAndRemove", "LoadAndKeep", "NoSharedMemory")[1],
                                short_insert = FALSE) {
   stopifnot(file.exists(R1) & length(R1) == 1)

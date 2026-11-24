@@ -83,6 +83,7 @@ If validation fails, curation stops. Edit `project/next_round_manual.csv` (`KEEP
 | `retry <exp>... \| --all` | Clear error records. A running pipeline retries those experiments on its next round. |
 | `preflight` | System checks and the barcode detector self-test. |
 | `config [<list>]` | Every resolved setting and where it came from. |
+| `resources show \| set <mode> --reason <text> [--hours h] \| refresh \| clear` | Show or change the server-wide resource mode (see [Resources and server mode](#resources-and-server-mode)). |
 
 A study list holds one accession per line: a BioProject, GEO series or SRA study in online mode, or a folder name in
 local mode. Lines starting with `#` are comments.
@@ -103,6 +104,7 @@ Main `run` options:
 | `--no-preflight` | Skip the barcode detector self-test, which runs by default for Ribo-seq, disome and SSU. |
 | `--threads <n>`, `--threads-<step> <n>`, `--blas-cap <n>` | Workers per stage, workers for one step (`trim`, `collapse`, `pshifted`, `pcounts`, ...), and BLAS threads. |
 | `--ram-reserve-gb`, `--bam-sort-memory-gb`, `--max-ram-wait-minutes` | Memory caps for alignment. |
+| `--no-dynamic-thread-count` | Use the configured thread counts exactly (no load-based counts, no resource mode). |
 
 All `pipeline_config()` arguments are available as options (`--preset`, `--mode`, `--project-dir`,
 `--split-unique-mappers`, `--delete-raw-files`, ...). Their defaults are the `pipeline_config()` defaults.
@@ -219,6 +221,94 @@ a folder `<fastq>/<name>-<organism>/`. Describe its samples with `local_study_cs
 - **Downloads:** `max_unprocessed_downloads` and `stop_downloading_new_data_at_drive_usage` pause new downloads.
 - **Google sheets:** `google_url` syncs the curated metadata. With `NULL`, local CSV files are used; the command line
   never creates a sheet.
+
+## Resources and server mode
+
+All thread and worker counts go through one function, `resource_threads(step, max = <configured value>)`
+(`R/resources.R`). Step names and their per-worker costs are listed by `resource_steps()`; new code calls
+`resource_threads("my_step", max = n)` (unknown steps use the `default` row).
+
+- **The configured value is the maximum.** With `pipeline_config(dynamic_thread_count = TRUE)` (default) the count
+  is load-based: `min(max, max(min, floor((cores - load1) / cores_per_worker)), floor((MemAvailable - reserve) /
+  per_worker_gb), n)`, at least 1. The reserve is `options(massiveNGSpipe.mem_reserve_gb)`, default 80 GB. The busy
+  floor `min` applies to the CPU check only; too little memory can go down to 1. On an idle host the result is the
+  configured value. `resource_snapshot()` shows cores, load, MemAvailable, swap and the mode.
+- **`dynamic_thread_count = FALSE`** (`--no-dynamic-thread-count`): the configured values exactly, ignoring load
+  and the mode file.
+- **STAR:** `--runThreadN` is ORFik's default `min(90, workers)` through `resource_threads("star")`. The BAM sort uses
+  `--outBAMsortingThreadN 16` (`config$star_sort_threads`, passed through `ORFIK_STAR_EXTRA_ARGS`; a value set there
+  by the user wins). This is 17% faster on heavy libraries and gives the same BAM bytes, but peaks at about 30 GB
+  instead of 16 GB, so it falls back to STAR's 6 when less than `config$star_sort_extra_gb` (14 GB) is left after
+  the planned sort.
+- **SSD scratch:** an alignment uses the SSD only when it has the input copy, plus ~1 GB per million input reads
+  (`config$scratch_gb_per_million_reads`; reads estimated from the file size), plus `ssd_min_free_gb`. STAR's temp
+  files grow with the number of alignments (54 GB for a 68 M-read library), not with the FASTQ size. Before this, the
+  check was 2x the input plus `ssd_min_free_gb`.
+
+**Server mode file (optional).** `~/livemount/Bio_data/NGS_pipeline/RESOURCE_MODE` is on the shared storage of all
+konsola containers. Set `options(massiveNGSpipe.resource_mode_file =)` or the env var `MNGSP_RESOURCE_MODE_FILE` to
+point elsewhere, or to `none` to disable reading it. With no file, nothing extra is capped. A valid file is a master
+regulator on top of the load-based counts and only ever lowers them:
+
+```
+mode: conserve            # normal (only the caps below) | conserve (x0.5 of every maximum) | minimal (x0.25)
+max_mem_gb: 40            # optional: memory per step (workers x per-worker GB, STAR sort; larger sorts go external)
+max_threads: 16           # optional: threads / workers per step
+reason: ribocrypt VM stalled
+set_by: claude-megafst
+set_at: 2026-11-24T12:00:00Z
+expires_at: 2026-11-24T14:00:00Z
+```
+
+- **Writing it:** `resource_mode_set("conserve", hours = 2, reason = ...)`, `resource_mode_refresh()`,
+  `resource_mode_clear()`, `resource_mode_show()`, or `mngsp resources set|refresh|clear|show`.
+  - The file is written atomically (temp file in the same folder + rename), so readers never see half a file.
+  - With concurrent writers, the last rename wins.
+  - `clear --set-by <me>` only clears a mode that `<me>` set.
+  - Every change is appended to `RESOURCE_MODE.log`.
+- **Expiry and heartbeat:**
+  - `expires_at` is required and may be at most 6 h after `set_at` (`massiveNGSpipe.resource_mode_max_hours`), so a
+    crashed writer cannot leave a lasting restriction.
+  - The writer must refresh the file to keep the mode.
+- **Files that are ignored** (one warning per file version, then treated as no file):
+  - expired, malformed, unreadable (e.g. a permission error), or with expiry too far ahead;
+  - future-dated: `set_at` more than 10 min in the future, which means the clocks of the containers differ.
+  - `options(massiveNGSpipe.resource_mode_rename_expired = TRUE)` renames an expired file to `RESOURCE_MODE.expired`.
+- **When it is read:** at every thread decision, i.e. at each stage start (`bpparam_from_config()`) and for each
+  alignment. It is one stat and one small read, and it never fails a run.
+  - A mode change applies from the next stage or sample; running work is not touched.
+  - NFS attribute caching can delay a change by up to about a minute.
+- **Valen** and other hosts without the shared path have no file, so they get the load-based counts only.
+- **The `resource_budget.py` claims** (`open_workspace/agent_mail/resources/`) are separate and are not merged with
+  the mode file. Claims reserve capacity per agent group before heavy jobs start. The mode file throttles running
+  pipelines server-wide. `ram_reserve_gb()` still reads the budget's `reserve_gb` for alignments.
+
+Call sites, file:line on branch `feature/resource-mode-20261124` (before → after):
+
+| Site | Step | Before | After |
+| --- | --- | --- | --- |
+| `R/pipeline_init_helpers.R:421` `bpparam_from_config()` | each `config$threads` name (main, trim, collapse, pshifted, valid_pshift, pcounts, ofst, covrle, ...) | `config$threads[[step]]` | load-based, max = config value; also re-applies BLAS when a mode is active |
+| `R/pipeline_config.R:292` BLAS/OpenMP | blas | `threads_blas_cap` | load-based, max = `threads_blas_cap` |
+| `R/pipeline_preset_steps_sub.R:453` STAR `--runThreadN` | star | ORFik default `min(90, workers)` | same value as max, passed as `max.cpus` |
+| `R/pipeline_preset_steps_sub.R:454` STAR sort | star_sort | STAR default 6 | 16 when ≥14 GB headroom, else 6 |
+| `R/pipeline_preset_steps_sub.R:229` SSD scratch | - | 2 x input + 50 GB | input + 1 GB/M reads + 50 GB |
+| `R/pipeline_align_memory.R:174` external BAM sort | - | `external_bam_sort_gb` (16) | x mode factor, ≤ `max_mem_gb` (mode only) |
+| `R/pipeline_collapse.R:113` fast collapse | collapse_fast | `config$threads$collapse` | load-based |
+| `R/pipeline_trim_parallel.R:284-288` `trim_workers_dynamic()` | trim_workers | own formula (4 cores, 8 GB, floor 2, max 8) | same parameters in the shared formula + mode cap |
+| `R/pipeline_preset_steps.R:786-789` `derive_threads_dynamic()` | ofst_derive | own formula (2 GB, floor 4, max 16) | same parameters in the shared formula + mode cap |
+| `R/trimcollapse.R:32` | trimcollapse | `min(16, cores)` | load-based |
+| `R/fastq_helpers.R:1280,1401,1465`, `R/anchored_front_trim.R:38`, `R/barcode_trim_order.R:6` | fastp | ORFik default / 4 | load-based |
+| `R/download_sra.R:197` fasterq-dump | fasterq_dump | 24 (temp) / 6 | load-based |
+| `R/pipeline_demultiplex.R:88-89` | demultiplex | 4 files / 8 collapse workers | load-based |
+| `R/pipeline_preset_steps.R:247,334`, `R/collection_megafst.R:303`, `R/collection_processing.R:81` | collection | `bpparam()$workers` / 4 | load-based |
+| `R/pipeline_preset_steps.R:399`, `R/collection_megafst.R:533`, `R/collection_processing.R:11,84` | io | qs2 / fst 5 threads | load-based |
+| `R/metadata_qc_table.R:34` | qc_table | 16 | load-based |
+| `R/pipeline_metadata.R:855` | metadata | 3 (NCBI rate limit) | mode cap only (no CPU check) |
+| `R/bam_utils.R:442`, `R/annotation_build.R:192,298` | star, blast | 20, 8 | load-based |
+
+Not routed:
+- the UMAP threads (`collection_umap.R`), because uwot's neighbour search can change results with the thread count;
+- the ORFik-internal counts that ORFik sets itself.
 
 ## Stages, flags and status
 

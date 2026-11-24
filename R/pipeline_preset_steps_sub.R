@@ -225,7 +225,8 @@ resolve_align_scratch <- function(file1, output_dir, run, config) {
                             used_ssd = FALSE, cleanup = function() invisible(NULL))
   if (is.null(config$ssd_scratch_dir)) return(main_drive_result)
 
-  needed_gb <- 2 * (file.info(file1)$size / 1024^3) + config$ssd_min_free_gb
+  # STAR temp grows with the alignments (~1 GB per million reads), not with the FASTQ: align_scratch_need_gb()
+  needed_gb <- align_scratch_need_gb(file1, config)
   free_gb <- tryCatch({
     drive <- ORFik::detect_drive(config$ssd_scratch_dir)
     as.numeric(sub("[a-zA-Z]+", "", ORFik::get_system_usage(drive = drive)$Drive_Free))
@@ -447,8 +448,20 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
           }
           clear_waiting_for_ram(config, experiment, run)
 
+          # STAR threads: the configured maximum (ORFik's default max.cpus) through resource_threads(); sort threads
+          # --outBAMsortingThreadN 16 when memory allows (star_sort_threads(), R/resources.R; same BAM bytes)
+          run_threads <- resource_threads("star", min(90, BiocParallel::bpparam()$workers), config = config)
+          sort_threads <- star_sort_threads(config, sort_plan, run_threads)
           align_attempt <- function(f1, f2, out_dir, ram_limit, sorter = sort_plan$sorter) {
             sort_arg <- if (sorter == "STAR") list() else list(bam.sort = sorter)
+            old_extra <- Sys.getenv("ORFIK_STAR_EXTRA_ARGS", NA_character_)
+            new_extra <- star_extra_args(if (is.na(old_extra)) "" else old_extra,
+                                         if (sorter == "STAR") sort_threads else NA_integer_, run_threads)
+            if (!identical(new_extra, if (is.na(old_extra)) "" else trimws(old_extra))) {
+              Sys.setenv(ORFIK_STAR_EXTRA_ARGS = new_extra)
+              on.exit(if (is.na(old_extra)) Sys.unsetenv("ORFIK_STAR_EXTRA_ARGS")
+                      else Sys.setenv(ORFIK_STAR_EXTRA_ARGS = old_extra), add = TRUE)
+            }
             do.call(ORFik::STAR.align.single, c(list(f1, f2, output.dir = out_dir, index.dir = index,
                                      steps = run_steps,
                                      # NULL = fresh start (tr then ge): ORFik's
@@ -458,7 +471,7 @@ pipeline_align_one_organism <- function(pipeline, organism, config, pipelines = 
                                      adapter.sequence = if (inline_trim) run_adapter else "auto",
                                      keep.index.in.memory = keep.index.in.memory,
                                      keep.unaligned.genome = keep.unaligned.genome,
-                                     star.path = star.path, fastp = fastp.path,
+                                     star.path = star.path, fastp = fastp.path, max.cpus = run_threads,
                                      limit.bam.sort.ram = ram_limit), sort_arg))
           }
 

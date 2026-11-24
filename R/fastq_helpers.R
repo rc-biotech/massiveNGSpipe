@@ -1277,6 +1277,7 @@ barcode_trim_pass <- function(barcode_dt, study_sample, target_dir, trimmed_dir,
     ORFik::STAR.align.single(
       file, file2, output.dir = target_dir,
       adapter.sequence = adapter_for_real_pass, index.dir = "none", steps = "tr",
+      max.cpus = resource_threads("fastp", min(90, BiocParallel::bpparam()$workers)),
       trim.front = barcode_dt$barcode5p_size, trim.tail = barcode_dt$barcode3p_size)
   }
 
@@ -1396,7 +1397,8 @@ adapter_trim_pass <- function(resolved, file, process_dir, file2 = NULL) {
     resolved$tempfile, file2,
     output.dir = process_dir,
     adapter.sequence = resolved$adapter,
-    index.dir = "none", steps = "tr"
+    index.dir = "none", steps = "tr",
+    max.cpus = resource_threads("fastp", min(90, BiocParallel::bpparam()$workers))
   )
   if (resolved$polyN_adapter) {file.remove(resolved$tempfile)}
   return(resolved$adapter)
@@ -1460,7 +1462,7 @@ fastp_detect_sample <- function(file, out_dir, adapter, reads_to_process,
 
   if (fast_trim_enabled(file, NULL, adapter)) {   # same sample, report and names, without fastp (R/trimcollapse.R)
     trimcollapse_run(file, out_dir, adapter, min.length = 20, quality_filtering = TRUE, reads_to_process = reads_to_process,
-                     fastq_out = out_file, json = json_file, threads = 4L)
+                     fastq_out = out_file, json = json_file, threads = resource_threads("fastp", 4L))
     return(out_file)
   }
   args <- fastp_detect_sample_args(file, out_file, json_file, html_file, adapter, reads_to_process)

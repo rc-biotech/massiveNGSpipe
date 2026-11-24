@@ -244,7 +244,7 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
                                                                              show_status_per_exp = FALSE, verbose_load_annotation = FALSE),
                                     done_experiments = step_is_done_pipelines(config, "pcounts", pipelines),
                                     done_organisms = unique(names(done_experiments)),
-                                    path_suffix = "", BPPARAM = MulticoreParam(workers = bpparam()$workers,
+                                    path_suffix = "", BPPARAM = MulticoreParam(workers = resource_threads("collection", bpparam()$workers),
                                                                                exportglobals = FALSE, progressbar = TRUE,
                                                                                log = FALSE, force.GC = FALSE, fallback = T),
                                     extend_metadata = TRUE, max_removed = 0, force_metadata = FALSE,
@@ -331,7 +331,7 @@ pipeline_collection_master <- function(config, pipelines = pipeline_init_all(con
 pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config, gene_symbols = FALSE, only_complete_genomes = TRUE),
                                     done_experiments = step_is_done_pipelines(config, "pcounts", pipelines),
                                     done_organisms = unique(names(done_experiments)),
-                                    path_suffix = "", BPPARAM = MulticoreParam(workers = bpparam()$workers,
+                                    path_suffix = "", BPPARAM = MulticoreParam(workers = resource_threads("collection", bpparam()$workers),
                                                                                exportglobals = FALSE,
                                                                                log = FALSE, force.GC = FALSE, fallback = T)) {
   message("- Collection of all samples per organism")
@@ -396,7 +396,7 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
       SummarizedExperiment::colData(count_list) <- cd
       stopifnot(ncol(count_list) == sum(vapply(count_lists, ncol, integer(1))), !anyDuplicated(count_list$Run))
       saveName <- file.path(count_folder, paste0("countTable_", region, ".qs"))
-      qs2::qs_save(count_list, file = saveName, nthreads = 5)
+      qs2::qs_save(count_list, file = saveName, nthreads = resource_threads("io", 5))
       saveName <- file.path(count_folder, paste0("totalCounts_", region, ".rds"))
       saveRDS(colSums(assay(count_list)), file = saveName)
     }
@@ -781,20 +781,13 @@ derive_master_formats <- function(df) {
 #' bounded to 1..16. Where /proc is unavailable it falls back to data.table's thread count.
 #' @return integer thread count
 #' @noRd
-derive_threads_dynamic <- function() {
+derive_threads_dynamic <- function(snapshot = NULL) {
   fixed <- getOption("ORFik.derive_threads", NULL)
-  if (!is.null(fixed)) return(max(1L, as.integer(fixed)))
-  cores <- max(1L, parallel::detectCores(logical = TRUE), na.rm = TRUE)
-  load1 <- tryCatch(as.numeric(strsplit(readLines("/proc/loadavg", n = 1L), " ")[[1]][1]), error = function(e) NA_real_)
-  mem_gb <- tryCatch({
-    m <- grep("^MemAvailable:", readLines("/proc/meminfo"), value = TRUE)
-    as.numeric(gsub("[^0-9]", "", m)) / 1024^2
-  }, error = function(e) NA_real_)
-  if (is.na(load1) || is.na(mem_gb) || length(mem_gb) != 1) return(max(1L, min(16L, data.table::getDTthreads())))
-  by_cpu <- max(getOption("massiveNGSpipe.derive_min_threads", 4L), floor(cores - load1))  # busy host: modest floor
-  by_mem <- floor((mem_gb - getOption("massiveNGSpipe.mem_reserve_gb", 80)) /
-                    getOption("massiveNGSpipe.derive_gb_per_thread", 2))
-  as.integer(max(1L, min(16L, by_cpu, by_mem)))
+  if (!is.null(fixed)) return(resource_threads("ofst_derive", max(1L, as.integer(fixed)), cores_per_worker = 0,
+                                               per_worker_gb = NA, snapshot = snapshot))
+  # one formula (R/resources.R): idle CPUs, MemAvailable above the reserve, floor 4, max 16, + resource mode cap
+  as.integer(resource_threads("ofst_derive", 16L, per_worker_gb = getOption("massiveNGSpipe.derive_gb_per_thread", 2),
+                              min = getOption("massiveNGSpipe.derive_min_threads", 4L), snapshot = snapshot))
 }
 
 #' bigWig of a master from its covRle; one-library masters write forward and reverse strand concurrently,

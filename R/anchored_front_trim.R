@@ -35,7 +35,7 @@ anchored_front_chunk <- function(fq, base, min, max) {
 
 anchored_front_trim_fastq <- function(file, settings, report_json,
                                       min.length = 20L, chunk_size = 100000L,
-                                      fastp_path = install.fastp(), threads = 4L) {
+                                      fastp_path = install.fastp(), threads = resource_threads("fastp", 4L)) {
   stopifnot(file.exists(file), file.exists(report_json), min.length >= 1L,
             chunk_size >= 1L, threads >= 1L)
   # The canonical FASTQ/report are published only after all streaming/stats work.

@@ -3,7 +3,7 @@
 # The pipe avoids writing/re-reading a large adapter-only FASTQ intermediate.
 fastp_post_adapter_tail <- function(file, file2 = NULL, output.dir, adapter,
                                     trim.front = 0, trim.tail, min.length = 20,
-                                    threads = 4L, fastp_path = install.fastp()) {
+                                    threads = resource_threads("fastp", 4L), fastp_path = install.fastp()) {
   file <- path.expand(file)
   output.dir <- path.expand(output.dir)
   if (!is.null(file2)) file2 <- path.expand(file2)

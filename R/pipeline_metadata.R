@@ -852,5 +852,5 @@ metadata_legacy_columns <- function(dt) {
 metadata_bpparam <- function(accessions) {
   key <- nzchar(Sys.getenv("ENTREZ_KEY", Sys.getenv("NCBI_API_KEY")))
   if (length(accessions) <= 5 || !key) return(SerialParam())
-  MulticoreParam(workers = 3)
+  MulticoreParam(workers = resource_threads("metadata", 3L))
 }

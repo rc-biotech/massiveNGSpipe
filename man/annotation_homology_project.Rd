@@ -9,7 +9,7 @@ annotation_homology_project(
   ref,
   work_dir,
   blast_bin,
-  threads = 8,
+  threads = resource_threads("blast", 8L),
   max_intron = 2000L,
   min_coverage = 0.5
 )

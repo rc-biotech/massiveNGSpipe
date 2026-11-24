@@ -110,7 +110,7 @@ pipeline_collapse <- function(pipeline, config, pipelines = list(pipeline)) {
         # fast_trim (default): collapse with the trimcollapse binary, one file at a time with all collapse threads
         # (identical output to ORFik::collapse.fastq, R/trimcollapse.R); otherwise ORFik in parallel workers
         options(massiveNGSpipe.fast_trim = !isFALSE(config$fast_trim))
-        fast_threads <- max(1L, as.integer(config$threads$collapse))
+        fast_threads <- max(1L, as.integer(resource_threads("collapse_fast", config$threads$collapse, config = config)))
         if (length(files_paired) > 0) {
           fs::dir_create(outdir_paired)
           read1_paths <- heads(files_paired, 1)

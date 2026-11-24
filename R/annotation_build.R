@@ -189,7 +189,7 @@ ann_build_model <- function(R, hs, qlen, ref_exon1_aa = NA_integer_, max_intron 
 #' @return data.table, one row per exon (model_id, seqnames, start, end, strand, exon_rank) with model columns
 #'  (ref_gene, ref_tx, ref_name, bitscore, qcov, pident, flags)
 #' @export
-annotation_homology_project <- function(target_genome, ref, work_dir, blast_bin, threads = 8, max_intron = 2000L,
+annotation_homology_project <- function(target_genome, ref, work_dir, blast_bin, threads = resource_threads("blast", 8L), max_intron = 2000L,
                                         min_coverage = 0.5) {
   dir.create(work_dir, showWarnings = FALSE, recursive = TRUE)
   fa <- readDNAStringSet(target_genome); names(fa) <- sub(" .*", "", names(fa))
@@ -295,7 +295,7 @@ annotation_orf_fill <- function(genome, occupied, min_codons = 100L, max_overlap
 #' @return GRanges with ref_gene, gene_name, gene_biotype
 #' @export
 annotation_ncrna_blastn <- function(target_genome, ref_gtf, ref_genome, work_dir, blast_bin,
-                                    biotypes = c("rRNA", "tRNA", "snoRNA", "snRNA", "ncRNA"), min_cov = 0.8, min_pident = 75, threads = 8) {
+                                    biotypes = c("rRNA", "tRNA", "snoRNA", "snRNA", "ncRNA"), min_cov = 0.8, min_pident = 75, threads = resource_threads("blast", 8L)) {
   g <- rtracklayer::import(ref_gtf); genes <- g[g$type == "gene" & g$gene_biotype %in% biotypes & !(as.character(seqnames(g)) %in% c("Mito", "MT", "chrM"))]
   rf <- readDNAStringSet(ref_genome); names(rf) <- sub(" .*", "", names(rf))
   q <- getSeq(rf, genes); names(q) <- genes$gene_id; qf <- file.path(work_dir, "ref_ncrna.fa"); writeXStringSet(q, qf)

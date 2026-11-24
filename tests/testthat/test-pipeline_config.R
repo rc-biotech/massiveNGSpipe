@@ -85,7 +85,13 @@ test_that("pipeline_config() sets BLAS/OpenMP thread count to threads_blas_cap o
     .package = "RhpcBLASctl"
   )
   pipeline_config(project_dir = tempfile("mNGSp_test_"), mode = "local",
-                  preset = "empty", verbose = FALSE, google_url = NULL, threads_blas_cap = 32)
+                  preset = "empty", verbose = FALSE, google_url = NULL, threads_blas_cap = 32,
+                  dynamic_thread_count = FALSE)
   expect_equal(blas_calls, list(32))
   expect_equal(omp_calls, list(32))
+  # dynamic (default): load-based within 1..threads_blas_cap (R/resources.R)
+  blas_calls <- list()
+  pipeline_config(project_dir = tempfile("mNGSp_test_"), mode = "local",
+                  preset = "empty", verbose = FALSE, google_url = NULL, threads_blas_cap = 32)
+  expect_true(blas_calls[[1]] >= 1 && blas_calls[[1]] <= 32)
 })

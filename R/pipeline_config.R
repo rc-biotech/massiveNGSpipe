@@ -203,6 +203,11 @@
 #' forked worker can ALSO independently try to spin up its own
 #' full-width BLAS thread pool regardless of how many sibling workers
 #' exist.
+#' @param dynamic_thread_count logical, default TRUE (option \code{massiveNGSpipe.dynamic_thread_count}). Every
+#' thread / worker count (\code{threads}, \code{threads_blas_cap}, STAR, trim, collapse, ...) is a MAXIMUM: the
+#' count used is load-based (idle CPUs and MemAvailable above the reserve, \code{\link{resource_threads}}) and capped
+#' further by the server-wide resource mode file when one is active (\code{\link{resource_mode_set}}). FALSE: the
+#' configured values exactly, ignoring load and the mode file.
 #' @param discord_webhook = discord_connection_default_cached()
 #' @param BPPARAM_MAIN BiocParallel::MulticoreParam(length(pipeline_steps))
 #' The main parallel backend for pipeline, specifying logging behavoir etc.
@@ -270,7 +275,8 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                                            pshifted = min(threads_default, threads_blas_cap),
                                            valid_pshift = min(threads_default, threads_blas_cap),
                                            pcounts = min(threads_default, threads_blas_cap)
-                                           ), count_cache = FALSE) {
+                                           ), count_cache = FALSE,
+                            dynamic_thread_count = getOption("massiveNGSpipe.dynamic_thread_count", TRUE)) {
   # Caps each forked worker's OWN internal BLAS/OpenMP thread pool to
   # the same bound as threads_blas_cap above -- see that parameter's
   # own roxygen for why the worker COUNT cap alone isn't sufficient.
@@ -282,8 +288,10 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
   # semantics carry it over cleanly -- unlike the thread pool itself,
   # which is exactly why OpenBLAS's own uncapped-by-default pool is
   # unsafe to inherit through a fork in the first place).
-  RhpcBLASctl::blas_set_num_threads(threads_blas_cap)
-  RhpcBLASctl::omp_set_num_threads(threads_blas_cap)
+  stopifnot(is.logical(dynamic_thread_count), length(dynamic_thread_count) == 1, !is.na(dynamic_thread_count))
+  blas_threads <- resource_threads("blas", threads_blas_cap, config = list(dynamic_thread_count = dynamic_thread_count))
+  RhpcBLASctl::blas_set_num_threads(blas_threads)
+  RhpcBLASctl::omp_set_num_threads(blas_threads)
   if (verbose) {
     message("Setting up mNGSp config..")
     message("- Preset (mode): ", preset, " (", mode, ")")
@@ -351,7 +359,9 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               preset = preset, parallel_conf = parallel_conf,
               discord_webhook = discord_webhook,
               thread_type = thread_type,
-              threads = threads
+              threads = threads,
+              threads_blas_cap = threads_blas_cap,
+              dynamic_thread_count = dynamic_thread_count
               ))
 }
 

@@ -194,7 +194,7 @@ sra_to_fastq <- function(accession, outdir, compress = TRUE,
     }
   }
   using_temp_dir <- !is.null(claim)
-  threads <- ifelse(using_temp_dir, "--threads 24", "--threads 6")
+  threads <- paste("--threads", resource_threads("fasterq_dump", if (using_temp_dir) 24L else 6L))
   temp_path <- sra_path
   if (using_temp_dir) {
     message("- Copying file to temp drive..")

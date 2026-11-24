@@ -29,7 +29,7 @@
 trimcollapse_run <- function(file, output.dir, adapter, trim.front = 0, trim.tail = 0, tail_after_adapter = 0,
                              min.length = 20, quality_filtering = FALSE, reads_to_process = NULL, fastq_out = NULL,
                              json = NULL,
-                             threads = getOption("massiveNGSpipe.trimcollapse_threads", min(16L, parallel::detectCores()))) {
+                             threads = resource_threads("trimcollapse", getOption("massiveNGSpipe.trimcollapse_threads", min(16L, parallel::detectCores())))) {
   file <- path.expand(file); output.dir <- path.expand(output.dir)
   stopifnot(length(file) == 1, file.exists(file), is.character(adapter), length(adapter) == 1, adapter != "auto")
   id <- trimcollapse_id(file)

@@ -11,8 +11,8 @@ pipeline_collection_org(
   done_experiments = step_is_done_pipelines(config, "pcounts", pipelines),
   done_organisms = unique(names(done_experiments)),
   path_suffix = "",
-  BPPARAM = MulticoreParam(workers = bpparam()$workers, exportglobals = FALSE, log =
-    FALSE, force.GC = FALSE, fallback = T)
+  BPPARAM = MulticoreParam(workers = resource_threads("collection", bpparam()$workers),
+    exportglobals = FALSE, log = FALSE, force.GC = FALSE, fallback = T)
 )
 }
 \arguments{

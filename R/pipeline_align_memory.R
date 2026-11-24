@@ -162,10 +162,16 @@ bam_sort_plan <- function(needed_bytes, config, usage = get_system_usage(),
   if (over_cap && (!external_available || isFALSE(config$external_bam_sort)))
     stop("BAM-sort estimate exceeds config$bam_sort_memory_gb; enable external_bam_sort and use an ORFik with bam.sort support")
   reserve <- ram_reserve_gb(config)
+  # An active resource mode with max_mem_gb caps the memory one alignment may plan to use (R/resources.R)
+  mode <- if (resource_dynamic_enabled(config)) resource_mode_read() else NULL
+  if (!is.null(mode) && !is.na(mode$max_mem_gb)) {
+    avail <- if (!is.null(usage$Memory_Available_GB)) usage$Memory_Available_GB else usage$Memory_Total_GB - usage$Memory_Usage_GB
+    usage$Memory_Available_GB <- min(avail, reserve + mode$max_mem_gb)
+  }
   star <- bam_sort_ram_decision(needed_bytes, reserve_gb = reserve, usage = usage)
   if ((!over_cap && star$decision == "proceed") || !external_available || isFALSE(config$external_bam_sort))
     return(list(sorter = "STAR", limit_bytes = needed_bytes, decision = star))
-  budget <- (if (is.null(config$external_bam_sort_gb)) 16 else config$external_bam_sort_gb) * 1e9
+  budget <- resource_mem_gb(if (is.null(config$external_bam_sort_gb)) 16 else config$external_bam_sort_gb, config, mode) * 1e9
   if (!is.null(cap)) budget <- min(budget, cap * 1e9)
   ext <- bam_sort_ram_decision(budget, reserve_gb = reserve, usage = usage)
   list(sorter = "Rsamtools", limit_bytes = budget, decision = ext)

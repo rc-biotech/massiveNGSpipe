@@ -34,6 +34,11 @@ cli_commands <- function() list(
                    summary = "system and barcode detector checks (open files, versions, synthetic barcode call, disk, memory)"),
   config    = list(usage = "mngsp config [<study list>] [options]",
                    summary = "show every resolved setting and where it came from (default, file, flag)"),
+  resources = list(usage = "mngsp resources show | set <normal|conserve|minimal> --reason <text> [--hours <h>] [--max-mem-gb <n>] [--max-threads <n>] | refresh [--hours <h>] | clear [--set-by <who>]",
+                   summary = "show or change the server-wide resource mode (an expiring cap on threads and memory)",
+                   details = c("The mode file (default ~/livemount/Bio_data/NGS_pipeline/RESOURCE_MODE, env MNGSP_RESOURCE_MODE_FILE)",
+                               "caps every load-based thread count of all pipelines at their next stage start. It expires after",
+                               "--hours (at most 6); refresh it to keep it. No file = configured maxima with load-based counts.")),
   help      = list(usage = "mngsp help [<command>]", summary = "show help (also: mngsp <command> --help)"),
   version   = list(usage = "mngsp --version", summary = "print the massiveNGSpipe version")
 )
@@ -119,6 +124,7 @@ cli_options <- function() {
     cli_opt("threads", "int", "Resources", PIPE, "workers per stage (threads_default)", target = "pc", arg = "threads_default"),
     cli_opt("threads_<step>", "int", "Resources", PIPE, "workers of one step, e.g. --threads-trim 8, --threads-collapse 16, --threads-pshifted 32, --threads-pcounts 1, --threads-ofst 8", target = "threads"),
     cli_opt("blas_cap", "int", "Resources", PIPE, "BLAS/OpenMP threads per worker and cap of pshifted/valid_pshift/pcounts workers", target = "pc", arg = "threads_blas_cap"),
+    cli_opt("dynamic_thread_count", "lgl", "Resources", PIPE, "thread counts load-based within the configured maxima and capped by the resource mode file; --no-dynamic-thread-count uses the configured values", target = "pc"),
     cli_opt("thread_type", "choice", "Resources", PIPE, "BiocParallel backend (default multicore)", choices = c("multicore", "serial")),
     cli_opt("max_ram_wait_minutes", "num", "Resources", PIPE, "how long an alignment may wait for free memory", target = "pc"),
     cli_opt("ram_reserve_gb", "num", "Resources", PIPE, "memory every alignment must leave available (default: shared budget reserve, else 0)", target = "field"),
@@ -126,6 +132,13 @@ cli_options <- function() {
     cli_opt("external_bam_sort_gb", "num", "Resources", PIPE, "budget of the external BAM sorter (default 16)", target = "field"),
     cli_opt("ram_wait_gap_minutes", "num", "Resources", PIPE, "a sample not rechecked for this long starts a new memory wait (default 30)", target = "field"),
     cli_opt("ram_recheck_seconds", "num", "Resources", PIPE, "recheck interval of memory-deferred samples (default 300)", target = "field"),
+    # resources
+    cli_opt("hours", "num", "Resources mode", "resources", "hours until the mode expires (max 6; refresh to keep it)", default = 2, file_ok = FALSE),
+    cli_opt("reason", "chr", "Resources mode", "resources", "why the mode is set", file_ok = FALSE),
+    cli_opt("max_mem_gb", "num", "Resources mode", "resources", "cap of the memory one step may plan to use", file_ok = FALSE),
+    cli_opt("max_threads", "int", "Resources mode", "resources", "cap of the threads / workers of any step", file_ok = FALSE),
+    cli_opt("set_by", "chr", "Resources mode", "resources", "writer name (set); clear only a mode set by this writer (clear)", file_ok = FALSE),
+    cli_opt("mode_file", "chr", "Resources mode", "resources", "resource mode file (default: MNGSP_RESOURCE_MODE_FILE or the shared path)", file_ok = FALSE),
     # status / errors / retry / init
     cli_opt("session", "int", "Status", c("status", "errors", "retry"), "session index, newest first", default = 1L, file_ok = FALSE),
     cli_opt("events", "int", "Status", "errors", "also show the last n events of error_logs/events.jsonl", default = 0L, file_ok = FALSE),
@@ -497,10 +510,32 @@ mngsp_cli <- function(args = commandArgs(TRUE), cwd = getwd()) {
            init = cli_cmd_init(r, cwd), curate = cli_cmd_curate(r), plan = cli_cmd_run(r, apply = FALSE),
            run = cli_cmd_run(r, apply = isTRUE(r$values$apply)), status = cli_cmd_status(r),
            errors = cli_cmd_errors(r), retry = cli_cmd_retry(r), preflight = cli_cmd_preflight(r),
-           config = cli_cmd_config(r))
+           config = cli_cmd_config(r), resources = cli_cmd_resources(r))
   }, error = function(e) {
     message("mngsp: error: ", conditionMessage(e))
     1L
   })
   invisible(as.integer(status))
+}
+
+#' mngsp resources show|set|refresh|clear
+#' @noRd
+cli_cmd_resources <- function(r) {
+  v <- r$values; pos <- r$positional
+  action <- if (length(pos)) pos[1] else "show"
+  path <- if (!is.null(v$mode_file)) path.expand(v$mode_file) else resource_mode_file()
+  switch(action,
+         show = resource_mode_show(path),
+         set = {
+           if (length(pos) < 2) stop("mngsp resources set <normal|conserve|minimal> --reason <text>", call. = FALSE)
+           args <- list(mode = pos[2], hours = v$hours %||% 2, reason = v$reason %||% "",
+                        max_mem_gb = v$max_mem_gb %||% NA, max_threads = v$max_threads %||% NA, path = path)
+           if (!is.null(v$set_by)) args$set_by <- v$set_by
+           do.call(resource_mode_set, args)
+           resource_mode_show(path)
+         },
+         refresh = { resource_mode_refresh(hours = v$hours %||% 2, path = path); resource_mode_show(path) },
+         clear = resource_mode_clear(only_set_by = v$set_by, path = path),
+         stop("mngsp resources: unknown action '", action, "' (show, set, refresh, clear)", call. = FALSE))
+  invisible(0L)
 }

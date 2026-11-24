@@ -13,7 +13,7 @@ annotation_ncrna_blastn(
   biotypes = c("rRNA", "tRNA", "snoRNA", "snRNA", "ncRNA"),
   min_cov = 0.8,
   min_pident = 75,
-  threads = 8
+  threads = resource_threads("blast", 8L)
 )
 }
 \arguments{

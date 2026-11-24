@@ -31,7 +31,7 @@ metadata_qc_table <- function(config = pipeline_config(),
                               out_file = file.path(config$project, "metadata_done_samples_extended_qc.csv"),
                               cache_dir = file.path(config$project, "qc_cache"),
                               terminal_bias_dir = "~/livemount/shared_projects/QC/data/terminal_bias_results_joanna",
-                              organisms = NULL, workers = 16) {
+                              organisms = NULL, workers = resource_threads("qc_table", 16L)) {
   done_path <- file.path(config$project, "metadata_done_samples.csv")
   if (file.exists(done_path)) {
     done_runs <- fread(done_path, select = "Run")$Run

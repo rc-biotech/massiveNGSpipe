@@ -276,18 +276,17 @@ trim_workers_fixed <- function(config = list()) {
 #' @noRd
 trim_workers_dynamic <- function(n_samples = Inf, cores = NULL, load1 = NULL, mem_gb = NULL) {
   fixed <- getOption("massiveNGSpipe.trim_workers", NULL)
-  if (!is.null(fixed)) return(max(1L, as.integer(fixed)))
-  if (is.null(cores)) cores <- max(1L, parallel::detectCores(logical = TRUE), na.rm = TRUE)
-  if (is.null(load1))
-    load1 <- tryCatch(as.numeric(strsplit(readLines("/proc/loadavg", n = 1L), " ")[[1]][1]), error = function(e) NA_real_)
-  if (is.null(mem_gb)) mem_gb <- tryCatch({
-    m <- grep("^MemAvailable:", readLines("/proc/meminfo"), value = TRUE)
-    as.numeric(gsub("[^0-9]", "", m)) / 1024^2
-  }, error = function(e) NA_real_)
-  if (length(load1) != 1 || length(mem_gb) != 1 || is.na(load1) || is.na(mem_gb)) return(1L)
-  by_cpu <- max(getOption("massiveNGSpipe.trim_min_workers", 2L),
-                floor((cores - load1) / getOption("massiveNGSpipe.trim_cores_per_worker", 4)))
-  by_mem <- floor((mem_gb - getOption("massiveNGSpipe.mem_reserve_gb", 80)) /
-                    getOption("massiveNGSpipe.trim_gb_per_worker", 8))
-  as.integer(max(1L, min(getOption("massiveNGSpipe.trim_max_workers", 8L), by_cpu, by_mem, n_samples)))
+  snap <- resource_snapshot()
+  if (!is.null(cores)) snap$cores <- cores
+  if (!is.null(load1)) snap$load1 <- load1
+  if (!is.null(mem_gb)) snap$mem_available_gb <- mem_gb
+  if (!is.null(fixed))   # a fixed count is not load-based; only an active resource mode caps it
+    return(resource_threads("trim_workers", max(1L, as.integer(fixed)), cores_per_worker = 0, per_worker_gb = NA,
+                            snapshot = snap))
+  if (length(snap$load1) != 1 || length(snap$mem_available_gb) != 1) return(1L)
+  # one formula (R/resources.R), parameters as before + the resource mode cap
+  as.integer(resource_threads("trim_workers", getOption("massiveNGSpipe.trim_max_workers", 8L), n = n_samples,
+                              cores_per_worker = getOption("massiveNGSpipe.trim_cores_per_worker", 4),
+                              per_worker_gb = getOption("massiveNGSpipe.trim_gb_per_worker", 8),
+                              min = getOption("massiveNGSpipe.trim_min_workers", 2L), snapshot = snap))
 }

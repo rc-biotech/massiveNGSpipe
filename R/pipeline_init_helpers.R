@@ -416,6 +416,10 @@ bpparam_from_config <- function(config, step, workers = config$threads[[step]]) 
   parallel_conf <- config$parallel_conf
   stopifnot(is.list(parallel_conf) && !is.null(names(parallel_conf)))
   stopifnot(all(names(parallel_conf) %in% c("log", "logdir", "jobname", "stop.on.error")))
+  # The configured count is the maximum: load-based within 1..workers, capped by an active resource mode
+  # (R/resources.R; config$dynamic_thread_count = FALSE keeps it as configured). Re-read here at every stage start.
+  workers <- resource_threads(step, workers, config = config)
+  resource_apply_blas(config)
 
   # Warn (never block -- this can be a deliberate choice) when this
   # step's own worker count, multiplied by threads$main's own

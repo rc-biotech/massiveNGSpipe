@@ -8,7 +8,7 @@ save_coverage_tiles <- function(filepath, chromosomes, chromosome_lengths,
   covrle_list_by_strand <- read_RDSQS(filepath, nthread = 5)
   message("-- Processing all chromosomes: ", basename(filepath))
   index_dt <- rbindlist(lapply(chromosomes, function(chr) {
-    fst::threads_fst(5, reset_after_fork = FALSE)
+    fst::threads_fst(resource_threads("io", 5), reset_after_fork = FALSE)
 
     total <- chromosome_lengths[chr]
     n_tiles <- ceiling(total / tile_size)
@@ -78,10 +78,10 @@ fst_megaformat_make <- function(all_exp = list.experiments(validate = FALSE, pat
                                 force_remake_megafst = FALSE,
                                 make_megacovrle = TRUE,
                                 fst_threads = 5,
-                                bp2 = 5, BPPARAM = BiocParallel::MulticoreParam(4, exportglobals = FALSE, log = FALSE),
+                                bp2 = 5, BPPARAM = BiocParallel::MulticoreParam(resource_threads("collection", 4L), exportglobals = FALSE, log = FALSE),
                                 batch_size = 500, compress = 50, keep_free_gb = 32, timeout_minutes = 120,
                                 ...) {
-  fst::threads_fst(fst_threads, reset_after_fork = FALSE)
+  fst::threads_fst(resource_threads("io", fst_threads), reset_after_fork = FALSE)
   for (organism in organisms) {
     df <- read.experiment(organism, validate = FALSE)
     message("- ", organism(df))

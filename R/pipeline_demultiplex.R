@@ -85,7 +85,8 @@ demultiplex_pool_deliver <- function(pool_dir, pools, run_map, config) {
   if (!done) {
     message("Demultiplexing pool ", pool)
     demultiplex(pool_dir, out_dir = staging, tmp_dir = file.path(config$ssd_scratch_dir %||% tempdir(), paste0("demultiplex_", pool)),
-                parallel_files = config$demultiplex_parallel_files %||% 4, collapse_workers = config$demultiplex_collapse_workers %||% 8)
+                parallel_files = resource_threads("demultiplex", config$demultiplex_parallel_files %||% 4, config = config),
+                collapse_workers = resource_threads("demultiplex", config$demultiplex_collapse_workers %||% 8, config = config))
     jsonlite::write_json(list(controlfile_md5 = key, time = format(Sys.time(), tz = "UTC", usetz = TRUE)), done_file, auto_unbox = TRUE)
   }
   # deliver every curated run of this pool (runs absent from the metadata stay in staging)
