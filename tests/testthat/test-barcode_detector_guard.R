@@ -183,6 +183,10 @@ test_that("REGRESSION one dominant fragment family (97% of reads): no false rand
     # with the chance guard switched off, the old false cut comes back (the fixture reproduces the bug)
     expect_gt(sum(suppressMessages(end_barcode_call(u, side, chance_max = 1))), 4L)
   }
+  # 99%: no position testable and the family's own bases pass as an 18 nt "fixed run" (top share 0.8-0.9): not cut
+  u <- readLines(testthat::test_path("fixtures", "barcode_regression", "synthetic_dominant_fragment99_3p.txt.gz"))
+  expect_message(x <- end_barcode_call(u, "3p", sample = "t"), "dominates")
+  expect_equal(sum(x), 0L)
 })
 
 test_that("barcode_adapter_hit: adapter and index pieces hit, random runs and index-only runs do not", {

@@ -943,8 +943,11 @@ end_barcode_call <- function(seqs, side = c("5p", "3p"), max_k = 18L, min_fixed_
     review <- c(review, paste0("position(s) ", paste(dom_flank, collapse = ","), " untestable: one fragment family ",
                                "dominates (chance up to ", round(max(chance[dom_flank]), 2), " > ", chance_max,
                                "), no random-flank call there"))
-  if (!any(testable) && any(dominated & !fixed)) {
-    review <- c(review, "no testable position (one fragment family dominates the reads): not cut")
+  # nothing testable and one family dominates: its own bases can pass as a fixed run (top share 0.8-0.9 with
+  # sequencing errors; a real barcode is followed by diverse, testable inserts)
+  if (!any(testable) && any(dominated)) {
+    review <- c(review, paste0("no testable position (one fragment family dominates the reads, chance up to ",
+                               round(max(chance[dominated]), 2), "): not cut"))
     return(out(0L, 0L))
   }
   if (!any(testable)) {
