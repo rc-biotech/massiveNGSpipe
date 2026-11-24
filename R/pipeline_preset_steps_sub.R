@@ -120,81 +120,25 @@ pipeline_trim <- function(pipeline, config, pipelines = list(pipeline)) {
         if (nrow(runs) > 0) {
           run_experiment_subprocess(
             func = function(all_files, runs, mode, target_dir, trimmed_dir, source_dir, config, experiment,
-                            barcode_detector = "guarded") {
+                            barcode_detector = "guarded", trim_method = "serial", trim_workers = NULL) {
               # fast single-pass trim + collapse for single-end data (pipeline_config(fast_trim), R/trimcollapse.R)
               options(massiveNGSpipe.fast_trim = !isFALSE(config$fast_trim),
                       massiveNGSpipe.adapter_detection = if (is.null(config$adapter_detection)) "scan" else config$adapter_detection,
                       # barcode detector ("guarded"/"legacy") and the lengths its post-trim guard accepts
                       massiveNGSpipe.barcode_detector = barcode_detector,
                       massiveNGSpipe.accepted_lengths_rpf = config$accepted_lengths_rpf)
-              lapply(seq_len(nrow(runs)), function(i) {
-                study_sample <- runs[i]
-                run <- study_sample$Run
-                message(run)
-                fast_trim_state$collapsed <- NULL
-                filenames <- all_files[[i]]
-                assert_base_space_fastq(filenames[!is.na(filenames)], run)
-                single_end <- is.na(filenames[2])
-                file <- filenames[1]
-                file2 <- if(!single_end) filenames[2]
-                barcode_dt <- data.table()
-                # Opt-in: trim + collapse only the chosen mate (mate_override_manual.csv, R/mate_override.R)
-                if (run %in% mate_overrides(trimmed_dir)$Run) {
-                  barcode_dt <- trim_with_mate_override(run, filenames, target_dir, trimmed_dir)
-                  set_sample_flag(config, "trim", experiment, run, value = barcode_dt)
-                  set_sample_flag(config, "collapsed", experiment, run)
-                  return(barcode_dt)
-                }
-                # Paired footprint libraries: only the mate with the insert is trimmed, collapsed and aligned, as
-                # single-end (read 1, or read 2 when read 1 has no insert); recorded in mate_override_auto.csv
-                if (!single_end && runs[i]$LIBRARYTYPE %in% footprint_library_types() && !isFALSE(config$auto_footprint_mate)) {
-                  decision <- paired_footprint_mate(file, file2)
-                  message(run, ": footprint mate ", decision$mate, " (", decision$reason, ")")
-                  barcode_dt <- trim_from_footprint_mate(study_sample, if (decision$mate == 2L) file2 else file,
-                                                         target_dir, trimmed_dir, mode, decision)
-                  set_sample_flag(config, "trim", experiment, run, value = barcode_dt)
-                  if (!is.null(fast_trim_state$collapsed)) {
-                    if (decision$mate == 1L) orient_collapsed_fasta(fast_trim_state$collapsed, run, trimmed_dir)
-                    set_sample_flag(config, "collapsed", experiment, run)
-                  }
-                  return(barcode_dt)
-                }
-                check_for_barcodes <- runs[i]$LIBRARYTYPE == "RFP"
-                # RNA inputs built with small-RNA kits may require explicit
-                # random-end crops. Honor reviewed manual barcode rows without
-                # enabling automatic barcode guesses for ordinary RNA libraries.
-                manual_barcodes <- file.path(trimmed_dir, "barcodes_manual.csv")
-                if (!check_for_barcodes && file.exists(manual_barcodes)) {
-                  manual <- data.table::fread(manual_barcodes)
-                  check_for_barcodes <- "Run" %in% names(manual) && run %in% manual$Run
-                }
-                if (check_for_barcodes) {
-                  # Detects barcode sizes from a cheap subsample, then
-                  # applies front/adapter then post-adapter tail cuts.
-                  # Tail cuts stream through two fastp processes without
-                  # a large intermediate; see run_barcode_detection_and_trim().
-                  barcode_dt <- run_barcode_detection_and_trim(study_sample, source_dir,
-                                                               target_dir, trimmed_dir, mode,
-                                                               file, file2)
-                } else {
-                  detect_adapter_and_trim(file, target_dir, file2)
-                }
-                # Store the actual barcode_dt row (not just TRUE) so it
-                # can be reconstructed below even across a resumed run.
-                set_sample_flag(config, "trim", experiment, run, value = barcode_dt)
-                # The fast path also collapsed the run: finish it like pipeline_collapse() would (orientation, marker)
-                if (!is.null(fast_trim_state$collapsed)) {
-                  orient_collapsed_fasta(fast_trim_state$collapsed, run, trimmed_dir)
-                  set_sample_flag(config, "collapsed", experiment, run)
-                }
-                barcode_dt
-              })
+              ctx <- list(all_files = all_files, runs = runs, mode = mode, target_dir = target_dir,
+                          trimmed_dir = trimmed_dir, source_dir = source_dir, config = config, experiment = experiment)
+              # serial (default) or several libraries at once (R/pipeline_trim_parallel.R); same files either way
+              trim_samples_run(ctx, method = trim_method, workers = trim_workers)
             },
             args = list(all_files = all_files, runs = runs, mode = config$mode,
                         target_dir = target_dir, trimmed_dir = trimmed_dir,
                         source_dir = source_dir, config = config, experiment = experiment,
                         # the subprocess does not see this session's options: pass the detector choice on
-                        barcode_detector = if (is.null(config$barcode_detector)) barcode_detector_mode() else config$barcode_detector),
+                        barcode_detector = if (is.null(config$barcode_detector)) barcode_detector_mode() else config$barcode_detector,
+                        # libraries trimmed at once: pipeline_config(trim_parallel, trim_workers) or the options of the same name
+                        trim_method = trim_parallel_method(config), trim_workers = trim_workers_fixed(config)),
             logfile_out = file.path(pipeline_log_base(config), "console", "trim", paste0(experiment, ".out.log")),
             logfile_err = file.path(pipeline_log_base(config), "console", "trim", paste0(experiment, ".err.log")),
             on_poll = function() pipeline_checklist(pipelines, config)

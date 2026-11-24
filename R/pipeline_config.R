@@ -41,6 +41,13 @@
 #' 1.3.7-compatible C program (R/trimcollapse.R): same reads, collapsed file and report as fastp + ORFik
 #' collapse, ~12x faster and without the trimmed fastq. Paired-end data and fastp's "auto" adapter detection
 #' keep using fastp. FALSE uses fastp + ORFik::collapse.fastq for everything.
+#' @param trim_parallel character, how the trim stage handles the libraries of one experiment: "staged" (default:
+#' detection of the next libraries overlaps the full trim passes of earlier ones, in forked jobs), "naive" (whole
+#' libraries in parallel) or "serial" (one after the other, the previous behaviour). Outputs are identical.
+#' Default from \code{options(massiveNGSpipe.trim_parallel)}.
+#' @param trim_workers integer or NULL (default): libraries trimmed at once. NULL chooses from idle CPUs and free
+#' memory when the stage starts (\code{trim_workers_dynamic()}); default from
+#' \code{options(massiveNGSpipe.trim_workers)}.
 #' @param demultiplex logical, default FALSE. TRUE adds a first stage that demultiplexes pooled lanes
 #' (\code{<raw_data>/<pool>/multiplexed/controlfile.csv}, see \code{?demultiplex}) and delivers each pooled
 #' run that is in the curated metadata to its experiment, ready for alignment. Runs that are not pooled are
@@ -220,6 +227,8 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
                             contam = FALSE,
                             demultiplex = FALSE,
                             fast_trim = TRUE,
+                            trim_parallel = getOption("massiveNGSpipe.trim_parallel", "staged"),
+                            trim_workers = getOption("massiveNGSpipe.trim_workers", NULL),
                             ssd_scratch_dir = if (dir.exists(path.expand("~/livemount/ssd/tmp/")))
                               "~/livemount/ssd/tmp/" else NULL,
                             ssd_min_free_gb = 50,
@@ -313,6 +322,7 @@ pipeline_config <- function(project_dir = file.path(dirname(config)[1], "NGS_pip
               temp_metadata = temp_metadata,
               blacklist = blacklist,
               google_url = google_url, mode = mode, demultiplex = demultiplex, fast_trim = fast_trim,
+              trim_parallel = trim_parallel, trim_workers = trim_workers,
               delete_raw_files = delete_raw_files,
               delete_trimmed_files = delete_trimmed_files,
               delete_collapsed_files = delete_collapsed_files,

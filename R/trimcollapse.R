@@ -23,12 +23,13 @@
 #' @param reads_to_process numeric or NULL, process only the first reads (detection sample)
 #' @param fastq_out character or NULL, write trimmed reads here instead of collapsing
 #' @param json character, report path
-#' @param threads integer, worker threads
+#' @param threads integer, worker threads (default: option \code{massiveNGSpipe.trimcollapse_threads}, else up to 16)
 #' @return path of the collapsed fasta (or of \code{fastq_out}), invisibly
 #' @export
 trimcollapse_run <- function(file, output.dir, adapter, trim.front = 0, trim.tail = 0, tail_after_adapter = 0,
                              min.length = 20, quality_filtering = FALSE, reads_to_process = NULL, fastq_out = NULL,
-                             json = NULL, threads = min(16L, parallel::detectCores())) {
+                             json = NULL,
+                             threads = getOption("massiveNGSpipe.trimcollapse_threads", min(16L, parallel::detectCores()))) {
   file <- path.expand(file); output.dir <- path.expand(output.dir)
   stopifnot(length(file) == 1, file.exists(file), is.character(adapter), length(adapter) == 1, adapter != "auto")
   id <- trimcollapse_id(file)

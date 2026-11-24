@@ -1211,10 +1211,31 @@ adapter_manually_specified <- function(trimmed_dir, run) {
 run_barcode_detection_and_trim <- function(study_sample, source_dir, target_dir, trimmed_dir,
                                            mode, file, file2 = NULL,
                                            detect_reads_to_process = 1e6) {
+  barcode_dt <- barcode_detection_for_trim(study_sample, source_dir, target_dir, trimmed_dir, mode,
+                                           detect_reads_to_process)
+  barcode_trim_pass(barcode_dt, study_sample, target_dir, trimmed_dir, file, file2)
+}
+
+#' Detection half of run_barcode_detection_and_trim(): barcode sizes and adapter from a subsample
+#'
+#' Reads only the start of the raw file (adapter scan, 1 M-read detection sample); split from the trim pass so the
+#' parallel trim stage can detect one library while another library's full trim pass runs (pipeline_trim_parallel.R).
+#' @return the barcode_dt row
+#' @noRd
+barcode_detection_for_trim <- function(study_sample, source_dir, target_dir, trimmed_dir, mode,
+                                       detect_reads_to_process = 1e6) {
   barcode_dt <- barcode_detector_single(study_sample, source_dir, target_dir, trimmed_dir,
                                         redownload_raw_if_needed = mode == "online",
                                         detect_reads_to_process = detect_reads_to_process)
   if (barcode_dt$barcode_detected) message("Barcode detected") else message("No barcodes detected")
+  barcode_dt
+}
+
+#' Trim half of run_barcode_detection_and_trim(): the full-file trim (+ collapse) pass with the detected cuts
+#' @param barcode_dt row from barcode_detection_for_trim()
+#' @return barcode_dt (with anchored-front columns when that trim applies)
+#' @noRd
+barcode_trim_pass <- function(barcode_dt, study_sample, target_dir, trimmed_dir, file, file2 = NULL) {
 
   # barcode_dt$adapter is fastp's own self-reported "what did I actually
   # cut" value (read back from its JSON) -- it can be the sentinel
@@ -1360,6 +1381,12 @@ resolve_adapter_for_trim <- function(file, process_dir,
 detect_adapter_and_trim <- function(file, process_dir, file2 = NULL,
       adapter = try(detect_adapter(file, adapter_manual_dir = file.path(process_dir, "trim")))) {
   resolved <- resolve_adapter_for_trim(file, process_dir, adapter)
+  adapter_trim_pass(resolved, file, process_dir, file2)
+}
+
+#' Trim half of detect_adapter_and_trim(): full-file trim with an adapter from resolve_adapter_for_trim()
+#' @noRd
+adapter_trim_pass <- function(resolved, file, process_dir, file2 = NULL) {
   if (!resolved$polyN_adapter && fast_trim_enabled(file, file2, resolved$adapter)) {
     trimcollapse_run(file, process_dir, resolved$adapter)
     return(resolved$adapter)

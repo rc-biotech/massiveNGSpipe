@@ -160,6 +160,10 @@ trim_from_footprint_mate <- function(study_sample, file, target_dir, trimmed_dir
   row <- data.table(Run = run, mate = mate, reverse = reverse, adapter = barcode_dt$adapter,
                     trim_front = barcode_dt$barcode5p_size, trim_tail = barcode_dt$barcode3p_size, source = decision$reason)
   f <- mate_override_auto_path(trimmed_dir)
+  # read-modify-write of a study-wide table: parallel trim workers (pipeline_trim_parallel.R) must not lose rows
+  lock <- filelock::lock(paste0(f, ".lock"), exclusive = TRUE, timeout = 600000)
+  if (is.null(lock)) stop("footprint mate: timeout waiting for the lock on ", f)
+  on.exit(filelock::unlock(lock), add = TRUE)
   old <- if (file.exists(f)) fread(f, colClasses = "character")[Run != run] else NULL
   fwrite(rbind(old, row[, lapply(.SD, as.character)], fill = TRUE), f)
   write_json_atomic(c(decision, list(Run = run, output = if (fast_path) basename(final) else NA_character_,
