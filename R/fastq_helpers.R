@@ -561,8 +561,10 @@ barcode_detector_single <- function(study_sample, fastq_dir, process_dir, trimme
     size_for_check <- if (guarded && length(reads_dup)) unname(stats::quantile(nchar(reads_dup), 0.9)) else max_size_after
     barcode_sizes <- constrain_barcode_sizes(barcode5p_size, barcode3p_size,
                                              size_for_check, minimum_size, clip = !guarded)
-    if (guarded && is_ribo_library(study_sample))
+    if (guarded && is_ribo_library(study_sample)) {
       barcode_sizes <- post_trim_length_guard(reads_dup, barcode_sizes, accepted_lengths, sample, reject = FALSE)
+      short_insert_review(reads_dup, barcode_sizes, sample)
+    }
     barcode5p_size <- barcode_sizes["barcode5p_size"]
     barcode3p_size <- barcode_sizes["barcode3p_size"]
 
@@ -826,8 +828,13 @@ barcode_detector_mode <- function() {
 #'  (\code{\link{end_templating_profile}}): reads that share the adjacent \code{anchor} nt do not share this base, so it
 #'  was not copied from the RNA (random UMI, random adapter or primer N bases, template-switch bases). Unlike
 #'  composition (entropy) or PCR duplicates (merge fractions) this needs neither a base bias nor copies of a molecule;
-#'  \item templated: kappa above \code{kappa_cut}; or untestable (fewer pairs).
+#'  \item templated: kappa above \code{kappa_cut}; or untestable (fewer pairs, or chance above \code{chance_max}).
 #' }
+#' kappa divides by (1 - chance): when one fragment family dominates the reads (failed rRNA depletion, low input),
+#' nearly all anchor groups carry the same base, chance approaches 1 and sequencing errors alone push kappa under
+#' \code{kappa_cut} (2026-11-24 review: 8 of 40 synthetic runs with a 97-99\% fragment family got 5-17 nt false cuts).
+#' Positions with chance above \code{chance_max} are therefore untestable: no random-flank call there, and a review
+#' line when such a position looks non-templated.
 #' The cut ends at a boundary: a fixed or non-templated position followed by a templated one (untestable positions in
 #' between are allowed and reported). No position outside the boundary may be templated (kappa above
 #' \code{kappa_partial}) when tested against the boundary's insert anchor (their own anchors contain random bases, which
@@ -835,12 +842,15 @@ barcode_detector_mode <- function() {
 #' several boundaries the innermost supported one wins.
 #'
 #' No cut, with a manual review line, when: the leading fixed run is one base of \code{min_homopolymer} nt or more
-#' (a tail such as poly(A), not a barcode), or no templated position is found within \code{max_k} (flank length
-#' unknown). Only the fixed run is cut, with a review line, when no position is testable. A review line without a
-#' change to the cut: untestable positions at the boundary (the cut may be short), an unsupported boundary, or a partly
+#' (a tail such as poly(A), not a barcode); the leading fixed run (at least \code{adapter_min_fixed} nt) matches a
+#' known adapter or index construct (\code{\link{barcode_adapter_hit}}: adapter remnant or read-through, e.g.
+#' SRR12879541, where the adapter step is wrong, not a barcode); no templated position is found within \code{max_k}
+#' (flank length unknown); or no position is testable because one fragment family dominates. Only the fixed run is cut, with a review line, when no position is testable. A review line without a
+#' change to the cut: untestable positions at the boundary (the cut may be short) or an unsupported boundary. A partly
 #' non-templated position after the cut (kappa in (\code{kappa_cut}, \code{kappa_partial}], e.g. a base added to part
-#' of the reads); such positions are left to the aligner's soft clipping, since cutting them would remove a footprint
-#' base from the other reads.
+#' of the reads, 690 of 801 review lines of the 2026-11-23 re-detect) is a normal property of footprint libraries: it
+#' is reported as a note (plain message, attribute "note"), not a review line, and left to the aligner's soft clipping,
+#' since cutting it would remove a footprint base from the other reads.
 #'
 #' Thresholds from the 2026-11-23 panel (pshift_regression_20261122/RANDOM_FLANK_REVIEW_20261123.md: 1M-read ENA
 #' prefixes of Ribo-seq libraries, truth from soft clips of a local alignment to CDS windows).
@@ -858,25 +868,34 @@ barcode_detector_mode <- function() {
 #' is about the squared templated share, so a base added to 30-50\% of the reads (untemplated RT addition) reaches
 #' 0.1-0.3, while single random bases score about 0 (RealSeq SRR22990340 5': 0.01)
 #' @param min_pairs read pairs needed to test a position
+#' @param chance_max positions whose chance agreement (sum of squared base frequencies over the anchor groups) is above
+#' this are untestable: one fragment family dominates and kappa is driven by sequencing errors. Random and footprint
+#' positions of ordinary libraries: 0.25-0.5; fixed barcode bases (found by top-base share instead) near 1
+#' @param adapters named character, adapter and index constructs a fixed run must not match
+#' (\code{\link{known_adapter_constructs}})
+#' @param adapter_min_fixed fixed runs of at least this length are compared with \code{adapters}
 #' @param full_length integer or NA: for side "3p", reads of at least this length (the sequencing cycle count: no
 #' adapter found, the read stops inside the insert) are left out unless they are most of the reads
 #' @param max_reads distinct reads used at most (the first ones)
 #' @param sample run id for review lines
 #' @return named integer c(fixed, umi): the leading fixed run and the flank after it (random bases plus any inner fixed
 #' bases); attributes "kappa", "pairs", "top", "kappa_outer" (outer positions against the boundary's anchor) and
-#' "review" (character, empty when clean)
+#' "review" (character, MANUAL REVIEW lines, empty when clean) and "note" (character, benign observations)
 #' @noRd
 end_barcode_call <- function(seqs, side = c("5p", "3p"), max_k = 18L, min_fixed_rest = 10L, fixed_share = 0.8,
                              min_fixed_reads = 200L, min_homopolymer = 4L, anchor = 12L, cap = 20L, kappa_cut = 0.35,
-                             kappa_partial = 0.75, kappa_single = NULL, min_pairs = 300, full_length = NA,
-                             max_reads = 3e5, sample = "") {
+                             kappa_partial = 0.75, kappa_single = NULL, min_pairs = 300, chance_max = 0.85,
+                             full_length = NA, max_reads = 3e5, adapters = known_adapter_constructs(),
+                             adapter_min_fixed = 8L, sample = "") {
   side <- match.arg(side); max_k <- as.integer(max_k)
   if (is.null(kappa_single)) kappa_single <- if (side == "5p") 0.1 else 0.2
-  review <- character(); kappa <- pairs <- top <- kappa_outer <- numeric()
+  review <- note <- character(); kappa <- pairs <- top <- kappa_outer <- chance <- numeric()
   out <- function(f, k) {
+    if (length(note)) message("-- Note ", sample, " ", side, ": ", paste(note, collapse = "; "))
     if (length(review)) message("-- MANUAL REVIEW ", sample, " ", side, ": ", paste(review, collapse = "; "))
     structure(c(fixed = as.integer(f), umi = as.integer(k)), kappa = round(kappa, 3), pairs = round(pairs),
-              top = round(top, 3), kappa_outer = round(kappa_outer, 3), review = review)
+              top = round(top, 3), chance = round(chance, 3), kappa_outer = round(kappa_outer, 3), review = review,
+              note = note)
   }
   if (side == "3p" && !is.na(full_length)) {
     untrimmed <- nchar(seqs) >= full_length
@@ -891,11 +910,14 @@ end_barcode_call <- function(seqs, side = c("5p", "3p"), max_k = 18L, min_fixed_
   cm <- cm[c("A", "C", "G", "T"), , drop = FALSE]
   top <- MatrixGenerics::colMaxs(cm, useNames = FALSE)
   prof <- end_templating_profile(u, max_k, anchor, cap)
-  kappa <- prof$kappa; pairs <- prof$pairs
-  testable <- !is.na(kappa) & pairs >= min_pairs
+  kappa <- prof$kappa; pairs <- prof$pairs; chance <- prof$chance
+  enough <- !is.na(kappa) & pairs >= min_pairs
   # a base bias is not a barcode when the base is clearly copied from the RNA (E. coli SRR13362463 5' position 5:
   # top share 0.86, kappa 0.96); true barcode bases have kappa near 0 or chance near 1 (kappa undefined)
-  fixed <- top >= fixed_share & !(testable & prof$chance < 0.9 & kappa > 0.9)
+  fixed <- top >= fixed_share & !(enough & chance < 0.9 & kappa > 0.9)
+  # one fragment family dominates: kappa = (concordance - chance) / (1 - chance) is driven by sequencing errors
+  dominated <- enough & chance > chance_max
+  testable <- enough & !dominated
   flank <- fixed | (testable & kappa <= kappa_cut)
   templated <- testable & !flank
   f <- 0L; while (f < max_k && fixed[f + 1L]) f <- f + 1L
@@ -905,6 +927,25 @@ end_barcode_call <- function(seqs, side = c("5p", "3p"), max_k = 18L, min_fixed_
       review <- c(review, paste0(f, " nt ", bases[1], " run at the read end is a tail, not a barcode: not cut"))
       return(out(0L, 0L))
     }
+  }
+  if (f >= adapter_min_fixed && length(adapters)) {
+    cons <- paste(rownames(cm)[apply(cm[, seq_len(f), drop = FALSE], 2, which.max)], collapse = "")
+    if (side == "3p") cons <- paste(rev(strsplit(cons, "")[[1]]), collapse = "")   # read orientation
+    hit <- barcode_adapter_hit(cons, adapters)
+    if (!is.null(hit)) {
+      review <- c(review, paste0(f, " nt fixed run ", cons, " matches ", hit$name, " (", hit$mismatches,
+                                 " mismatch(es)): adapter remnant or read-through, not a barcode; check the adapter: not cut"))
+      return(out(0L, 0L))
+    }
+  }
+  dom_flank <- which(dominated & !fixed & kappa <= kappa_partial)
+  if (length(dom_flank))
+    review <- c(review, paste0("position(s) ", paste(dom_flank, collapse = ","), " untestable: one fragment family ",
+                               "dominates (chance up to ", round(max(chance[dom_flank]), 2), " > ", chance_max,
+                               "), no random-flank call there"))
+  if (!any(testable) && any(dominated & !fixed)) {
+    review <- c(review, "no testable position (one fragment family dominates the reads): not cut")
+    return(out(0L, 0L))
   }
   if (!any(testable)) {
     review <- c(review, paste0("too few read pairs to test templating (max ", round(max(pairs)), "): only the fixed run is cut"))
@@ -928,7 +969,8 @@ end_barcode_call <- function(seqs, side = c("5p", "3p"), max_k = 18L, min_fixed_
   for (ci in rev(seq_along(cand))) {
     b <- cand[ci]
     outer <- end_templating_profile(u, b, anchor, cap, anchor_start = b + 1L)
-    ok <- fixed[seq_len(b)] | (!is.na(outer$kappa) & outer$pairs >= min_pairs & outer$kappa <= kappa_partial)
+    ok <- fixed[seq_len(b)] | (!is.na(outer$kappa) & outer$pairs >= min_pairs & outer$chance <= chance_max &
+                                outer$kappa <= kappa_partial)
     if (all(ok)) {
       k <- max(b, f); kappa_outer <- outer$kappa
       if (gap[ci] > 0)
@@ -946,9 +988,58 @@ end_barcode_call <- function(seqs, side = c("5p", "3p"), max_k = 18L, min_fixed_
   }
   nxt <- k + 1L
   if (nxt <= max_k && testable[nxt] && !flank[nxt] && kappa[nxt] <= kappa_partial)
-    review <- c(review, paste0("position ", nxt, " is non-templated in part of the reads (kappa ", round(kappa[nxt], 2),
-                               "): not cut, left to soft clipping"))
+    note <- c(note, paste0("position ", nxt, " is non-templated in part of the reads (kappa ", round(kappa[nxt], 2),
+                           "): not cut, left to soft clipping"))
   out(f, k - f)
+}
+
+#' Adapter and index constructs a fixed barcode run must not match
+#'
+#' \code{\link{adapter_list}} (without the poly-N entries) plus full Illumina constructs, index bases as N (6 and 8 nt
+#' indices): a fixed run that is a piece of these is an adapter remnant (wrong or partial adapter trimmed, adapter
+#' dimers, index read-through), not a barcode (SRR12879541: 5' GGAAGAGC and 3' CCAGTCACGCCAATATC are TruSeq adapter +
+#' index GCCAAT after fastp trimmed at TCGTATGCCGTC).
+#' @return named character
+#' @noRd
+known_adapter_constructs <- function() {
+  al <- tryCatch(adapter_list(), error = function(e) data.table::data.table(name = character(), value = character()))
+  al <- al[!(al$name %in% c("polyA", "polyT", "polyN")), ]
+  idx <- function(pre, post) c(paste0(pre, strrep("N", 6), post), paste0(pre, strrep("N", 8), post))
+  p7 <- "ATCTCGTATGCCGTCTTCTGCTTG"
+  constructs <- c(
+    stats::setNames(idx("AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC", p7), paste("TruSeq read 1 3' adapter + index", c(6, 8))),
+    stats::setNames(idx("TGGAATTCTCGGGTGCCAAGGAACTCCAGTCAC", p7), paste("Small RNA 3' adapter + index", c(6, 8))),
+    stats::setNames(idx("CTGTCTCTTATACACATCTCCGAGCCCACGAGAC", p7), paste("Nextera read 1 adapter + index", c(6, 8))),
+    "TruSeq read 2 3' adapter" = "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGTAGATCTCGGTGGTCGCCGTATCATT",
+    "Small RNA 5' adapter (RA5)" = "GTTCAGAGTTCTACAGTCCGACGATC",
+    "Ingolia 2012 linker" = "CTGTAGGCACCATCAAT",
+    "RiboLace adapter" = "TCTCCTTGCATAATCACCAACC")
+  c(stats::setNames(al$value, al$name), constructs)
+}
+
+#' Does a fixed run match a known adapter or index construct?
+#'
+#' Substring match on the forward strand, IUPAC codes in the constructs (index N) match any base, but a hit must
+#' cover at least max(8, half the run) adapter bases (an 8 nt run inside an index N8 is no hit). Mismatches allowed:
+#' 0 below 10 nt, 1 for 10-19 nt, 2 from 20 nt (random runs hit by chance: 8 nt 0.2%, 12 nt 0.5%).
+#' @param cons character(1), fixed-run consensus in read orientation
+#' @param adapters named character (\code{\link{known_adapter_constructs}})
+#' @return NULL or list(name, mismatches) of the first hit with the fewest mismatches
+#' @noRd
+barcode_adapter_hit <- function(cons, adapters) {
+  if (!length(adapters) || is.na(cons) || nchar(cons) < 1) return(NULL)
+  L <- nchar(cons); max_mm <- if (L < 10) 0L else if (L < 20) 1L else 2L
+  pat <- Biostrings::DNAString(cons)
+  for (mm in 0:max_mm) for (i in seq_along(adapters)) {
+    if (nchar(adapters[[i]]) < L) next
+    subject <- Biostrings::DNAString(adapters[[i]])
+    m <- Biostrings::matchPattern(pat, subject, max.mismatch = mm, fixed = c(pattern = TRUE, subject = FALSE))
+    if (!length(m)) next
+    # index N match anything: a hit needs at least max(8, L / 2) adapter (non-N) bases
+    informative <- L - vapply(as.character(m), function(x) nchar(gsub("[^N]", "", x)), 0L, USE.NAMES = FALSE)
+    if (any(informative >= max(8, L / 2))) return(list(name = names(adapters)[i], mismatches = mm))
+  }
+  NULL
 }
 
 #' Templating profile of a read end: is the base at each end position copied from the RNA?
@@ -1042,6 +1133,28 @@ post_trim_length_guard <- function(seqs, barcode_sizes, accepted_lengths, sample
   if (!reject) return(barcode_sizes)
   barcode_sizes[] <- 0
   barcode_sizes
+}
+
+#' Review line for a barcode cut that leaves short inserts
+#'
+#' A cut that leaves a mean insert under \code{min_mean_insert} nt (option
+#' \code{massiveNGSpipe.barcode_min_mean_insert}, default 24) means a contaminant-dominated sample or a wrong adapter
+#' (2026-11-24 review: 22 libraries of the re-detect, e.g. SRR12879541 with 22 nt). The cut is kept, with a MANUAL
+#' REVIEW line, so it is never accepted silently.
+#' @param seqs character, adapter-trimmed reads
+#' @param barcode_sizes named numeric, \code{barcode5p_size}, \code{barcode3p_size}
+#' @return invisible mean insert after the cut (NA when nothing is cut)
+#' @noRd
+short_insert_review <- function(seqs, barcode_sizes, sample = "",
+                                min_mean_insert = getOption("massiveNGSpipe.barcode_min_mean_insert", 24)) {
+  cut <- sum(barcode_sizes)
+  if (is.na(cut) || cut == 0 || length(seqs) == 0) return(invisible(NA_real_))
+  m <- mean(pmax(nchar(seqs) - cut, 0))
+  if (m < min_mean_insert)
+    message("-- MANUAL REVIEW ", sample, ": barcode cut 5' ", barcode_sizes[["barcode5p_size"]], " + 3' ",
+            barcode_sizes[["barcode3p_size"]], " nt leaves a mean insert of ", round(m, 1), " nt (< ", min_mean_insert,
+            "): contaminant-dominated sample or wrong adapter? cut kept")
+  invisible(m)
 }
 
 #' Share of reads that end in a poly(A) run after a footprint-sized insert

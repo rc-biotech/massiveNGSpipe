@@ -170,6 +170,61 @@ test_that("end_barcode_call: synthetic fixed + random, deduplicated random flank
   expect_equal(sum(end_call(unique(mix), "3p", full_length = 36)), 4L)
 })
 
+test_that("REGRESSION one dominant fragment family (97% of reads): no false random-flank cut", {
+  # 2026-11-24 review (fable_night_20261124/retrim_pshift): kappa divides by (1 - chance); with one rRNA-like fragment
+  # (shared end, ragged other end, 1% sequencing errors) in 97% of 30,000 reads, 3eb0121 cut 10 (3') and 15 (5') nt.
+  # Fixtures: the distinct reads (set.seed(1) generator in the review's stress_dominant_fragment scripts).
+  for (side in c("3p", "5p")) {
+    u <- readLines(testthat::test_path("fixtures", "barcode_regression", paste0("synthetic_dominant_fragment_", side, ".txt.gz")))
+    expect_message(x <- end_barcode_call(u, side, sample = "t"), "MANUAL REVIEW")
+    expect_equal(sum(x), 0L)
+    ch <- attr(x, "chance")
+    expect_true(any(ch > 0.85, na.rm = TRUE))
+    # with the chance guard switched off, the old false cut comes back (the fixture reproduces the bug)
+    expect_gt(sum(suppressMessages(end_barcode_call(u, side, chance_max = 1))), 4L)
+  }
+})
+
+test_that("barcode_adapter_hit: adapter and index pieces hit, random runs and index-only runs do not", {
+  A <- known_adapter_constructs()
+  # SRR12879541: TruSeq adapter + index GCCAAT read-through (3') and an adapter piece at the 5' end
+  expect_match(barcode_adapter_hit("CCAGTCACGCCAATATC", A)$name, "TruSeq")
+  expect_false(is.null(barcode_adapter_hit("GGAAGAGC", A)))
+  expect_identical(barcode_adapter_hit("CCAGTCACGCCAATAGC", A)$mismatches, 1L)  # one mismatch allowed from 10 nt
+  expect_null(barcode_adapter_hit("ACGTTGCA", A))                             # would fit inside an N8 index only
+  expect_null(barcode_adapter_hit("CTAGACTG", A))
+  expect_null(barcode_adapter_hit("AGATC", A[0]))
+})
+
+test_that("end_barcode_call: a fixed run that is adapter read-through is not cut as a barcode", {
+  set.seed(41)
+  fp <- rnd_var(sample(26:30, 4000, replace = TRUE))
+  ins <- unique(substr(fp, sample(0:3, 4000, replace = TRUE) + 1, 40))
+  expect_message(x <- end_barcode_call(paste0(ins, "CCAGTCACGCCAATATC"), "3p", sample = "t"), "adapter remnant")
+  expect_equal(sum(x), 0L)
+  expect_match(attr(x, "review"), "TruSeq")
+  # a non-adapter fixed 8 nt barcode is still cut
+  expect_equal(end_call(paste0(ins, "CTAGACTG"), "3p"), c(fixed = 8L, umi = 0L))
+})
+
+test_that("partial non-templated position after the cut is a note, not a MANUAL REVIEW line", {
+  m <- character()
+  x <- withCallingHandlers(end_barcode_call(read_end_fixture("SRR28976196", "5p"), "5p", sample = "t"),
+                           message = function(e) { m <<- c(m, conditionMessage(e)); invokeRestart("muffleMessage") })
+  expect_length(attr(x, "review"), 0)
+  expect_match(attr(x, "note"), "part of the reads")
+  expect_false(any(grepl("MANUAL REVIEW", m)))
+  expect_true(any(grepl("^-- Note", m)))
+})
+
+test_that("short_insert_review flags cuts that leave a mean insert under 24 nt", {
+  reads <- strrep("A", c(30, 32, 34))
+  expect_message(m <- short_insert_review(reads, c(barcode5p_size = 8, barcode3p_size = 4), "t"), "MANUAL REVIEW")
+  expect_equal(m, 20)
+  expect_silent(short_insert_review(reads, c(barcode5p_size = 2, barcode3p_size = 2), "t"))
+  expect_silent(short_insert_review(reads, c(barcode5p_size = 0, barcode3p_size = 0), "t"))
+})
+
 test_that("post_trim_length_guard rejects cuts that move the footprint mode out of the accepted lengths", {
   acc <- c(20, 21, 25:33)
   reads <- vapply(rep(c(28, 29, 29, 30), 50), function(l) strrep("A", l), "")
