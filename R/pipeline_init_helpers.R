@@ -67,7 +67,11 @@ init_and_load_complete_metadata <- function(config, complete_metadata = config$c
     final_list <- final_list[ScientificName %in% complete_genomes_formated |
                              reference_folder_name(ScientificName) %in% complete_genomes,]
 
-    message("Complete genomes ratio:", round((length(complete_genomes) / total_genomes)*100, 2), "%")
+    # 2026-11-25: count organisms of THIS list with a complete reference (was: all reference folders on disk / list organisms,
+    # e.g. "2175%")
+    n_complete_used <- length(unique(final_list$ScientificName))
+    message("Organisms with a complete reference: ", n_complete_used, " of ", total_genomes,
+            " (", round(n_complete_used / max(total_genomes, 1) * 100, 2), "%)")
     message("Used samples ratio:", round((nrow(final_list) / total_samples)*100, 2), "%")
   }
   if (nrow(final_list) == 0) stop("complete metadata table has 0 rows, ",

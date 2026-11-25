@@ -196,7 +196,9 @@ study_list_execute <- function(p, config, v, list_file, preflight, out_dir) {
   acc_map <- unique(meta_rows[, .(study_accession, BioProject)])
   run <- names(pipelines)[names(pipelines) %in% c(todo, acc_map[BioProject %in% todo]$study_accession)]
   bp_of <- function(s) { b <- acc_map[match(s, study_accession)]$BioProject; ifelse(is.na(b), s, b) }
-  message("Studies with a complete reference: ", length(run), " of ", length(todo))
+  # 2026-11-25: studies (BioProjects of the list) vs experiments (one per study x organism) counted separately (was "73 of 72")
+  message("Studies with a complete reference: ", length(unique(bp_of(run))), " of ", length(todo),
+          " (", length(run), " experiments)")
   if (!length(run)) stop("No study has a complete reference (", v$reference_hint, ")", call. = FALSE)
   confs <- function(s) lapply(pipelines[[s]]$organisms, function(o) o$conf)
   trim_dir <- function(conf) { d <- file.path(conf["bam"], "trim"); dir.create(d, recursive = TRUE, showWarnings = FALSE); d }
