@@ -45,10 +45,12 @@ study_list_plan <- function(study_list, config, keep = character(), trim_table =
     meta_rows <- meta_rows[paste(BioProject, ScientificName) %in% paste(organisms$BioProject, organisms$ScientificName)]
   missing <- setdiff(todo, c(final$BioProject, final$study_accession))
   ref <- config$config["ref"]; bam <- config$config["bam"]
-  plan <- meta_rows[, .(runs = .N), by = .(study = BioProject, organism = ScientificName)]
+  # experiments are named by study_accession (a GEO series for many studies), not by BioProject: name the plan the same way,
+  # otherwise --reset clears a non-existing <BioProject>-<organism> and the real <GSE>-<organism> keeps its flags and folder
+  plan <- meta_rows[, .(runs = .N), by = .(study = BioProject, accession = study_accession, organism = ScientificName)]
   steps <- names(config$flag)
   if (nrow(plan)) {
-    plan[, experiment := paste(study, reference_folder_name(organism), sep = "-")]
+    plan[, experiment := paste(accession, reference_folder_name(organism), sep = "-")]
     rf <- file.path(ref, reference_folder_name(plan$organism))
     plan[, reference_complete := file.exists(file.path(rf, "outputs.rds")) &
                                  file.exists(file.path(rf, "STAR_index", "genomeDir", "SA"))]
@@ -62,7 +64,7 @@ study_list_plan <- function(study_list, config, keep = character(), trim_table =
     plan[, manual_trim := if (!is.null(trim_table) && nrow(trim_table))
                             study %in% trim_table[status == "apply"]$BioProject else FALSE]
   } else {
-    plan <- data.table(study = character(), organism = character(), runs = integer(), experiment = character(),
+    plan <- data.table(study = character(), accession = character(), organism = character(), runs = integer(), experiment = character(),
                        reference_complete = logical(), folder_exists = logical(), flags_set = integer(),
                        flags_total = integer(), next_step = character(), manual_trim = logical())
   }
@@ -174,7 +176,7 @@ cli_cmd_run <- function(r, apply) {
   }
   if (isTRUE(v$reset)) {
     stopifnot(!any(p$plan$study %in% p$inputs$keep))
-    study_list_reset(config, p$plan$experiment)
+    study_list_reset(config, unique(p$plan$experiment))
   }
   study_list_execute(p, config, v, r$study_list, preflight, out_dir)
 }

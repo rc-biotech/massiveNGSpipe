@@ -129,11 +129,11 @@ test_that("mngsp plan: dry-run planning of a tiny study list (keep, dbGaP, organ
                  "Dry run: nothing changed")
   expect_identical(status, 0L)
   plan <- data.table::fread(file.path(fx$project, "mngsp_plan_studies.csv"))
-  expect_setequal(plan$experiment, c("PRJNA1-homo_sapiens", "PRJNA2-mus_musculus", "PRJNA3-homo_sapiens"))
+  expect_setequal(plan$experiment, c("PRJNA1-homo_sapiens", "GSE2-mus_musculus", "PRJNA3-homo_sapiens"))
   expect_identical(plan[experiment == "PRJNA1-homo_sapiens"]$runs, 1L)   # SRR2 excluded
   expect_identical(plan[experiment == "PRJNA1-homo_sapiens"]$flags_set, 1L)
   expect_identical(plan[experiment == "PRJNA3-homo_sapiens"]$next_step, "start")
-  expect_false(plan[experiment == "PRJNA2-mus_musculus"]$reference_complete)
+  expect_false(plan[experiment == "GSE2-mus_musculus"]$reference_complete)
   expect_true(plan[experiment == "PRJNA3-homo_sapiens"]$reference_complete)
   p <- study_list_plan(fx$list, cli_build_config(cli_resolve(cli_parse(c("plan", fx$list, base_flags(fx))))$values))
   expect_identical(p$missing, "PRJNA_MISSING")
