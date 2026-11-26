@@ -67,6 +67,7 @@ save_coverage_tiles <- function(filepath, chromosomes, chromosome_lengths,
 #' @param batch_size integer, libraries loaded per batch
 #' @param compress fst compression level
 #' @param keep_free_gb,timeout_minutes RAM guard, see wait_for_memory()
+#' @param make_frames logical, maintain per-library frame QC for RFP collections
 #' @param ... passed to megafst_update() (e.g. compact_fraction, max_appends)
 #' @return invisible(NULL)
 fst_megaformat_make <- function(all_exp = list.experiments(validate = FALSE, pattern = "all_samples", libtypeExclusive = lib_type),
@@ -80,11 +81,15 @@ fst_megaformat_make <- function(all_exp = list.experiments(validate = FALSE, pat
                                 fst_threads = 5,
                                 bp2 = 5, BPPARAM = BiocParallel::MulticoreParam(resource_threads("collection", 4L), exportglobals = FALSE, log = FALSE),
                                 batch_size = 500, compress = 50, keep_free_gb = 32, timeout_minutes = 120,
-                                ...) {
+                                ..., make_frames = FALSE) {
   fst::threads_fst(resource_threads("io", fst_threads), reset_after_fork = FALSE)
   for (organism in organisms) {
     df <- read.experiment(organism, validate = FALSE)
     message("- ", organism(df))
+    if (isTRUE(make_frames) && identical(lib_type, "RFP")) {
+      tryCatch(collection_frames_update(df, BPPARAM = BPPARAM),
+               error = function(e) warning("Collection frame QC failed for ", organism, ": ", conditionMessage(e)))
+    }
     cov_paths <- try(filepath(df, "cov", suffix_stem = c("", "_pshifted"),
                               base_folders = libFolder(df, mode = "all")), silent = TRUE)
     if (is(cov_paths, "try-error") || !all(file.exists(cov_paths))) {
