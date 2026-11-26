@@ -199,7 +199,7 @@ test_that("relabeling reuses the cache and changing one offset only invalidates 
   expect_identical(updated$offset, c(-1L, -2L, -2L))
 })
 
-test_that("the RFP collection driver runs frame QC only when make_frames = TRUE (default off until the cold build exists)", {
+test_that("the RFP collection driver runs frame QC by default and allows opting out", {
   w <- frame_test_collection()
   called <- character()
   testthat::local_mocked_bindings(collection_frames_update = function(collection, BPPARAM) {
@@ -207,8 +207,8 @@ test_that("the RFP collection driver runs frame QC only when make_frames = TRUE 
   })
   bp <- BiocParallel::SerialParam()
   suppressMessages(fst_megaformat_make(organisms = w$collection, fst_threads = 1, BPPARAM = bp))
-  expect_identical(called, character())
+  expect_identical(called, w$collection)
   suppressMessages(fst_megaformat_make(organisms = w$collection, fst_threads = 1, BPPARAM = bp,
-                                      make_frames = TRUE))
+                                      make_frames = FALSE))
   expect_identical(called, w$collection)
 })

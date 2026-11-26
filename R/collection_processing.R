@@ -81,7 +81,7 @@ fst_megaformat_make <- function(all_exp = list.experiments(validate = FALSE, pat
                                 fst_threads = 5,
                                 bp2 = 5, BPPARAM = BiocParallel::MulticoreParam(resource_threads("collection", 4L), exportglobals = FALSE, log = FALSE),
                                 batch_size = 500, compress = 50, keep_free_gb = 32, timeout_minutes = 120,
-                                ..., make_frames = FALSE) {
+                                ..., make_frames = TRUE) {
   fst::threads_fst(resource_threads("io", fst_threads), reset_after_fork = FALSE)
   for (organism in organisms) {
     df <- read.experiment(organism, validate = FALSE)
