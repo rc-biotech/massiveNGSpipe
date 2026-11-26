@@ -212,3 +212,12 @@ test_that("the RFP collection driver runs frame QC by default and allows opting 
                                       make_frames = FALSE))
   expect_identical(called, w$collection)
 })
+
+test_that("a study report with a Run column maps by Run, even with stale labels", {
+  w <- frame_test_collection()
+  data.table::fwrite(data.table::data.table(fraction = c("stale_label_1", "stale_label_2"), length = 5L,
+                                           frame = 0L, score = c(10, 5), Run = rev(w$runs)), w$qc)
+  mapped <- collection_frames_study_qc(w$qc, w$exp_file, w$txdb)
+  expect_equal(mapped[[w$runs[1]]]$score, 5)
+  expect_equal(mapped[[w$runs[2]]]$score, 10)
+})

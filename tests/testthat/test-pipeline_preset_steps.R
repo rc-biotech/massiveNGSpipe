@@ -214,3 +214,23 @@ test_that("pipe_align_clean() isolates one organism's align failure from a sibli
   expect_true(file.exists(report_failed_pipe_path(config, c(exp = "study1-B"))))
   expect_false(file.exists(report_failed_pipe_path(config, c(exp = "study1-A"))))
 })
+
+test_that("safe_se_cbind combines count tables with and without colData Run", {
+  cd_old <- S4Vectors::DataFrame(SAMPLE = factor(c("a", "b")))
+  cd_new <- S4Vectors::DataFrame(SAMPLE = factor(c("c", "d")), Run = c("SRR3", "SRR4"))
+  se_old <- SummarizedExperiment::SummarizedExperiment(assays = list(counts = matrix(1:4, nrow = 2)), colData = cd_old)
+  se_new <- SummarizedExperiment::SummarizedExperiment(assays = list(counts = matrix(5:8, nrow = 2)), colData = cd_new)
+  out <- safe_se_cbind(list(old = se_old, new = se_new))
+  expect_identical(ncol(out), 4L)
+  expect_identical(out$Run, c(NA, NA, "SRR3", "SRR4"))
+})
+
+test_that("drop_counts_run_key checks a study's colData Run against the experiment and removes it", {
+  cd <- S4Vectors::DataFrame(SAMPLE = factor(c("a", "b")), Run = c("SRR1", "SRR2"))
+  se <- SummarizedExperiment::SummarizedExperiment(assays = list(counts = matrix(1:4, nrow = 2)), colData = cd)
+  out <- drop_counts_run_key(se, c("SRR1", "SRR2"), "PRJ1")
+  expect_false("Run" %in% names(SummarizedExperiment::colData(out)))
+  expect_error(drop_counts_run_key(se, c("SRR2", "SRR1"), "PRJ1"), "does not match")
+  se_old <- se; se_old$Run <- NULL
+  expect_identical(drop_counts_run_key(se_old, c("SRR1", "SRR2"), "PRJ1"), se_old)
+})

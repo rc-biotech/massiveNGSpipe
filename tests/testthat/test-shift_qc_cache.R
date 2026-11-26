@@ -517,3 +517,33 @@ test_that("options(massiveNGSpipe.shift_qc_plot = FALSE) skips the QC picture an
   expect_false(plotted)
   expect_false(file.exists(stale)); expect_false(file.exists(paste0(stale, ".fst")))
 })
+
+test_that("Ribo_frames_all.csv/badzero.csv carry a Run column (last) when the experiment has run ids", {
+  testthat::local_mocked_bindings(pshifted_filepath = fake_qc_stub_pshifted_path)
+  df <- fake_qc_stub(n = 2)
+  runs <- ORFik::runIDs(df)
+  results_by_run <- list()
+  results_by_run[[runs[1]]] <- list(hitmap = data.table::data.table(position = 1, frame = 0),
+    frames = data.table::data.table(frame = c(0, 1), score = c(10, 1), fraction = "A", length = 30))
+  results_by_run[[runs[2]]] <- list(hitmap = data.table::data.table(position = 1, frame = 0),
+    frames = data.table::data.table(frame = c(0, 1), score = c(1, 10), fraction = "B", length = 30))
+  testthat::local_mocked_bindings(
+    shift_qc_one_sample = function(df_one_row, ...) results_by_run[[ORFik::runIDs(df_one_row)]],
+    shift_qc_build_combined_plot = function(...) invisible(NULL),
+    shift_qc_plot_guarded = function(...) invisible(TRUE),
+    check_adapter_barcode_quality = function(...) invisible(NULL),
+    shift_qc_annotation_context = function(df) list(upstream = 5, downstream = 20, cds = list(), mrna = list())
+  )
+  expect_warning(shift_qc_cached(df, BPPARAM = BiocParallel::SerialParam()), "< 25%")
+  all_csv <- data.table::fread(file.path(ORFik::QCfolder(df), "Ribo_frames_all.csv"))
+  expect_identical(tail(names(all_csv), 1), "Run")
+  expect_identical(all_csv$Run, rep(runs, each = 2))
+  expect_identical(as.character(all_csv$fraction), rep(c("A", "B"), each = 2))
+  badzero <- data.table::fread(file.path(ORFik::QCfolder(df), "Ribo_frames_badzero.csv"))
+  expect_identical(badzero$Run, runs[2])
+})
+
+test_that("run_ids_or_null: NULL without run ids, NA for empty entries", {
+  expect_null(run_ids_or_null(ORFik::ORFik.template.experiment()))
+  expect_identical(run_ids_or_null(fake_experiment_stub(run_ids = c("SRR1", ""))), c("SRR1", NA))
+})

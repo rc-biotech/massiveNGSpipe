@@ -388,7 +388,10 @@ pipeline_collection_org <- function(config, pipelines = pipeline_init_all(config
       # Run-keyed identity: every study's columns are validated against its experiment labels, then Run + study
       # are set once on the combined table (setting colData per study cost ~40% of the step in S4 validity checks;
       # result identical to add_run_keys_to_counts() per study + cbind)
-      for (k in seq_along(count_lists)) check_counts_match_labels(count_lists[[k]], study_labels[[k]], study_ids[k])
+      for (k in seq_along(count_lists)) {
+        check_counts_match_labels(count_lists[[k]], study_labels[[k]], study_ids[k])
+        count_lists[[k]] <- drop_counts_run_key(count_lists[[k]], study_runs[[k]], study_ids[k])
+      }
       count_list <- safe_se_cbind(count_lists)
       cd <- SummarizedExperiment::colData(count_list)
       cd$Run <- unlist(study_runs, use.names = FALSE)
@@ -432,6 +435,45 @@ check_counts_match_labels <- function(se, labels, study) {
   invisible(TRUE)
 }
 
+#' Verify and drop the Run colData column of a study count table
+#'
+#' ORFik count tables carry colData Run when the experiment has run ids. The collection step sets Run + study on the
+#' combined table, so the per-study column is checked against the experiment runs and removed (count tables with and
+#' without the column can then be combined).
+#' @param se SummarizedExperiment of one study
+#' @param runs character, ORFik::runIDs() of the study experiment
+#' @param study character, study id for messages
+#' @return se without colData Run
+#' @noRd
+drop_counts_run_key <- function(se, runs, study) {
+  cd <- SummarizedExperiment::colData(se)
+  if (!("Run" %in% names(cd))) return(se)
+  have <- as.character(cd$Run)
+  ok <- is.na(have) | have == as.character(runs)
+  if (length(have) != length(runs) || !all(ok))
+    stop(study, ": count table Run column does not match the experiment runs (count table made from another experiment version)")
+  cd$Run <- NULL
+  SummarizedExperiment::colData(se) <- cd
+  se
+}
+
+#' Give all SummarizedExperiments the same colData columns (missing ones as NA)
+#' @param count_lists list of SummarizedExperiment
+#' @return list, or NULL if nothing to harmonize
+#' @noRd
+harmonize_coldata_columns <- function(count_lists) {
+  if (!all(vapply(count_lists, methods::is, logical(1), "SummarizedExperiment"))) return(NULL)
+  cols <- lapply(count_lists, function(x) names(SummarizedExperiment::colData(x)))
+  all_cols <- unique(unlist(cols))
+  if (all(vapply(cols, function(x) identical(x, all_cols), logical(1)))) return(NULL)
+  lapply(count_lists, function(x) {
+    cd <- SummarizedExperiment::colData(x)
+    for (cl in setdiff(all_cols, names(cd))) cd[[cl]] <- rep(NA, nrow(cd))
+    SummarizedExperiment::colData(x) <- cd[, all_cols, drop = FALSE]
+    x
+  })
+}
+
 #' cbind a list of SummarizedExperiments, with a useful error on mismatch
 #'
 #' On the happy path, identical to `do.call(BiocGenerics::cbind, count_lists)`.
@@ -446,6 +488,12 @@ safe_se_cbind <- function(count_lists) {
 
   if (!inherits(out, "try-error")) {
     return(out)
+  }
+  # Count tables made before / after ORFik added Run to colData differ in colData columns: fill with NA and retry
+  harmonized <- harmonize_coldata_columns(count_lists)
+  if (!is.null(harmonized)) {
+    out <- try(do.call(BiocGenerics::cbind, harmonized), silent = TRUE)
+    if (!inherits(out, "try-error")) return(out)
   }
 
   nr <- sapply(count_lists, nrow)

@@ -266,6 +266,12 @@ collection_frames_study_qc <- function(path, exp_file, txdb) {
     if (!identical(normalizePath(study@txdb), normalizePath(txdb))) return(NULL)
     runs <- as.character(ORFik::runIDs(study))
     if (anyDuplicated(runs)) return(NULL)
+    # Tables with a Run column (shift QC since 2026-11-26) need no label mapping
+    run_col <- tryCatch(data.table::fread(path, select = "Run")$Run, error = function(e) NULL)
+    if (length(run_col) == nrow(qc) && !anyNA(run_col) && all(nzchar(run_col)) && all(run_col %in% runs)) {
+      if (anyDuplicated(data.frame(run_col, qc$length, qc$frame))) return(NULL)
+      return(split(qc[, .(fraction = length, frame, score)], run_col))
+    }
     labels <- unique(as.character(qc$fraction))
     mapped <- setNames(rep(NA_character_, length(labels)), labels)
     for (key in collection_frames_label_keys(study)) {

@@ -132,10 +132,12 @@ qc_study_features <- function(study, runs) {
   fr_f <- file.path(aligned, "QC_STATS", "Ribo_frames_all.csv")
   if (file.exists(fr_f)) {
     fr <- fread(fr_f)
-    fr[, short := sub("^[A-Za-z0-9]+_", "", fraction)]
-    key <- if (any(fr$fraction %in% base$short)) "fraction" else "short"
-    fr[, Run := base$Run[match(get(key), base$short)]]
-    fr <- fr[!is.na(Run)]
+    if (!("Run" %in% names(fr)) || anyNA(fr$Run)) { # older tables: label key only
+      fr[, short := sub("^[A-Za-z0-9]+_", "", fraction)]
+      key <- if (any(fr$fraction %in% base$short)) "fraction" else "short"
+      fr[, Run := base$Run[match(get(key), base$short)]]
+    }
+    fr <- fr[!is.na(Run) & Run %in% base$Run]
     if (nrow(fr)) {
       fb <- dcast(fr[, .(p = sum(percent)), by = .(Run, frame)], Run ~ frame, value.var = "p")
       setnames(fb, setdiff(names(fb), "Run"), paste0("Frame_usage_", setdiff(names(fb), "Run")))

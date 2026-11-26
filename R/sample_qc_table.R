@@ -85,9 +85,11 @@ sample_qc_table <- function(exp, accepted_lengths = c(20, 21, 25:33), exp_dir = 
   fr <- file.path(QCfolder(df), "Ribo_frames_all.csv")
   if (file.exists(fr)) {
     x <- fread(fr)
-    short <- bamVarName(df, skip.libtype = TRUE)
-    x[, Run := runs[match(fraction, short)]]
-    x <- x[!is.na(Run)]
+    if (!("Run" %in% names(x)) || anyNA(x$Run)) { # older tables: label key only
+      short <- bamVarName(df, skip.libtype = TRUE)
+      x[, Run := runs[match(fraction, short)]]
+    }
+    x <- x[!is.na(Run) & Run %in% runs]
     f0 <- x[, .(frame0_pct = 100 * sum(score[frame == 0]) / sum(score),
                 frame0_pct_accepted = 100 * sum(score[frame == 0 & length %in% accepted_lengths]) /
                   max(1, sum(score[length %in% accepted_lengths]))), by = Run]

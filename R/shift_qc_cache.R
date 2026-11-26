@@ -329,7 +329,12 @@ shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct 
   # table merge in as a no-op instead of crashing the whole
   # experiment's aggregation. Confirmed live, 2026-10-08,
   # PRJNA637713-zea_mays/SRR13808095 (21-byte, header-only frames.csv).
-  frameQC <- data.table::rbindlist(lapply(cached, `[[`, "frames"), fill = TRUE)
+  frame_list <- lapply(cached, `[[`, "frames")
+  # Label-independent key: Run per library (last column), only when the experiment has run ids
+  runs <- run_ids_or_null(df)
+  if (!is.null(runs))
+    frame_list <- Map(function(x, r) {x[, Run := rep(r, nrow(x))]; x}, frame_list, runs[ok_idx])
+  frameQC <- data.table::rbindlist(frame_list, fill = TRUE)
   if (nrow(frameQC) > 0) {
     frameQC[, frame := as.factor(frame)]
     frameQC[, fraction := as.factor(fraction)]
@@ -341,7 +346,9 @@ shift_qc_cached <- function(df, BPPARAM = bpparam(), max_no_adapter_removed_pct 
     frameQC <- data.table::data.table(frame = factor(), fraction = factor(), length = numeric(),
                                       score = numeric(), percent = numeric(),
                                       percent_length = numeric(), best_frame = logical())
+    if (!is.null(runs)) frameQC[, Run := character()]
   }
+  if ("Run" %in% names(frameQC)) data.table::setcolorder(frameQC, c(setdiff(names(frameQC), "Run"), "Run"))
   zero_frame <- frameQC[frame == 0 & best_frame == FALSE, ]
 
   data.table::fwrite(frameQC, file = file.path(QCFolder, "Ribo_frames_all.csv"))
@@ -454,4 +461,19 @@ shift_qc_build_combined_plot <- function(df, plot_idx) {
   fst::write_fst(data, paste0(output, ".fst"))
   message("Saved pshift plots to location: ", output)
   invisible(NULL)
+}
+
+#' Run ids of an experiment for output tables
+#'
+#' Same rule as ORFik's internal runIDsForOutput(): NULL when the experiment has no (non-empty) Run column,
+#' else one id per row (NA where empty). Per-library tables then get a Run column next to the label key.
+#' @param df an ORFik experiment
+#' @return NULL or character
+#' @noRd
+run_ids_or_null <- function(df) {
+  runs <- tryCatch(as.character(ORFik::runIDs(df)), error = function(e) NULL)
+  if (!length(runs)) return(NULL)
+  runs[is.na(runs) | !nzchar(runs)] <- NA_character_
+  if (all(is.na(runs))) return(NULL)
+  runs
 }
