@@ -531,8 +531,8 @@ pipeline_checklist <- function(pipelines, config, print = TRUE, run_status = NUL
   cat(paste(c(header, txt), collapse = "\n"), "\n", sep = "", file = tmp)
   file.rename(tmp, path)
 
-  if (print) message(paste(c(usage["line"], usage["drive_cap_note"], usage["backlog_cap_note"],
-                             error_line, "", txt), collapse = "\n"))
+  # Print exactly what was written (title line included; it was left out here before).
+  if (print) message(paste(c(header, txt), collapse = "\n"))
   invisible(tab)
 }
 
@@ -568,7 +568,7 @@ format_system_usage_line <- function(pipelines, config) {
   usage <- get_system_usage(drive)
   line <- paste0("CPU (", usage$CPU_Usage_Percent, "%),",
                 " Memory (", usage$Memory_Usage_Percent, "%),",
-                " Drive ", usage$Drive, " (", usage$Drive_Usage_Percent, "%)")
+                " Drive ", usage$Drive, " (", sub("%+$", "", usage$Drive_Usage_Percent), "%)")
 
   cap <- config$stop_downloading_new_data_at_drive_usage
   drive_pct <- suppressWarnings(as.numeric(gsub("%", "", usage$Drive_Usage_Percent)))

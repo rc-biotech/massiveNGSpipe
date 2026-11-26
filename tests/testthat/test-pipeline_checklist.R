@@ -212,7 +212,7 @@ test_that("format_system_usage_line reports the drive cap note only when at/abov
                                      max_unprocessed_downloads = 30))
   pipelines <- fake_pipelines()
   u <- format_system_usage_line(pipelines, config)
-  expect_identical(u[["line"]], "CPU (1.2%), Memory (3.4%), Drive /dev/fake (50%%)")
+  expect_identical(u[["line"]], "CPU (1.2%), Memory (3.4%), Drive /dev/fake (50%)")
   expect_identical(u[["drive_cap_note"]], "")
 })
 
@@ -735,4 +735,28 @@ test_that("pipeline_checklist() surfaces a live samples/hr rate once an active s
 
   checklist_txt <- readLines(checklist_path(config))
   expect_true(any(grepl("1.0 samples/hr", checklist_txt, fixed = TRUE)))
+})
+
+test_that("pipeline_checklist prints the title line with and without session errors, and no '%%' in the usage line", {
+  testthat::local_mocked_bindings(
+    detect_drive = function(...) "/dev/fake",
+    get_system_usage = function(...) list(CPU_Usage_Percent = 1, Memory_Usage_Percent = 19.27,
+                                          Drive = "/dev/fake", Drive_Usage_Percent = "37%"),
+    unprocessed_downloads_count = function(...) 0L
+  )
+  for (err in c("", "ERRORS this session: 2: A-mus_musculus (pshift), B-homo_sapiens (pshift) -- x")) {
+    testthat::local_mocked_bindings(pipeline_error_summary_line = function(config) err)
+    config <- fake_config(session_dir = tempfile("session_"))
+    printed <- character()
+    withCallingHandlers(pipeline_checklist(fake_pipelines(), config, print = TRUE),
+                        message = function(m) { printed <<- c(printed, conditionMessage(m)); invokeRestart("muffleMessage") })
+    out <- strsplit(paste(printed, collapse = ""), "\n")[[1]]
+    file_lines <- readLines(checklist_path(config))
+    for (l in list(out, file_lines)) {
+      expect_match(l[1], "^Pipeline status as of")
+      expect_match(l[2], "^CPU \\(1%\\), Memory \\(19.27%\\), Drive /dev/fake \\(37%\\)$")
+      expect_false(any(grepl("%%", l, fixed = TRUE)))
+      if (nzchar(err)) expect_identical(l[5], err)
+    }
+  }
 })
