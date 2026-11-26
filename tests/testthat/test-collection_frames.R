@@ -66,23 +66,83 @@ frame_test_collection <- function() {
        aligned = aligned, txdb = txdb, exp_file = file.path(exp_dir, "study-homo_sapiens.csv"))
 }
 
-test_that("collection counts exact 5' and P-site frames by Run on both mapper branches", {
+test_that("without stored QC, P-sites are counted from the shifted ofst and 5' frames are rotated by the offset", {
   w <- frame_test_collection()
   data.table::fwrite(data.table::data.table(fraction = "stale_label", length = 5L,
                                            frame = 0L, score = 999), w$qc)
-  out <- collection_frames_update(w$collection)
+  expect_message(out <- collection_frames_update(w$collection),
+                 "2 Run\\(s\\) had no usable stored frame QC")
   expect_identical(data.table::key(out), c("Run", "mapper", "read_length"))
+  expect_identical(names(out), names(collection_frames_empty()))
   expect_identical(out$Run, w$runs[c(1, 1, 2)])
   expect_identical(out$mapper, c("all", "unique", "all"))
   expect_true(all(is.na(out$library_key)))
   expect_identical(out$experiment, rep("study-homo_sapiens", 3))
   expect_identical(out$read_length, rep(5L, 3))
   expect_identical(out$offset, rep(-2L, 3))
+  # P-site frames 0/1/2 = 5/2/7; pre = frame (f - 2) mod 3. The score-2 read has its 5' end
+  # outside the CDS (position 10), so rotation counts it in pre2 where the raw 5' end would not.
   expect_equal(as.numeric(unlist(out[1, c("frame0", "frame1", "frame2", "pre0", "pre1", "pre2")])),
-               c(5, 2, 7, 7, 5, 0))
+               c(5, 2, 7, 7, 5, 2))
   expect_equal(out$frame0, c(5, 5, 10))
   path <- file.path(w$coll_dir, "QC_STATS", "frames_per_library_length.fst")
   expect_equal(fst::read_fst(path), as.data.frame(out))
+})
+
+test_that("rotation equals counting raw 5' ends for reads inside the CDS, including across a junction", {
+  dir <- withr::local_tempdir()
+  exons <- qc_cds_exon_table(GenomicRanges::GRangesList(
+    plus = GenomicRanges::GRanges("chr1", IRanges::IRanges(c(11, 80), c(40, 100)), "+"),
+    minus = GenomicRanges::GRanges("chr1", IRanges::IRanges(150, 180), "-")))
+  reads <- GenomicAlignments::GAlignments(
+    seqnames = S4Vectors::Rle(rep("chr1", 5)),
+    pos = c(39L, 176L, 16L, 22L, 150L), cigar = c("2M39N3M", "5M", "5M", "6M", "6M"),
+    strand = S4Vectors::Rle(BiocGenerics::strand(c("+", "-", "+", "+", "-"))))
+  S4Vectors::mcols(reads)$score <- c(5, 7, 3, 11, 13)
+  offsets <- data.frame(fraction = 5:6, offsets_start = c(-2L, -4L))
+  raw <- file.path(dir, "raw.ofst")
+  shifted <- file.path(dir, "shifted.ofst")
+  ORFik::export.ofst(reads, raw)
+  ORFik::export.ofst(suppressMessages(ORFik::shiftFootprints(reads, offsets)), shifted)
+  counts <- collection_frames_count(qc_frame_sums(qc_read_ofst(shifted), exons), offsets)
+  # Previous implementation: frames of the raw 5' ends.
+  r <- ORFik::import.ofst(raw)
+  strand <- as.character(BiocGenerics::strand(r))
+  pre <- qc_frame_sums(data.table::data.table(seqnames = as.character(GenomicRanges::seqnames(r)),
+    start = ifelse(strand == "-", BiocGenerics::end(r), BiocGenerics::start(r)), strand = strand,
+    size = ORFik::readWidths(r, along.reference = TRUE), score = S4Vectors::mcols(r)$score), exons)
+  ref <- matrix(0, 2, 3)
+  ref[cbind(pre$fraction - 4L, pre$frame + 1L)] <- pre$score
+  expect_true(any(ref[, 1] > 0) && any(ref[, 2] > 0) && any(ref[, 3] > 0))
+  expect_equal(as.matrix(counts[, .(pre0, pre1, pre2)]), ref, ignore_attr = TRUE)
+  expect_equal(sum(counts[, .(pre0, pre1, pre2)]), sum(counts[, .(frame0, frame1, frame2)]))
+})
+
+test_that("stored QC is used before the ofst: per-sample cache by Run, then the study table by label", {
+  w <- frame_test_collection()
+  df <- ORFik::read.experiment(w$exp_file, validate = FALSE, output.env = new.env())
+  labels <- sub("^RFP_", "", shift_qc_sample_names(df))
+  sample_dir <- file.path(w$aligned, "QC_STATS", "per_sample_qc", "v2_complete_TIS_windows", "all")
+  dir.create(sample_dir, recursive = TRUE)
+  data.table::fwrite(data.table::data.table(fraction = labels[1], frame = 0:1, score = c(50, 60), length = 5L),
+                     file.path(sample_dir, paste0(w$runs[1], "_frames.csv")))
+  # libtype-prefixed labels are an accepted variant
+  data.table::fwrite(data.table::data.table(fraction = paste0("RFP_", labels), length = 5L,
+                                           frame = 2L, score = c(1, 30)), w$qc)
+  read_ofst <- qc_read_ofst
+  reads <- character()
+  testthat::local_mocked_bindings(qc_read_ofst = function(path) {
+    reads <<- c(reads, path)
+    read_ofst(path)
+  })
+  expect_message(out <- collection_frames_update(w$collection), "1 Run\\(s\\) had no usable stored frame QC")
+  expect_length(reads, 1L)
+  expect_match(reads, "unique_mappers")
+  expect_equal(as.numeric(unlist(out[1, c("frame0", "frame1", "frame2", "pre0", "pre1", "pre2")])),
+               c(50, 60, 0, 0, 50, 60))
+  expect_equal(as.numeric(unlist(out[3, c("frame0", "frame1", "frame2", "pre0", "pre1", "pre2")])),
+               c(0, 0, 30, 30, 0, 0))
+  expect_equal(out$frame0[2], 5)
 })
 
 test_that("a fresh study report maps exact labels and rejects ambiguous or stale labels", {
