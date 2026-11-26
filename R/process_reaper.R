@@ -21,7 +21,7 @@ reap_zombie_children <- function(keep = integer()) {
   if (.Platform$OS.type == "windows" || !dir.exists("/proc")) return(invisible(0L))
   me <- Sys.getpid(); n <- 0L
   for (st in Sys.glob("/proc/[0-9]*/stat")) {
-    s <- tryCatch(readLines(st, warn = FALSE), error = function(e) character())
+    s <- tryCatch(suppressWarnings(readLines(st, warn = FALSE)), error = function(e) character())
     if (!length(s)) next
     f <- strsplit(sub("^.*\\) ", "", s[1]), " ", fixed = TRUE)[[1]]   # fields after "(comm) ": state, ppid, ...
     if (length(f) < 2 || f[1] != "Z" || f[2] != as.character(me)) next

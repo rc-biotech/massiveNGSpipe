@@ -101,6 +101,7 @@ parallel_wrap <- function(function_call, pipelines, config, steps, wait = 10,
   message("Start step pipeline:\n", steps_merged)
   exps <- pipelines_names(pipelines)
   steps_done <- all_substeps_done_all(config, steps, exps)
+  n_iter <- 0L
   while(!all(steps_done) && !stop_requested(config) && !all_pending_failed(config, pending_exps(config, steps, exps))) {
     # Per-study errors are caught inside function_call (report_failed_pipe()); anything that escapes is a stage
     # crash. Record it from inside this (forked) worker, whose console output may never reach the parent, then
@@ -108,6 +109,12 @@ parallel_wrap <- function(function_call, pipelines, config, steps, wait = 10,
     withCallingHandlers(function_call(pipelines, config),
       error = function(e) pipeline_crash_record(config, stage_name %||% steps_merged, e, sys.calls()))
     steps_done <- all_substeps_done_all(config, steps, exps)
+    n_iter <- n_iter + 1L
+    # Diagnostics for the 2026-11-25 "C stack usage ... too close to the limit" crash (37 h, ~6,600 rounds): one line
+    # per 50 rounds with C stack use, R frame depth and memory, so a per-round growth is visible long before the crash.
+    if (n_iter %% 50L == 1L) try(cat(format(Sys.time(), "%F %T"), stage_name %||% steps_merged, "round", n_iter,
+        "cstack", Cstack_info()[["current"]], "nframe", sys.nframe(), "rss_mb", round(sum(gc()[, 2]), 0), "\n",
+        file = file.path(pipeline_log_base(config), "loop_diag.log"), append = TRUE), silent = TRUE)
     reap_zombie_children()   # stage workers live for hours and mix callr with forks: see reap_zombie_children()
     if (!all(steps_done) && !stop_requested(config) && !all_pending_failed(config, pending_exps(config, steps, exps))) {
       Sys.sleep(wait)
