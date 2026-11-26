@@ -145,6 +145,26 @@ test_that("stored QC is used before the ofst: per-sample cache by Run, then the 
   expect_equal(out$frame0[2], 5)
 })
 
+test_that("read lengths without an offset are dropped with a warning, and a failing study is skipped", {
+  counts <- collection_frames_count(data.table::data.table(fraction = c(5L, 7L), frame = c(1, 0), score = c(3, 9)),
+                                    data.frame(fraction = 5L, offsets_start = -2L))
+  expect_identical(attr(counts, "dropped_lengths"), 7L)
+  expect_equal(as.numeric(unlist(counts[, .(frame0, frame1, frame2, pre0, pre1, pre2)])), c(0, 3, 0, 0, 0, 3))
+
+  w <- frame_test_collection()
+  sample_dir <- file.path(w$aligned, "QC_STATS", "per_sample_qc", "v2_complete_TIS_windows", "all")
+  dir.create(sample_dir, recursive = TRUE)
+  data.table::fwrite(data.table::data.table(fraction = "x", frame = 0:1, score = c(50, 60), length = c(5L, 9L)),
+                     file.path(sample_dir, paste0(w$runs[1], "_frames.csv")))
+  expect_warning(out <- collection_frames_update(w$collection), "1 read length\\(s\\) without a P-site offset dropped \\(9\\)")
+  expect_equal(out$frame0[1], 50)
+  expect_equal(out$frame1[1], 0)
+
+  testthat::local_mocked_bindings(collection_frames_study = function(libs, ...) stop("broken study"))
+  expect_warning(expect_warning(out <- collection_frames_update(w$collection, force = TRUE), "1 study\\(ies\\) skipped.*broken study"), "have no frame rows")
+  expect_equal(nrow(out), 0L)
+})
+
 test_that("a fresh study report maps exact labels and rejects ambiguous or stale labels", {
   w <- frame_test_collection()
   df <- ORFik::read.experiment(w$exp_file, validate = FALSE, output.env = new.env())

@@ -57,9 +57,14 @@ collection_frames_update <- function(collection, force = FALSE,
   dir.create(cache_dir, showWarnings = FALSE)
   exp_dir <- ORFik::config()["exp"]
   txdb <- df@txdb
+  # One failing study is reported and skipped; it never stops the collection build.
   results <- BiocParallel::bplapply(groups, function(libs) {
-    collection_frames_study(libs, exons, annotation, txdb, cache_dir, exp_dir, force)
+    tryCatch(collection_frames_study(libs, exons, annotation, txdb, cache_dir, exp_dir, force),
+             error = function(e) structure(list(), failed = paste0(libs$experiment[1L], ": ", conditionMessage(e))))
   }, BPPARAM = BPPARAM)
+  failed <- unlist(lapply(results, attr, "failed"))
+  if (length(failed))
+    warning(length(failed), " study(ies) skipped after errors: ", paste(failed, collapse = "; "), call. = FALSE)
 
   out <- data.table::rbindlist(c(list(cbind(collection_frames_empty(), source = character(),
                                               cached = logical())),
@@ -168,7 +173,7 @@ collection_frames_study <- function(libs, exons, annotation, txdb, cache_dir, ex
         counts <- old$counts
         source <- old$source
       } else {
-        usable <- function(post) !is.null(post) && nrow(post) && all(post$fraction %in% offsets$fraction)
+        usable <- function(post) !is.null(post) && nrow(post) > 0
         fresh <- function(path) isTRUE(file.mtime(path) >= shifted_info$mtime[i])
         post <- NULL
         source <- "sample_qc"
@@ -188,6 +193,11 @@ collection_frames_study <- function(libs, exons, annotation, txdb, cache_dir, ex
           post <- qc_frame_sums(qc_read_ofst(shifted[i]), exons)
         }
         counts <- collection_frames_count(post, offsets)
+        dropped <- attr(counts, "dropped_lengths")
+        if (length(dropped))
+          warning(experiment, " / ", mapper, " / ", run, ": ", length(dropped),
+                  " read length(s) without a P-site offset dropped (", paste(dropped, collapse = ","),
+                  "); the shifting table may not match the P-shifted file", call. = FALSE)
         if (!identical(sig$size, file.info(sig$files)$size) ||
             !identical(sig$mtime, as.numeric(file.mtime(sig$files))))
           stop("P-shifted OFST changed while counting ", experiment, " / ", mapper, " / ", run)
@@ -272,9 +282,11 @@ collection_frames_study_qc <- function(path, exp_file, txdb) {
 # Pre-shift frames by rotation: a P-site in frame f has its 5' end in frame
 # (f + offset) mod 3 (offset = offsets_start <= 0). See collection_frames_update().
 collection_frames_count <- function(post, offsets) {
-  if (any(!post$fraction %in% offsets$fraction)) stop("Frame QC read lengths lack P-site offsets")
-  post <- data.table::as.data.table(post)[, .(score = sum(as.numeric(score))),
-                                          by = .(read_length = as.integer(fraction), frame = as.integer(frame))]
+  # Lengths without an offset cannot be rotated (and have no output row); they are dropped and returned
+  # as attribute dropped_lengths for the caller's per-library warning.
+  dropped <- sort(unique(as.integer(post$fraction[!post$fraction %in% offsets$fraction])))
+  post <- data.table::as.data.table(post)[fraction %in% offsets$fraction]
+  post <- post[, .(score = sum(as.numeric(score))), by = .(read_length = as.integer(fraction), frame = as.integer(frame))]
   post[, offset := offsets$offsets_start[match(read_length, offsets$fraction)]]
   post[, pre := (frame + offset) %% 3L]
   # Retain every length with an estimated shift, including those with no CDS hits.
@@ -286,5 +298,6 @@ collection_frames_count <- function(post, offsets) {
     counts[, (paste0("frame", f)) := data.table::fcoalesce(after$score[match(read_length, after$read_length)], 0)]
     counts[, (paste0("pre", f)) := data.table::fcoalesce(before$score[match(read_length, before$read_length)], 0)]
   }
+  if (length(dropped)) data.table::setattr(counts, "dropped_lengths", dropped)
   counts
 }
