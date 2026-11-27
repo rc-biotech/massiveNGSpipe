@@ -108,6 +108,16 @@ qc_prepare_metadata <- function(metadata) {
   m
 }
 
+#' Per-Run frame usage (percent, normalised within each Run) and top read length from long score rows
+#' @noRd
+qc_frame_usage <- function(fr) {
+  shares <- fr[, .(score = sum(score)), by = .(Run, frame)]
+  shares[, p := 100 * score / sum(score), by = Run]
+  fb <- dcast(shares, Run ~ frame, value.var = "p", fill = 0)
+  setnames(fb, setdiff(names(fb), "Run"), paste0("Frame_usage_", setdiff(names(fb), "Run")))
+  merge(fb, fr[, .(top_readlength = length[which.max(score)]), by = Run], by = "Run")
+}
+
 #' Cheap per-study features + per-run file paths for the heavy part
 #' @noRd
 qc_study_features <- function(study, runs) {
@@ -130,21 +140,21 @@ qc_study_features <- function(study, runs) {
   }
   # frame usage (all read lengths) and top read length
   fr_f <- file.path(aligned, "QC_STATS", "Ribo_frames_all.csv")
-  if (file.exists(fr_f)) {
-    fr <- fread(fr_f)
-    if (!("Run" %in% names(fr)) || anyNA(fr$Run)) { # older tables: label key only
-      fr[, short := sub("^[A-Za-z0-9]+_", "", fraction)]
-      key <- if (any(fr$fraction %in% base$short)) "fraction" else "short"
-      fr[, Run := base$Run[match(get(key), base$short)]]
-    }
-    fr <- fr[!is.na(Run) & Run %in% base$Run]
-    if (nrow(fr)) {
-      fb <- dcast(fr[, .(p = sum(percent)), by = .(Run, frame)], Run ~ frame, value.var = "p")
-      setnames(fb, setdiff(names(fb), "Run"), paste0("Frame_usage_", setdiff(names(fb), "Run")))
-      fb <- merge(fb, fr[, .(top_readlength = length[which.max(percent)]), by = Run], by = "Run")
-      base <- merge(base, fb, by = "Run", all.x = TRUE)
-    }
-  }
+  shifted <- pshifted_filepath(df)
+  sample_paths <- vapply(seq_len(nrow(df)), function(i) shift_qc_cache_paths(df[i, ])$frames, character(1))
+  study_frames <- if (file.exists(fr_f))
+    collection_frames_study_qc(fr_f, file.path(ORFik::config()["exp"], paste0(study, ".csv")), df@txdb)
+  fr <- rbindlist(lapply(which(rid %in% base$Run), function(i) {
+    run <- rid[i]
+    sample <- sample_paths[i]
+    post <- if (isTRUE(file.mtime(sample) >= file.mtime(shifted[i])))
+      collection_frames_sample_qc(sample, df@txdb)
+    if (is.null(post) && isTRUE(file.mtime(fr_f) >= file.mtime(shifted[i])))
+      post <- study_frames[[run]]
+    if (is.null(post) || !nrow(post) || sum(post$score) <= 0) return(NULL)
+    post[, .(Run = run, length = fraction, frame, score)]
+  }))
+  if (nrow(fr)) base <- merge(base, qc_frame_usage(fr), by = "Run", all.x = TRUE)
   # read length distribution (score weighted, pre-shift ofst)
   rl_dir <- file.path(aligned, "ofst", "read_length_distribution")
   rl <- rbindlist(lapply(base$Run, function(r) {
@@ -163,7 +173,7 @@ qc_study_features <- function(study, runs) {
 
 #' Bump when qc_study_features() changes, to invalidate the per-study cache
 #' @noRd
-QC_STUDY_CACHE_VERSION <- "study_v1"
+QC_STUDY_CACHE_VERSION <- "study_v2"
 
 #' Files qc_study_features() reads for a study (also the ones that do not exist yet: their appearance invalidates)
 #' @noRd
@@ -172,7 +182,11 @@ qc_study_inputs <- function(study, exp_dir = ORFik::config()["exp"]) {
   x <- fread(csv, header = FALSE, fill = TRUE, skip = 3)                # libtype,...,filepath,Run rows
   h <- unlist(x[1]); fp <- x[[which(h == "filepath")[1]]][-1]; run <- if ("Run" %in% h) x[[which(h == "Run")[1]]][-1] else character()
   aligned <- dirname(fp[1])
-  c(csv, file.path(aligned, c("LOGS_SINGLE", "LOGS", "LOGS_PAIRED"), "00_STAR_LOG_table.csv"),
+  shifted <- file.path(aligned, "pshifted", paste0(run, "_pshifted.ofst"))
+  sample <- file.path(aligned, "QC_STATS", "per_sample_qc", "v2_complete_TIS_windows", "all",
+                      paste0(run, "_frames.csv"))
+  txdb <- fread(csv, header = FALSE, nrows = 3L)$V2[2L]
+  c(csv, txdb, shifted, sample, file.path(aligned, c("LOGS_SINGLE", "LOGS", "LOGS_PAIRED"), "00_STAR_LOG_table.csv"),
     file.path(aligned, "QC_STATS", "Ribo_frames_all.csv"), file.path(aligned, "ofst", "read_length_distribution", paste0(run, ".csv")))
 }
 

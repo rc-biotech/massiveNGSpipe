@@ -56,3 +56,13 @@ test_that("terminal bias is cached per file and equals the uncached result", {
   b <- massiveNGSpipe:::qc_terminal_bias(d, c("SRR1", "SRR2"), cd, 1)
   expect_equal(a, ref); expect_equal(b, ref); expect_equal(ref[Run == "SRR1"][["A5'"]], 0.5)
 })
+
+test_that("frame usage is normalised per Run: libraries sharing a label suffix are never summed", {
+  # KO_r2 and a lingering WT_r2 both carried the suffix r2 and used to be summed into one Run
+  fr <- data.table::data.table(Run = rep(c("SRRA", "SRRB"), each = 6), length = rep(c(28L, 28L, 28L, 29L, 29L, 29L), 2),
+                               frame = rep(0:2, 4), score = c(40, 22, 38, 41, 22, 37, 99, 1, 0, 98, 1, 1))
+  u <- qc_frame_usage(fr)
+  expect_equal(nrow(u), 2L)
+  expect_equal(rowSums(u[, .(Frame_usage_0, Frame_usage_1, Frame_usage_2)]), c(100, 100))
+  expect_equal(u[Run == "SRRA", Frame_usage_0], 100 * 81 / 200)
+})

@@ -221,3 +221,13 @@ test_that("a study report with a Run column maps by Run, even with stale labels"
   expect_equal(mapped[[w$runs[1]]]$score, 5)
   expect_equal(mapped[[w$runs[2]]]$score, 10)
 })
+
+test_that("a legacy study report where one label stands for two Runs is not mapped (no label collision)", {
+  w <- frame_test_collection()
+  df <- ORFik::read.experiment(w$exp_file, validate = FALSE, output.env = new.env())
+  labels <- sub("^RFP_", "", shift_qc_sample_names(df))
+  # a stale report that lists only one label twice cannot be attributed to both Runs
+  data.table::fwrite(data.table::data.table(fraction = c(labels[1], labels[1]), length = 5L,
+                                           frame = 0L, score = c(10, 5)), w$qc)
+  expect_null(collection_frames_study_qc(w$qc, w$exp_file, w$txdb))
+})
