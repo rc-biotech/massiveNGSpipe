@@ -30,6 +30,22 @@ organism_collection_exp_name <- function(organisms) {
   paste0("all_samples-", gsub(" ", "_", organisms))
 }
 
+#' Organism names that always resolve to a specific strain key
+#'
+#' The default Ensembl Bacteria lookup takes the first strain of a species, which for "Zymomonas mobilis" is ATCC 10988,
+#' while all our Zymomonas data is ZM4 (ATCC 31821). The ATCC 10988 reference was retired 2026-11-27 (Hakon), so a plain
+#' "Zymomonas mobilis" label (any case) is mapped to "Zymomonas mobilis ZM4" before a reference is looked up or built.
+#' Names that are not listed are returned unchanged.
+#' @param organism character, scientific name(s)
+#' @return character, same length
+#' @noRd
+organism_alias <- function(organism) {
+  aliases <- c("zymomonas mobilis" = "Zymomonas mobilis ZM4")
+  hit <- match(gsub("\\s+", " ", trimws(tolower(organism))), names(aliases))
+  organism[!is.na(hit)] <- unname(aliases[hit[!is.na(hit)]])
+  organism
+}
+
 #' Reference-folder-safe organism name
 #' @param organism character, scientific name
 #' @param full logical, default FALSE. If TRUE, join onto `full_path`.
@@ -40,6 +56,7 @@ organism_collection_exp_name <- function(organisms) {
 #' @noRd
 reference_folder_name <- function(organism, full = FALSE,
                                   full_path = ORFik::config()["ref"]) {
+  organism <- organism_alias(organism)
   res <- gsub(" ", "_", trimws(tolower(organism)))
   if (full) res <- file.path(full_path, res)
   return(res)

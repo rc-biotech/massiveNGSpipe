@@ -43,6 +43,16 @@ init_and_load_complete_metadata <- function(config, complete_metadata = config$c
   if (isTRUE(attr(final_list, "removed") > 0))
     message("- Blacklist: skipping ", attr(final_list, "removed"), " blacklisted samples")
   final_list <- platform_guard(final_list, config)
+  # plain "Zymomonas mobilis" would resolve to the retired ATCC 10988 reference (Ensembl default): use ZM4
+  if ("ScientificName" %in% names(final_list)) {
+    aliased <- organism_alias(final_list$ScientificName)
+    if (any(aliased != final_list$ScientificName)) {
+      message("- Organism alias: ", sum(aliased != final_list$ScientificName), " samples relabelled ",
+              paste(unique(paste(final_list$ScientificName[aliased != final_list$ScientificName], "->",
+                                 aliased[aliased != final_list$ScientificName])), collapse = ", "))
+      final_list[, ScientificName := aliased]
+    }
+  }
 
   if (only_complete_genomes) {
     message("- Subsetting to only complete genomes")
