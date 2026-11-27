@@ -76,3 +76,16 @@ test_that("real source-tree subprocess resolves the FASTQ alphabet guard", {
   expect_error(run_experiment_subprocess(f, list(path = color),
     file.path(d, "color.out"), file.path(d, "color.err"), poll_interval = .1), "colour-space")
 })
+
+test_that("a manual adapter row wins over detection and cache for that Run only", {
+  d <- tempfile(); dir.create(file.path(d, "trim"), recursive = TRUE)
+  a <- file.path(d, "a.fastq"); writeLines("reads", a)
+  called <- 0L
+  testthat::local_mocked_bindings(short_insert_adapter = function(file) { called <<- called + 1L; "TCGTATGCCGTC" })
+  expect_identical(rna_inline_adapter(a, "SRR1", d), "TCGTATGCCGTC")          # detected and cached
+  data.table::fwrite(data.table::data.table(Run = "SRR1", adapter = "AGATCGGAAGAG"), file.path(d, "trim", "adapters_manual.csv"))
+  expect_identical(unname(rna_inline_adapter(a, "SRR1", d)), "AGATCGGAAGAG")  # manual beats the cached decision
+  expect_identical(rna_inline_adapter(a, "SRR2", d), "TCGTATGCCGTC")          # other Run: detection as before
+  expect_identical(called, 2L)
+  expect_true(is.na(rna_manual_adapter("SRR1", file.path(d, "none"))))
+})

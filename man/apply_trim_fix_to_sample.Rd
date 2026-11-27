@@ -11,7 +11,8 @@ apply_trim_fix_to_sample(
   barcode5p_size = NULL,
   barcode3p_size = NULL,
   adapter = NULL,
-  note = ""
+  note = "",
+  refetch = FALSE
 )
 }
 \arguments{
@@ -30,6 +31,10 @@ leaves \code{adapters_manual.csv} untouched for this sample}
 
 \item{note}{character, free-text reason, appended to the audit log
 (see \code{\link{log_trim_fix}})}
+
+\item{refetch}{logical, default FALSE. TRUE also clears the experiment's \code{fetch} flag, so the next run
+downloads the raw files that are missing on disk again (online RNA-seq aligns from raw FASTQ, deleted after
+processing; Ribo-seq trimming re-downloads on its own). Runs whose raw files still validate are not downloaded.}
 }
 \value{
 invisible(NULL)

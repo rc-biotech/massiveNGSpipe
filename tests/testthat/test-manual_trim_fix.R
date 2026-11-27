@@ -185,3 +185,26 @@ test_that("apply_trim_fix_to_sample()'s 'trim' backfill is still rbindlist()-com
   expect_equal(rebuilt[id == "SRR002"]$barcode5p_size, 6)
   expect_true(is.na(rebuilt[id == "SRR003"]$barcode5p_size))
 })
+
+test_that("apply_trim_fix_to_sample() works for the RNA-seq preset (no trim step): restart from aligned, optional refetch", {
+  config <- fake_config(preset = "RNA-seq", mode = "online")
+  exp <- "GSE000001-oryzias_latipes_RNA-seq"
+  stub <- fake_experiment_stub(run_ids = c("SRR001", "SRR002"), exp_name = exp)
+  bam_dir <- tempfile("bam_")
+  testthat::local_mocked_bindings(read.experiment = function(exp, ...) stub, bam_dir_from_df = function(df) bam_dir)
+  expect_false("trim" %in% names(config$flag))
+  for (step_id in c("aligned", "ofst")) for (r in c("SRR001", "SRR002")) set_sample_flag(config, step_id, exp, r)
+  fake_mark_all_done(config, names(config$flag), exp)
+
+  apply_trim_fix_to_sample(exp, "SRR001", config, adapter = "AGATCGGAAGAG")
+  expect_identical(data.table::fread(file.path(bam_dir, "trim", "adapters_manual.csv"))$adapter, "AGATCGGAAGAG")
+  expect_identical(samples_done(config, "aligned", exp), "SRR002")
+  steps <- names(config$flag); from <- which(steps == "aligned")
+  for (s in steps[from:length(steps)]) expect_false(step_is_done(config, s, exp))
+  for (s in steps[seq_len(from - 1)]) expect_true(step_is_done(config, s, exp))
+
+  apply_trim_fix_to_sample(exp, "SRR002", config, adapter = "AGATCGGAAGAG", refetch = TRUE)
+  expect_false(step_is_done(config, "fetch", exp))
+  expect_true(step_is_done(config, "start", exp))
+  expect_setequal(data.table::fread(file.path(bam_dir, "trim", "adapters_manual.csv"))$Run, c("SRR001", "SRR002"))
+})

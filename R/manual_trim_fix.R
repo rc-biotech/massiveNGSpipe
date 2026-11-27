@@ -55,10 +55,13 @@
 #' leaves \code{adapters_manual.csv} untouched for this sample
 #' @param note character, free-text reason, appended to the audit log
 #' (see \code{\link{log_trim_fix}})
+#' @param refetch logical, default FALSE. TRUE also clears the experiment's \code{fetch} flag, so the next run
+#' downloads the raw files that are missing on disk again (online RNA-seq aligns from raw FASTQ, deleted after
+#' processing; Ribo-seq trimming re-downloads on its own). Runs whose raw files still validate are not downloaded.
 #' @return invisible(NULL)
 #' @export
 apply_trim_fix_to_sample <- function(exp, run, config, barcode5p_size = NULL,
-                                     barcode3p_size = NULL, adapter = NULL, note = "") {
+                                     barcode3p_size = NULL, adapter = NULL, note = "", refetch = FALSE) {
   stopifnot(is.null(barcode5p_size) == is.null(barcode3p_size))
   stopifnot(!is.null(barcode5p_size) || !is.null(adapter))
 
@@ -149,8 +152,12 @@ apply_trim_fix_to_sample <- function(exp, run, config, barcode5p_size = NULL,
     if (file.exists(marker)) file.remove(marker)
   }
 
+  # Presets that trim inline during alignment (RNA-seq: no "trim" step) restart from "aligned"; there the manual
+  # adapter is read by rna_inline_adapter().
   downstream_steps <- names(config$flag)
-  downstream_steps <- downstream_steps[which(downstream_steps == "trim"):length(downstream_steps)]
+  first_step <- intersect(c("trim", "aligned"), downstream_steps)[1]
+  downstream_steps <- downstream_steps[which(downstream_steps == first_step):length(downstream_steps)]
+  if (refetch && "fetch" %in% names(config$flag)) downstream_steps <- c("fetch", downstream_steps)
   remove_flag_all_exp(config, steps = downstream_steps, exps = exp)
 
   log_trim_fix(exp, run, barcode5p_size, barcode3p_size, adapter, note, config)
