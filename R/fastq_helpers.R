@@ -41,6 +41,12 @@ fastqc_adapters_info <- function(file, nreads = 2e6,
   if (file.exists(manual_defined_adapters)) {
     message("Using manually defined adapters from file")
     adapters <- fread(manual_defined_adapters, header = TRUE)
+    # Match the run id from the file name first: the file's folder need not hold the other runs of the table
+    # (paired footprint mates are trimmed from <trim>/.mate_input/<Run>/<Run>.fastq, a folder with only that run;
+    # the folder listing below then failed on the table's first row and the manual adapter was silently ignored,
+    # PRJNA951361 wave 3 re-trim 2026-11-27).
+    hit <- manual_adapter_row_for_file(adapters$Run, file)
+    if (length(hit) == 1) return(adapters[hit]$adapter)
     adapters[, LibraryLayout := "SINGLE"]
     run_to_path <- try(unlist(run_files_organizer(adapters, dirname(file))), silent = TRUE)
     if (is(run_to_path, "try-error")) {
@@ -76,6 +82,21 @@ fastqc_adapters_info <- function(file, nreads = 2e6,
   found_adapter <- candidates[name %in% adapter_name]$value
   names(found_adapter) <- candidates[name %in% adapter_name]$name
   return(found_adapter)
+}
+
+#' Row(s) of a manual adapter table whose Run is the run of a raw fastq file
+#'
+#' Matches \code{<prefix><Run><mate suffix>.<format>[.gz]} on the base name (prefixes "", trimmed[2]_,
+#' collapsed_trimmed[2]_; mate suffixes "", _1/_2, _R1_001/_R2_001), so a run id that is a prefix of another
+#' (SRR1 vs SRR10) cannot match.
+#' @param runs character, the table's Run column
+#' @param file character, path to the fastq/fasta file
+#' @return integer indices into \code{runs}
+#' @noRd
+manual_adapter_row_for_file <- function(runs, file) {
+  b <- basename(file[1])
+  pat <- paste0("^(collapsed_)?(trimmed2?_)?", runs, "(_[12]|_R[12]_001)?\\.(fastq|fq|fa|fasta)(\\.gz)?$")
+  which(vapply(pat, grepl, logical(1), x = b, USE.NAMES = FALSE))
 }
 
 fastqc_parse_adapters <- function(file, nreads, adapters_file =
