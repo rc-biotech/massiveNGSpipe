@@ -264,31 +264,60 @@ test_that("a pending or mismatching offset record skips only that Run and mapper
   expect_identical(out$mapper, c("all", "unique"))
 })
 
-test_that("shift inputs rewritten during the build stop the publish and keep the previous report", {
+test_that("shift inputs rewritten during the build leave only those Runs pending; the rest is published", {
   w <- frame_test_collection()
   path <- file.path(w$coll_dir, "QC_STATS", "frames_per_library_length.fst")
   first <- collection_frames_update(w$collection)
-  published <- file.info(path)[, c("size", "mtime")]
 
   study <- collection_frames_study
   refreshed <- file.path(dirname(w$table_path), paste0(w$runs[2], "_pshifted.ofst"))
-  testthat::local_mocked_bindings(collection_frames_study = function(...) {
-    res <- study(...)
-    Sys.setFileTime(refreshed, Sys.time() + 5)   # a P-shift pass rewrites one file after it was counted
-    res
-  })
-  expect_error(collection_frames_update(w$collection),
-               "P-shift inputs changed during the collection frame build.*SRR90002_pshifted.ofst")
-  expect_identical(file.info(path)[, c("size", "mtime")], published)
-  expect_equal(fst::read_fst(path), as.data.frame(first))
+  rewrite_after_count <- function(file) {
+    function(...) {
+      res <- study(...)
+      Sys.setFileTime(file, file.mtime(file) + 5)   # a P-shift pass rewrites one file after it was counted
+      res
+    }
+  }
+  testthat::local_mocked_bindings(collection_frames_study = rewrite_after_count(refreshed))
+  expect_warning(out <- collection_frames_update(w$collection),
+                 "1 Run x mapper left pending.*study-homo_sapiens / all \\(1\\).*SRR90002")
+  expect_identical(out$Run, w$runs[c(1, 1)])
+  expect_identical(out$mapper, c("all", "unique"))
+  expect_equal(fst::read_fst(path), as.data.frame(out))
 
-  # the same holds for a shifting table of either mapper branch
-  Sys.setFileTime(refreshed, Sys.time() - 60)
+  # the next build counts the refreshed Run again
+  testthat::local_mocked_bindings(collection_frames_study = study)
+  expect_no_warning(out <- collection_frames_update(w$collection))
+  expect_equal(as.data.frame(out), as.data.frame(first))
+
+  # a rewritten shifting table leaves that study x mapper pending, the other mapper is published
   unique_table <- file.path(w$aligned, "unique_mappers", "pshifted", "shifting_table.rds")
-  testthat::local_mocked_bindings(collection_frames_study = function(...) {
-    res <- study(...)
-    Sys.setFileTime(unique_table, Sys.time() + 5)
-    res
+  testthat::local_mocked_bindings(collection_frames_study = rewrite_after_count(unique_table))
+  expect_warning(out <- collection_frames_update(w$collection), "study-homo_sapiens / unique \\(1\\)")
+  expect_identical(out$Run, w$runs)
+  expect_identical(out$mapper, c("all", "all"))
+})
+
+test_that("a P-shifted file rewritten while it is counted gets no rows and no cache entry", {
+  w <- frame_test_collection()
+  shifted <- file.path(dirname(w$table_path), paste0(w$runs[1], "_pshifted.ofst"))
+  count <- collection_frames_count
+  testthat::local_mocked_bindings(collection_frames_count = function(post, offsets) {
+    Sys.setFileTime(shifted, file.mtime(shifted) + 5)
+    count(post, offsets)
   })
-  expect_error(collection_frames_update(w$collection), "unique_mappers/pshifted/shifting_table.rds")
+  expect_warning(out <- collection_frames_update(w$collection), "1 Run x mapper left pending")
+  expect_identical(out[, .(Run, mapper)], data.table::data.table(Run = w$runs, mapper = c("unique", "all"),
+                                                                   key = c("Run", "mapper")))
+  cache <- file.path(w$coll_dir, "QC_STATS", "frames_per_library_length_cache", "study-homo_sapiens")
+  expect_identical(sort(list.files(cache, recursive = TRUE)), c("all/SRR90002.rds", "unique/SRR90001.rds"))
+})
+
+test_that("file times ahead of the host clock do not block the build", {
+  w <- frame_test_collection()
+  files <- list.files(w$aligned, pattern = "_pshifted\\.ofst$|shifting_table\\.rds$", recursive = TRUE, full.names = TRUE)
+  expect_length(files, 5L)
+  Sys.setFileTime(files, Sys.time() + 3600)   # storage clock ahead, or files written during the build window
+  expect_message(expect_no_warning(out <- collection_frames_update(w$collection)), "Wrote")
+  expect_identical(out$Run, w$runs[c(1, 1, 2)])
 })

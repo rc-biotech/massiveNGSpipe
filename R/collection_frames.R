@@ -24,6 +24,10 @@
 #'   or an ORFik experiment object for that collection.
 #' @param force Recompute every library with available inputs.
 #' @param BPPARAM BiocParallel parameter for processing studies.
+#' A Run x mapper whose P-shifted file or shifting table is rewritten while
+#' the table is built (a P-shift pass running at the same time) is left out
+#' with a warning and counted by the next build; the other libraries are
+#' published.
 #' @return The output data.table, invisibly.
 #' @export
 collection_frames_update <- function(collection, force = FALSE,
@@ -40,7 +44,6 @@ collection_frames_update <- function(collection, force = FALSE,
   if (is.null(lock)) stop("Another frame build holds the lock for ", qc_dir)
   on.exit(filelock::unlock(lock), add = TRUE)
 
-  build_started <- Sys.time()
   aligned <- ORFik::libFolder(df, mode = "all", unique_mappers = FALSE)
   libraries <- data.table::data.table(Run = runs,
     library_key = if ("library_key" %in% colnames(df)) as.character(df$library_key) else NA_character_,
@@ -58,6 +61,17 @@ collection_frames_update <- function(collection, force = FALSE,
   dir.create(cache_dir, showWarnings = FALSE)
   exp_dir <- ORFik::config()["exp"]
   txdb <- df@txdb
+  # The collection lock does not coordinate with the study P-shift writers (re-trim and reshift passes run
+  # meanwhile). Each shift input is stat'ed before and after the build; both stats come from the storage
+  # filesystem, so the host clock is never compared with file times.
+  inputs <- data.table::rbindlist(lapply(c("all", "unique"), function(mapper) {
+    branch <- if (mapper == "all") libraries$aligned else file.path(libraries$aligned, "unique_mappers")
+    data.table::data.table(Run = libraries$Run, experiment = libraries$experiment, mapper = mapper,
+      shifted = file.path(branch, "pshifted", paste0(libraries$stem, "_pshifted.ofst")),
+      shift_table = file.path(branch, "pshifted", "shifting_table.rds"))
+  }))
+  input_paths <- unique(c(inputs$shifted, inputs$shift_table))
+  sig_before <- qc_file_sig(input_paths)
   # One failing study is reported and skipped; it never stops the collection build.
   results <- BiocParallel::bplapply(groups, function(libs) {
     tryCatch(collection_frames_study(libs, exons, annotation, txdb, cache_dir, exp_dir, force),
@@ -81,18 +95,19 @@ collection_frames_update <- function(collection, force = FALSE,
   }
   out[, c("source", "cached") := NULL]
   data.table::setkey(out, Run, mapper, read_length)
-  # The collection lock does not coordinate with the study P-shift writer.
-  # Keep the previous report if a study published new shift inputs mid-build.
-  branches <- c(libraries$aligned, file.path(libraries$aligned, "unique_mappers"))
-  shifted <- file.path(branches, "pshifted", paste0(libraries$stem, "_pshifted.ofst"))
-  shift_tables <- file.path(unique(branches), "pshifted", "shifting_table.rds")
-  inputs <- c(shifted, shift_tables)
-  changed <- which(file.mtime(inputs) >= build_started)
-  if (length(changed))
-    stop("P-shift inputs changed during the collection frame build; retry after P-shifting finishes: ",
-         paste(head(inputs[changed], 5L), collapse = ", "), call. = FALSE)
+  # A Run x mapper whose P-shifted file or shifting table was rewritten during the build is left out and
+  # picked up by the next incremental build; all other libraries are published.
+  changed <- input_paths[sig_before != qc_file_sig(input_paths)]
+  pending <- inputs[(shifted %in% changed | shift_table %in% changed) & file.exists(shifted), .(Run, experiment, mapper)]
+  if (nrow(pending)) {
+    out <- out[!pending, on = c("Run", "mapper")]
+    per_study <- pending[, .N, by = .(experiment, mapper)]
+    warning(nrow(pending), " Run x mapper left pending for the next build, P-shift inputs changed during this one: ",
+            paste0(per_study$experiment, " / ", per_study$mapper, " (", per_study$N, ")", collapse = ", "),
+            "; e.g. ", paste(head(unique(pending$Run), 5L), collapse = ", "), call. = FALSE)
+  }
 
-  missing <- setdiff(runs, out$Run)
+  missing <- setdiff(runs, c(out$Run, pending$Run))
   if (length(missing)) {
     warning(length(missing), " Run(s) have no frame rows (missing shift inputs or no accepted lengths): ",
             paste(head(missing, 10L), collapse = ", "))
@@ -216,9 +231,10 @@ collection_frames_study <- function(libs, exons, annotation, txdb, cache_dir, ex
           warning(experiment, " / ", mapper, " / ", run, ": ", length(dropped),
                   " read length(s) without a P-site offset dropped (", paste(dropped, collapse = ","),
                   "); the shifting table may not match the P-shifted file", call. = FALSE)
+        # Rewritten while counting: no cache entry, no rows. collection_frames_update() reports it as pending.
         if (!identical(sig$size, file.info(sig$files)$size) ||
             !identical(sig$mtime, as.numeric(file.mtime(sig$files))))
-          stop("P-shifted OFST changed while counting ", experiment, " / ", mapper, " / ", run)
+          return(NULL)
         pshift_atomic_record(list(sig = sig, counts = counts, source = source), cache)
       }
       if (!nrow(counts)) return(NULL)
@@ -229,8 +245,8 @@ collection_frames_study <- function(libs, exons, annotation, txdb, cache_dir, ex
       counts[, `:=`(source = source, cached = cached)]
       counts
     })
-    if (!identical(table_sig, qc_file_sig(table_path)))
-      stop("Shifting table changed while counting ", experiment, " / ", mapper)
+    # Offsets may no longer match the files: drop this study x mapper (reported as pending by the caller).
+    if (!identical(table_sig, qc_file_sig(table_path))) return(NULL)
     data.table::rbindlist(tables)
   })
 }
