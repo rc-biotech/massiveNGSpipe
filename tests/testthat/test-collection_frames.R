@@ -231,3 +231,64 @@ test_that("a legacy study report where one label stands for two Runs is not mapp
                                            frame = 0L, score = c(10, 5)), w$qc)
   expect_null(collection_frames_study_qc(w$qc, w$exp_file, w$txdb))
 })
+
+test_that("a pending or mismatching offset record skips only that Run and mapper, with a warning", {
+  w <- frame_test_collection()
+  raw <- names(w$offsets)
+  shifted <- file.path(dirname(w$table_path), paste0(w$runs, "_pshifted.ofst"))
+  # Run 1 / all: applied record bound to other offsets (stale provenance)
+  record <- pshift_offset_record_paths(raw[1], shifted[1])
+  pshift_atomic_record(list(schema = 1L, raw = pshift_file_identity(raw[1]),
+    shifted = pshift_file_identity(shifted[1]),
+    offsets = data.frame(fraction = 5L, offsets_start = -1L)), record$applied)
+  expect_warning(out <- collection_frames_update(w$collection),
+                 "provenance differs for study-homo_sapiens / all / SRR90001")
+  # the sibling Run and the other mapper of the same Run are kept
+  expect_identical(out$Run, w$runs[c(1, 2)])
+  expect_identical(out$mapper, c("unique", "all"))
+
+  # a record that matches the table and files is accepted again
+  pshift_atomic_record(list(schema = 1L, raw = pshift_file_identity(raw[1]),
+    shifted = pshift_file_identity(shifted[1]),
+    offsets = pshift_canonical_offsets(w$offsets[[1]])), record$applied)
+  expect_no_warning(out <- collection_frames_update(w$collection))
+  expect_identical(out$Run, w$runs[c(1, 1, 2)])
+
+  # Run 2 / all: explicit offset request not applied yet
+  pending <- pshift_offset_record_paths(raw[2], shifted[2])$pending
+  pshift_atomic_record(list(schema = 1L), pending)
+  expect_warning(expect_warning(out <- collection_frames_update(w$collection),
+                                "pending for study-homo_sapiens / all / SRR90002"),
+                 "1 Run\\(s\\) have no frame rows")
+  expect_identical(out$Run, w$runs[c(1, 1)])
+  expect_identical(out$mapper, c("all", "unique"))
+})
+
+test_that("shift inputs rewritten during the build stop the publish and keep the previous report", {
+  w <- frame_test_collection()
+  path <- file.path(w$coll_dir, "QC_STATS", "frames_per_library_length.fst")
+  first <- collection_frames_update(w$collection)
+  published <- file.info(path)[, c("size", "mtime")]
+
+  study <- collection_frames_study
+  refreshed <- file.path(dirname(w$table_path), paste0(w$runs[2], "_pshifted.ofst"))
+  testthat::local_mocked_bindings(collection_frames_study = function(...) {
+    res <- study(...)
+    Sys.setFileTime(refreshed, Sys.time() + 5)   # a P-shift pass rewrites one file after it was counted
+    res
+  })
+  expect_error(collection_frames_update(w$collection),
+               "P-shift inputs changed during the collection frame build.*SRR90002_pshifted.ofst")
+  expect_identical(file.info(path)[, c("size", "mtime")], published)
+  expect_equal(fst::read_fst(path), as.data.frame(first))
+
+  # the same holds for a shifting table of either mapper branch
+  Sys.setFileTime(refreshed, Sys.time() - 60)
+  unique_table <- file.path(w$aligned, "unique_mappers", "pshifted", "shifting_table.rds")
+  testthat::local_mocked_bindings(collection_frames_study = function(...) {
+    res <- study(...)
+    Sys.setFileTime(unique_table, Sys.time() + 5)
+    res
+  })
+  expect_error(collection_frames_update(w$collection), "unique_mappers/pshifted/shifting_table.rds")
+})

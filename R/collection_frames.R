@@ -40,6 +40,7 @@ collection_frames_update <- function(collection, force = FALSE,
   if (is.null(lock)) stop("Another frame build holds the lock for ", qc_dir)
   on.exit(filelock::unlock(lock), add = TRUE)
 
+  build_started <- Sys.time()
   aligned <- ORFik::libFolder(df, mode = "all", unique_mappers = FALSE)
   libraries <- data.table::data.table(Run = runs,
     library_key = if ("library_key" %in% colnames(df)) as.character(df$library_key) else NA_character_,
@@ -80,6 +81,17 @@ collection_frames_update <- function(collection, force = FALSE,
   }
   out[, c("source", "cached") := NULL]
   data.table::setkey(out, Run, mapper, read_length)
+  # The collection lock does not coordinate with the study P-shift writer.
+  # Keep the previous report if a study published new shift inputs mid-build.
+  branches <- c(libraries$aligned, file.path(libraries$aligned, "unique_mappers"))
+  shifted <- file.path(branches, "pshifted", paste0(libraries$stem, "_pshifted.ofst"))
+  shift_tables <- file.path(unique(branches), "pshifted", "shifting_table.rds")
+  inputs <- c(shifted, shift_tables)
+  changed <- which(file.mtime(inputs) >= build_started)
+  if (length(changed))
+    stop("P-shift inputs changed during the collection frame build; retry after P-shifting finishes: ",
+         paste(head(inputs[changed], 5L), collapse = ", "), call. = FALSE)
+
   missing <- setdiff(runs, out$Run)
   if (length(missing)) {
     warning(length(missing), " Run(s) have no frame rows (missing shift inputs or no accepted lengths): ",
@@ -153,14 +165,20 @@ collection_frames_study <- function(libs, exons, annotation, txdb, cache_dir, ex
       run <- libs$Run[i]
       offsets <- pshift_canonical_offsets(index$tab[[hits[i]]])
       record_paths <- pshift_offset_record_paths(raw[i], shifted[i])
-      if (file.exists(record_paths$pending))
-        stop("P-site offsets are pending for ", experiment, " / ", mapper, " / ", run)
+      if (file.exists(record_paths$pending)) {
+        warning("P-site offsets are pending for ", experiment, " / ", mapper, " / ", run,
+                call. = FALSE)
+        return(NULL)
+      }
       if (file.exists(record_paths$applied)) {
         record <- readRDS(record_paths$applied)
         if (!identical(record$offsets, offsets) ||
             !pshift_same_file(record$shifted, pshift_file_identity(shifted[i])) ||
-            (!is.na(raw_info$size[i]) && !pshift_same_file(record$raw, pshift_file_identity(raw[i]))))
-          stop("P-site offset provenance differs for ", experiment, " / ", mapper, " / ", run)
+            (!is.na(raw_info$size[i]) && !pshift_same_file(record$raw, pshift_file_identity(raw[i])))) {
+          warning("P-site offset provenance differs for ", experiment, " / ", mapper, " / ", run,
+                  call. = FALSE)
+          return(NULL)
+        }
       }
       # Every source is derived from the P-shifted file and the offsets, so these key the cache.
       sig <- list(version = COLLECTION_FRAMES_VERSION, annotation = annotation, offsets = offsets,
